@@ -139,6 +139,20 @@ async def test_namespaces_isolated_in_one_db(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_hyphen_underscore_namespaces_do_not_collide(tmp_path: Path) -> None:
+    """Regression: 'a-b' and 'a_b' must not alias the same table."""
+    db = tmp_path / "iso.db"
+    dash = SQLiteStore(_ns("a-b"), db)
+    under = SQLiteStore(_ns("a_b"), db)
+    await dash.write("k", b"dash")
+    await under.write("k", b"under")
+    assert await dash.read("k") == b"dash"
+    assert await under.read("k") == b"under"
+    dash.close()
+    under.close()
+
+
+@pytest.mark.asyncio
 async def test_audit_events_emitted() -> None:
     sink = MemorySink()
     base = {

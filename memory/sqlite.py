@@ -31,10 +31,16 @@ __all__ = ["SQLiteStore"]
 
 
 def _table_for(namespace: str) -> str:
-    """Per-namespace table name. Namespace charset is regex-constrained
-    to ``[a-z0-9_-]`` so this is injection-safe; '-' -> '_' keeps the
-    identifier usable unquoted."""
-    return f"kv_{namespace.replace('-', '_')}"
+    """Per-namespace table name, preserving the namespace verbatim.
+
+    The namespace charset is regex-constrained to ``[a-z0-9_-]`` (no
+    quotes), so interpolation is injection-safe, and every query
+    double-quotes the identifier -- so a hyphen is legal. The name is
+    NOT transformed: mapping '-' -> '_' would collapse distinct
+    namespaces ('a-b' and 'a_b') onto one table and break the structural
+    isolation guarantee (ADR 0004).
+    """
+    return f"kv_{namespace}"
 
 
 class SQLiteStore:

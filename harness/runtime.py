@@ -35,6 +35,7 @@ import functools
 import inspect
 import time
 import uuid
+import warnings
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
@@ -42,7 +43,7 @@ from typing import Any, Protocol, runtime_checkable
 from harness.budgets import BudgetTracker
 from harness.contract import Severity
 from harness.errors import ApprovalDenied as ApprovalDeniedError
-from harness.errors import BudgetExceeded, GovernanceViolation
+from harness.errors import BudgetExceeded, GovernanceViolation, HarnessError
 from harness.guard import GuardDecision, ToolGuard
 from harness.interruption import ApprovalInterruption, ResumableState
 from harness.mcp import MCPServerSpec, MCPTransport
@@ -252,18 +253,44 @@ def _wrap_tool(
 
 
 def _to_pydantic_mcp(spec: MCPServerSpec) -> Any:
-    """Translate an MCPServerSpec into a PydanticAI MCP toolset."""
+    """Translate an MCPServerSpec into a PydanticAI MCP toolset.
+
+    Honours the spec's ``headers`` (HTTP/SSE auth) and ``allowed_tools``
+    allowlist -- both are validated manifest surface; dropping them
+    would silently bypass workload-declared MCP restrictions.
+    """
     from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio, MCPServerStreamableHTTP
 
+    server: Any
     if spec.transport == MCPTransport.STDIO:
-        return MCPServerStdio(
+        server = MCPServerStdio(
             command=spec.command or "",
             args=list(spec.args),
             timeout=spec.timeout_seconds,
         )
-    if spec.transport == MCPTransport.SSE:
-        return MCPServerSSE(url=spec.url or "", timeout=spec.timeout_seconds)
-    return MCPServerStreamableHTTP(url=spec.url or "", timeout=spec.timeout_seconds)
+    elif spec.transport == MCPTransport.SSE:
+        server = MCPServerSSE(
+            url=spec.url or "",
+            headers=dict(spec.headers),
+            timeout=spec.timeout_seconds,
+        )
+    else:
+        # 1.97 deprecates the explicit class in favour of MCPToolset(url)
+        # but keeps it functional through the pinned range; the Protocol
+        # boundary (ADR 0007) absorbs this churn. Silence the local
+        # DeprecationWarning rather than chase a pre-v2 API rename.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            server = MCPServerStreamableHTTP(
+                url=spec.url or "",
+                headers=dict(spec.headers),
+                timeout=spec.timeout_seconds,
+            )
+
+    if spec.allowed_tools is not None:
+        allowed = set(spec.allowed_tools)
+        server = server.filtered(lambda ctx, tool_def: tool_def.name in allowed)
+    return server
 
 
 class PydanticAIRuntime:
@@ -446,12 +473,36 @@ class PydanticAIRuntime:
                 consumed = total
                 budget.consume_tokens(delta)
 
-        async with agent, agent.run_stream(prompt, deps=deps) as stream:
-            async for chunk in stream.stream_text(delta=True):
-                # Incremental enforcement for models that report usage
-                # mid-stream; the moment the cap is crossed this raises.
+        try:
+            async with agent, agent.run_stream(prompt, deps=deps) as stream:
+                async for chunk in stream.stream_text(delta=True):
+                    # Budget parity with run(): reactive wall-clock at
+                    # each chunk boundary plus incremental token usage;
+                    # either raises BudgetExceeded the moment a cap is
+                    # crossed (a generator cannot be wrapped in the
+                    # preemptive wait_for watchdog, so enforcement is at
+                    # the chunk checkpoint, per ADR 0003's reactive rule).
+                    if budget is not None:
+                        budget.check_wall_clock()
+                    _reconcile(stream)
+                    yield chunk
+                # Final reconciliation: some models (and TestModel) only
+                # finalize usage once the stream is fully consumed.
                 _reconcile(stream)
-                yield chunk
-            # Final reconciliation: some models (and TestModel) only
-            # finalize usage once the stream is fully consumed.
-            _reconcile(stream)
+                if budget is not None:
+                    usage = _usage(stream)
+                    budget.consume_step(getattr(usage, "requests", 0) or 0)
+        except _ApprovalPause as exc:
+            # Streaming has no resumable handoff (the generator cannot
+            # surface a ResumableState and resume cleanly). Translate
+            # the private sentinel into a clear public contract error;
+            # approval-gated tools must use run().
+            raise HarnessError(
+                f"tool {exc.interruption.tool!r} requires approval; "
+                "approval-gated tools are not supported in streaming "
+                "mode -- use run()"
+            ) from None
+        if state.governance is not None:
+            raise state.governance
+        if state.denied is not None:
+            raise state.denied

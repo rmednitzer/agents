@@ -17,10 +17,16 @@ from pydantic_ai.models.test import TestModel
 
 from harness.budgets import ActionBudget, BudgetTracker
 from harness.contract import Contract, Severity
-from harness.errors import ApprovalDenied, BudgetExceeded, GovernanceViolation
+from harness.errors import (
+    ApprovalDenied,
+    BudgetExceeded,
+    GovernanceViolation,
+    HarnessError,
+)
 from harness.guard import GuardDecision, GuardResponse, HarnessToolGuard
 from harness.interruption import ResumableState
-from harness.runtime import PydanticAIRuntime, Runtime
+from harness.mcp import MCPServerSpec, MCPTransport
+from harness.runtime import PydanticAIRuntime, Runtime, _to_pydantic_mcp
 
 
 class _Guard:
@@ -180,6 +186,65 @@ async def test_bl002_require_approval_pauses_then_resumes() -> None:
     out = await rt.run("go", tools=[risky], guard=guard, resume=approved)
     assert executed == [True]
     assert isinstance(out, str)
+
+
+@pytest.mark.asyncio
+async def test_stream_enforces_wall_clock_parity() -> None:
+    """BL-001/003 parity: stream() honours the wall-clock budget."""
+    rt = PydanticAIRuntime(TestModel(custom_output_text="a b c"), output_type=str)
+    budget = BudgetTracker(ActionBudget(max_wall_clock_seconds=0.0))
+    with pytest.raises(BudgetExceeded) as exc:
+        async for _ in rt.stream("go", budget=budget):
+            pass
+    assert exc.value.budget_kind == "wall_clock"
+
+
+@pytest.mark.asyncio
+async def test_stream_consumes_steps() -> None:
+    """stream() consumes steps from final usage (parity with run())."""
+    rt = PydanticAIRuntime(TestModel(custom_output_text="hello"), output_type=str)
+    budget = BudgetTracker(ActionBudget(max_steps=100))
+    async for _ in rt.stream("go", budget=budget):
+        pass
+    assert budget.steps >= 1
+
+
+@pytest.mark.asyncio
+async def test_stream_approval_tool_raises_public_error_not_sentinel() -> None:
+    """BL-002: streaming + approval-gated tool -> public HarnessError."""
+    contract: Contract[Any, Any] = Contract(name="c", version="1.0", approval_required=["risky"])
+
+    def risky() -> str:
+        return "x"
+
+    rt = PydanticAIRuntime(TestModel(), output_type=str)
+    with pytest.raises(HarnessError, match="approval"):
+        async for _ in rt.stream("go", tools=[risky], guard=HarnessToolGuard(contract)):
+            pass
+
+
+def test_to_pydantic_mcp_threads_headers_and_allowlist() -> None:
+    """Headers + allowed_tools must not be dropped (manifest surface)."""
+    plain = _to_pydantic_mcp(
+        MCPServerSpec(
+            name="h",
+            transport=MCPTransport.HTTP,
+            url="https://example/mcp",
+            headers={"Authorization": "Bearer t"},
+        )
+    )
+    assert plain is not None
+
+    filtered = _to_pydantic_mcp(
+        MCPServerSpec(
+            name="h2",
+            transport=MCPTransport.HTTP,
+            url="https://example/mcp",
+            allowed_tools=["only_this"],
+        )
+    )
+    # allowed_tools wraps the server in a FilteredToolset, a distinct type.
+    assert type(filtered).__name__ != type(plain).__name__
 
 
 @pytest.mark.asyncio
