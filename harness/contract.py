@@ -49,10 +49,17 @@ class Predicate[StateT](Protocol):
     Implementations carry a stable name (for event logging and audit) and
     a severity. The __call__ returns True if the state satisfies the
     condition, False otherwise. Predicates must be side-effect-free.
+
+    The name and severity attributes are read-only by Protocol; concrete
+    implementations may store them as frozen dataclass fields, property
+    getters, or class variables.
     """
 
-    name: str
-    severity: Severity
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def severity(self) -> Severity: ...
 
     def __call__(self, state: StateT) -> bool: ...
 
