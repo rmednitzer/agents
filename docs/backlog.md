@@ -1,15 +1,19 @@
 # L2 Backlog
 
-Consolidated from ADRs 0002 through 0006. Generated 2026-05-16 after Phase 5 (`7c26543`).
+Consolidated from ADRs 0002 through 0006. Generated 2026-05-16 after Phase 5 (`7c26543`). Updated 2026-05-16 after PR #20 merged to `main`.
 
 ## Implementation status
 
-All 35 items (BL-001 .. BL-090) are **implemented and tested** on
-branch `claude/implement-l2-feature-5JpJX` (PR #20), delivered as
+All 35 items (BL-001 .. BL-090) are **implemented, tested, and merged to
+`main`** via PR #20 (merge commit `af1df9d`, 2026-05-16), delivered as
 reviewable batches with the rationale in
 [ADR 0007](./adr/0007-l2-implementation-wave.md). Per the Maintenance
-convention below, items stay `[in-progress]` until the PR merges to
-`main`; on merge they flip to `[resolved]` with the merge commit.
+convention below, every L2 item is therefore `[resolved]`; the single
+merge commit `af1df9d` (PR #20) is the resolution reference for all of
+them, so it is stated here once rather than repeated per line.
+Follow-ups merged after the wave: README formatting (PR #21,
+`5558b88`) and CI coverage enforcement at `cov-fail-under=94` (PR #22,
+`573009d`).
 
 Where each item landed (module / public symbol):
 
@@ -39,76 +43,76 @@ Each item has an ID, status, size estimate, source ADR, and notes.
 - Size: `XS` (~30 min), `S` (~1 to 2 h), `M` (~half day), `L` (~day or more).
 - IDs are stable; do not renumber on removal. Use `resolved` instead of deleting.
 
-## Adapter integration (highest priority: unblocks real workloads)
+## Adapter integration
 
-`HarnessToolGuard` and `BudgetTracker` ship in Phase 2 with full surfaces and event emission, but neither is wired into the default `PydanticAI` adapter's tool-call path. Tool calls bypass both at runtime today. Closing this is the L1-to-L2 bridge that any real workload needs.
+`HarnessToolGuard` and `BudgetTracker` shipped in Phase 2 with full surfaces and event emission, but at L1 neither was wired into the default `PydanticAI` adapter's tool-call path. The L2 wave closed this L1-to-L2 bridge (BL-001..004, 073): the adapter now gates every local and MCP tool call through the guard and feeds usage into the budget tracker. See [docs/runtime-providers.md](./runtime-providers.md) for how a workload reaches a model through this adapter.
 
-- `BL-001` [in-progress] [S] Wire `HarnessToolGuard` into the PydanticAI adapter so tool calls hit `guard.check(tool, arguments)` before execution and respect `REJECT`, `REQUIRE_APPROVAL`, and `APPROVE` decisions. (ADR 0002, ADR 0003)
-- `BL-002` [in-progress] [M] Live interruption-resume mid-run in the PydanticAI adapter: an `ApprovalInterruption` should pause the run, surface `ResumableState`, and resume cleanly on `.approve()` or `.deny()`. Lands with the first workload that needs human-in-the-loop approval. (ADR 0003)
-- `BL-003` [in-progress] [S] Background watchdog for wall-clock budget enforcement. Currently `BudgetTracker` checks at step boundaries; long-running tools can exceed `max_wall_clock_seconds` without preemption. (ADR 0003)
-- `BL-004` [in-progress] [S] Streaming budget enforcement: accumulate token usage during a stream and raise `BudgetExceeded` on threshold cross. (ADR 0003)
+- `BL-001` [resolved] [S] Wire `HarnessToolGuard` into the PydanticAI adapter so tool calls hit `guard.check(tool, arguments)` before execution and respect `REJECT`, `REQUIRE_APPROVAL`, and `APPROVE` decisions. (ADR 0002, ADR 0003)
+- `BL-002` [resolved] [M] Live interruption-resume mid-run in the PydanticAI adapter: an `ApprovalInterruption` should pause the run, surface `ResumableState`, and resume cleanly on `.approve()` or `.deny()`. Lands with the first workload that needs human-in-the-loop approval. (ADR 0003)
+- `BL-003` [resolved] [S] Background watchdog for wall-clock budget enforcement. Currently `BudgetTracker` checks at step boundaries; long-running tools can exceed `max_wall_clock_seconds` without preemption. (ADR 0003)
+- `BL-004` [resolved] [S] Streaming budget enforcement: accumulate token usage during a stream and raise `BudgetExceeded` on threshold cross. (ADR 0003)
 
 ## Workload + skill validators
 
-Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked.
+Phase 5's `SkillRegistry` unblocked several Phase 4 validators.
 
-- `BL-010` [in-progress] [XS] Workload loader: validate that `manifest.name` matches the package directory name. Silent mismatch today. (ADR 0005)
-- `BL-011` [in-progress] [S] Workload loader: validate that every `skills:` entry resolves in a `SkillRegistry`. Optional dependency: the registry must be passed at load time. (ADR 0005, ADR 0006)
-- `BL-012` [in-progress] [S] Validate skill `allowed-tools` entries against the harness's known tool catalog. (ADR 0006)
-- `BL-013` [in-progress] [S] Manifest JSON Schema generation (`WorkloadManifest.model_json_schema()`) emitted to `docs/schema/workload-manifest.json` for editor autocomplete. (ADR 0005)
+- `BL-010` [resolved] [XS] Workload loader: validate that `manifest.name` matches the package directory name. Silent mismatch today. (ADR 0005)
+- `BL-011` [resolved] [S] Workload loader: validate that every `skills:` entry resolves in a `SkillRegistry`. Optional dependency: the registry must be passed at load time. (ADR 0005, ADR 0006)
+- `BL-012` [resolved] [S] Validate skill `allowed-tools` entries against the harness's known tool catalog. (ADR 0006)
+- `BL-013` [resolved] [S] Manifest JSON Schema generation (`WorkloadManifest.model_json_schema()`) emitted to `docs/schema/workload-manifest.json` for editor autocomplete. (ADR 0005)
 
 ## CLI surface
 
-- `BL-020` [in-progress] [S] `python -m agents workloads list` -> prints every loadable workload's name, version, description. (ADR 0005)
-- `BL-021` [in-progress] [M] `python -m agents run <workload> <query>` -> loads the workload, dispatches via its configured `Dispatcher`, runs under contract, prints structured result. (ADR 0006)
-- `BL-022` [in-progress] [S] `python -m agents skills list` -> prints every skill in `skills/`, grouped by lane.
+- `BL-020` [resolved] [S] `python -m agents workloads list` -> prints every loadable workload's name, version, description. (ADR 0005)
+- `BL-021` [resolved] [M] `python -m agents run <workload> <query>` -> loads the workload, dispatches via its configured `Dispatcher`, runs under contract, prints structured result. (ADR 0006)
+- `BL-022` [resolved] [S] `python -m agents skills list` -> prints every skill in `skills/`, grouped by lane.
 
 ## Memory adapters
 
-`InMemoryStore` is the only `MemoryStore` adapter today. Production deployments need durable backends.
+L1 shipped only `InMemoryStore`. The L2 wave added the durable backends below.
 
-- `BL-030` [in-progress] [M] Redis adapter. Pipelining for batch ops, WATCH/MULTI for atomic CAS, native TTL via `PX`. (ADR 0004)
-- `BL-031` [in-progress] [M] SQLite adapter for durable single-host workloads. WAL mode, per-namespace tables. (ADR 0004)
-- `BL-032` [in-progress] [M] S3 adapter for blobs and audit packs. Eventually-consistent; document the semantics deviation. (ADR 0004)
-- `BL-033` [in-progress] [L] DynamoDB adapter for AWS-native deployments. Strongly-consistent reads optional. (ADR 0004)
+- `BL-030` [resolved] [M] Redis adapter. Pipelining for batch ops, WATCH/MULTI for atomic CAS, native TTL via `PX`. (ADR 0004)
+- `BL-031` [resolved] [M] SQLite adapter for durable single-host workloads. WAL mode, per-namespace tables. (ADR 0004)
+- `BL-032` [resolved] [M] S3 adapter for blobs and audit packs. Eventually-consistent; document the semantics deviation. (ADR 0004)
+- `BL-033` [resolved] [L] DynamoDB adapter for AWS-native deployments. Strongly-consistent reads optional. (ADR 0004)
 
 ## Observability
 
-- `BL-040` [in-progress] [S] Memory operation events (`MemoryRead`, `MemoryWrite`, `MemoryDelete`) emitted through `EventSink`. Surface in `harness.events` is ready; the `MemoryStore` Protocol needs an optional `sink` parameter. (ADR 0004)
-- `BL-041` [in-progress] [S] OTel-Collector-compatible `EventSink` implementation. `HarnessEvent` already carries `trace_id`, `span_id`, `parent_span_id`. (ADR 0002)
-- `BL-042` [in-progress] [M] Dispatch performance instrumentation: per-dispatcher latency histograms, runtime token consumption, threshold-fallback rate. Feeds Grafana via OTel. (ADR 0006)
+- `BL-040` [resolved] [S] Memory operation events (`MemoryRead`, `MemoryWrite`, `MemoryDelete`) emitted through `EventSink`. Surface in `harness.events` is ready; the `MemoryStore` Protocol needs an optional `sink` parameter. (ADR 0004)
+- `BL-041` [resolved] [S] OTel-Collector-compatible `EventSink` implementation. `HarnessEvent` already carries `trace_id`, `span_id`, `parent_span_id`. (ADR 0002)
+- `BL-042` [resolved] [M] Dispatch performance instrumentation: per-dispatcher latency histograms, runtime token consumption, threshold-fallback rate. Feeds Grafana via OTel. (ADR 0006)
 
 ## Skill ecosystem
 
-- `BL-050` [in-progress] [S] `MultiDispatcher` ensemble that combines results from several dispatchers via vote, average, or weighted blend. (ADR 0006)
-- `BL-051` [in-progress] [M] Embedding-based dispatcher. Vector similarity between query and skill descriptions. Requires an embedding adapter or a Runtime that exposes embeddings. (ADR 0006)
-- `BL-052` [in-progress] [M] Skill-level contracts (`skills/<name>/contract.py`) that compose with the workload contract. Composition rule: intersection of predicate sets. (ADR 0006)
-- `BL-053` [in-progress] [M] Skill versioning and rollback. Track multiple versions of the same skill; load by `name@version`. (ADR 0006)
-- `BL-054` [in-progress] [L] Skill installation from registries: `anthropics/skills` on GitHub, Vercel `skills.sh` marketplace. (ADR 0006)
+- `BL-050` [resolved] [S] `MultiDispatcher` ensemble that combines results from several dispatchers via vote, average, or weighted blend. (ADR 0006)
+- `BL-051` [resolved] [M] Embedding-based dispatcher. Vector similarity between query and skill descriptions. Requires an embedding adapter or a Runtime that exposes embeddings. (ADR 0006)
+- `BL-052` [resolved] [M] Skill-level contracts (`skills/<name>/contract.py`) that compose with the workload contract. Composition rule: intersection of predicate sets. (ADR 0006)
+- `BL-053` [resolved] [M] Skill versioning and rollback. Track multiple versions of the same skill; load by `name@version`. (ADR 0006)
+- `BL-054` [resolved] [L] Skill installation from registries: `anthropics/skills` on GitHub, Vercel `skills.sh` marketplace. (ADR 0006)
 
 ## Composition (Bhardwaj agent-contract tuple)
 
-- `BL-060` [in-progress] [M] Workload + skill contract composition. Intersection of predicate sets, governance union, approval-required union. (ADR 0002)
-- `BL-061` [in-progress] [M] Recovery handlers for soft violations: the R in the Bhardwaj tuple. Predicates today flag-and-emit; recovery actions are unspecified. (ADR 0002)
-- `BL-062` [in-progress] [L] JSD distributional drift instrumentation across runs. Aggregated state distribution per predicate. (ADR 0002)
+- `BL-060` [resolved] [M] Workload + skill contract composition. Intersection of predicate sets, governance union, approval-required union. (ADR 0002)
+- `BL-061` [resolved] [M] Recovery handlers for soft violations: the R in the Bhardwaj tuple. Predicates today flag-and-emit; recovery actions are unspecified. (ADR 0002)
+- `BL-062` [resolved] [L] JSD distributional drift instrumentation across runs. Aggregated state distribution per predicate. (ADR 0002)
 
 ## Production hardening
 
-- `BL-070` [in-progress] [M] Encryption at rest for memory adapters. Per-adapter concern; the framework should provide a `KeyProvider` Protocol. (ADR 0004)
-- `BL-071` [in-progress] [M] ACL / role-based per-key access controls on `MemoryStore`. The contract layer covers workload-boundary auth; per-key ACLs are an L2 refinement. (ADR 0004)
-- `BL-072` [in-progress] [L] CAS / MVCC primitives in adapters that support them. Exposed via a separate `CASMemoryStore` Protocol so non-CAS backends do not have to fake it. Protocol + InMemoryStore reference impl landed; per-adapter impls land with each adapter. (ADR 0004)
-- `BL-073` [in-progress] [S] Per-tool quotas (e.g. up to 3 calls to `search`, up to 1 call to `delete`). Currently a single `max_tool_calls` counter applies to all. (ADR 0003)
+- `BL-070` [resolved] [M] Encryption at rest for memory adapters. Per-adapter concern; the framework should provide a `KeyProvider` Protocol. (ADR 0004)
+- `BL-071` [resolved] [M] ACL / role-based per-key access controls on `MemoryStore`. The contract layer covers workload-boundary auth; per-key ACLs are an L2 refinement. (ADR 0004)
+- `BL-072` [resolved] [L] CAS / MVCC primitives in adapters that support them. Exposed via a separate `CASMemoryStore` Protocol so non-CAS backends do not have to fake it. Protocol + InMemoryStore reference impl landed; per-adapter impls land with each adapter. (ADR 0004)
+- `BL-073` [resolved] [S] Per-tool quotas (e.g. up to 3 calls to `search`, up to 1 call to `delete`). Currently a single `max_tool_calls` counter applies to all. (ADR 0003)
 
 ## Memory convenience
 
-- `BL-080` [in-progress] [S] Active TTL sweep background task for `MemoryStore` adapters that benefit from it. `InMemoryStore` uses lazy expiry today. (ADR 0004)
-- `BL-081` [in-progress] [S] Multi-key batch operations: `mget(keys)`, `mset(items)`, `mdelete(keys)`. (ADR 0004)
-- `BL-082` [in-progress] [M] Iterator-style `list_keys` for very large keyspaces. Cursor-based; bounded result pages. (ADR 0004)
-- `BL-083` [in-progress] [S] Content addressing: `write_content(value) -> sha256-hex-key`. Useful for immutable storage patterns. (ADR 0004)
+- `BL-080` [resolved] [S] Active TTL sweep background task for `MemoryStore` adapters that benefit from it. `InMemoryStore` uses lazy expiry today. (ADR 0004)
+- `BL-081` [resolved] [S] Multi-key batch operations: `mget(keys)`, `mset(items)`, `mdelete(keys)`. (ADR 0004)
+- `BL-082` [resolved] [M] Iterator-style `list_keys` for very large keyspaces. Cursor-based; bounded result pages. (ADR 0004)
+- `BL-083` [resolved] [S] Content addressing: `write_content(value) -> sha256-hex-key`. Useful for immutable storage patterns. (ADR 0004)
 
 ## Workload convenience
 
-- `BL-090` [in-progress] [M] Out-of-tree workloads. Load from arbitrary filesystem paths or installed packages, not just the `workloads/` package tree. (ADR 0005)
+- `BL-090` [resolved] [M] Out-of-tree workloads. Load from arbitrary filesystem paths or installed packages, not just the `workloads/` package tree. (ADR 0005)
 
 # L3 backlog
 

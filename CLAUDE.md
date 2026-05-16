@@ -38,7 +38,7 @@ agents/
   scripts/     operational and developer scripts
 ```
 
-The L1 framework plus the full L2 wave are implemented; see
+The L1 framework plus the full L2 wave are implemented and merged to `main`; see
 `docs/backlog.md` (line-item tracker) and `docs/adr/0007-l2-implementation-wave.md`
 (cross-cutting decisions).
 
@@ -113,7 +113,7 @@ Uses `uv`. Set up: `uv sync --all-extras` (installs every optional backend plus 
 - `make check` runs lint + type-check + test (run before pushing).
 - `make schema` regenerates `docs/schema/*.json` from the Pydantic models.
 
-The PydanticAI runtime is tested deterministically with `TestModel`/`FunctionModel` (no network or API keys). Optional-backend tests skip cleanly when their driver is absent.
+The PydanticAI runtime is tested deterministically with `TestModel`/`FunctionModel` (no network or API keys). Optional-backend tests skip cleanly when their driver is absent. Provider selection and credentials are documented in `docs/runtime-providers.md`.
 
 ## Contributing
 
