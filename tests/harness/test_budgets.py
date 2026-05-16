@@ -113,6 +113,40 @@ def test_tracker_remaining_clamps_to_zero() -> None:
     assert tracker.remaining("steps") == 0.0
 
 
+def test_per_tool_quota_enforced_independently() -> None:
+    """BL-073: a per-tool cap fires even when the aggregate is unset."""
+    tracker = BudgetTracker(ActionBudget(max_tool_calls_per_tool={"search": 2, "delete": 1}))
+    tracker.consume_tool_call(tool="search")
+    tracker.consume_tool_call(tool="search")
+    tracker.consume_tool_call(tool="delete")
+    with pytest.raises(BudgetExceeded) as exc:
+        tracker.consume_tool_call(tool="search")
+    assert exc.value.budget_kind == "tool_calls:search"
+
+
+def test_per_tool_quota_untracked_tool_unbounded() -> None:
+    tracker = BudgetTracker(ActionBudget(max_tool_calls_per_tool={"delete": 1}))
+    for _ in range(10):
+        tracker.consume_tool_call(tool="search")  # not in the map => unbounded
+
+
+def test_aggregate_cap_still_applies_with_per_tool() -> None:
+    tracker = BudgetTracker(ActionBudget(max_tool_calls=2, max_tool_calls_per_tool={"a": 5}))
+    tracker.consume_tool_call(tool="a")
+    tracker.consume_tool_call(tool="a")
+    with pytest.raises(BudgetExceeded) as exc:
+        tracker.consume_tool_call(tool="a")
+    assert exc.value.budget_kind == "tool_calls"  # aggregate fires first
+
+
+def test_consume_tool_call_without_tool_is_l1_compatible() -> None:
+    tracker = BudgetTracker(ActionBudget(max_tool_calls=2))
+    tracker.consume_tool_call()
+    tracker.consume_tool_call()
+    with pytest.raises(BudgetExceeded):
+        tracker.consume_tool_call()
+
+
 def test_tracker_properties() -> None:
     tracker = BudgetTracker(ActionBudget(max_steps=100, max_tokens=1000))
     tracker.consume_step(3)

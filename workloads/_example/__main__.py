@@ -19,6 +19,7 @@ from typing import Any
 from harness import run_under_contract
 from harness.budgets import BudgetTracker
 from harness.guard import ToolGuard
+from harness.interruption import ResumableState
 from harness.mcp import MCPServerSpec
 from harness.runtime import Runtime
 from workloads._example.contract import (
@@ -45,6 +46,7 @@ class MarkdownValidatorRuntime:
         budget: BudgetTracker | None = None,
         mcp_servers: list[MCPServerSpec] | None = None,
         guard: ToolGuard | None = None,
+        resume: ResumableState | None = None,
     ) -> ValidationReport:
         input_data = ValidationInput.model_validate_json(prompt)
         findings: list[Finding] = []
@@ -99,6 +101,7 @@ class MarkdownValidatorRuntime:
         budget: BudgetTracker | None = None,
         mcp_servers: list[MCPServerSpec] | None = None,
         guard: ToolGuard | None = None,
+        resume: ResumableState | None = None,
     ) -> AsyncIterator[Any]:
         raise NotImplementedError("MarkdownValidatorRuntime does not support streaming")
 

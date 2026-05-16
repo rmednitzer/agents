@@ -1,7 +1,7 @@
 {
   "$defs": {
     "ActionBudget": {
-      "description": "Immutable action budget spec.\n\nAll fields are optional; None means unlimited for that dimension.",
+      "description": "Immutable action budget spec.\n\nAll fields are optional; None means unlimited for that dimension.\n\n``max_tool_calls`` is the aggregate cap across every tool.\n``max_tool_calls_per_tool`` (BL-073) caps individual tools, e.g.\n``{\"search\": 3, \"delete\": 1}``; a tool absent from the map is\nbounded only by the aggregate cap. Both are enforced.",
       "properties": {
         "max_steps": {
           "anyOf": [
@@ -38,6 +38,21 @@
           ],
           "default": null,
           "title": "Max Tool Calls"
+        },
+        "max_tool_calls_per_tool": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Tool Calls Per Tool"
         },
         "max_wall_clock_seconds": {
           "anyOf": [

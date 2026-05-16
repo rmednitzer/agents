@@ -153,7 +153,14 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         budget=tracker,
         mcp_servers=mcp_servers,
         guard=active_guard,
+        resume=resume,
     )
+
+    # 4a. An approval pause short-circuits: hand the ResumableState back
+    # to the caller untouched (BL-002). The guard already emitted the
+    # ApprovalRequested event, so the audit trail is complete.
+    if isinstance(result, ResumableState):
+        return result
 
     # 5. Parse output
     if isinstance(result, output_model):

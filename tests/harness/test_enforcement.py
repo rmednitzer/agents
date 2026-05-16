@@ -23,6 +23,7 @@ from harness.events import (
     PreconditionViolated,
 )
 from harness.guard import ToolGuard
+from harness.interruption import ResumableState
 from harness.mcp import MCPServerSpec
 from harness.runtime import Runtime
 from harness.sinks import MemorySink
@@ -56,6 +57,7 @@ class _StubRuntime:
         budget: BudgetTracker | None = None,
         mcp_servers: list[MCPServerSpec] | None = None,
         guard: ToolGuard | None = None,
+        resume: ResumableState | None = None,
     ) -> Any:
         self.received_budget = budget
         self.received_mcp_servers = mcp_servers
@@ -71,6 +73,7 @@ class _StubRuntime:
         budget: BudgetTracker | None = None,
         mcp_servers: list[MCPServerSpec] | None = None,
         guard: ToolGuard | None = None,
+        resume: ResumableState | None = None,
     ) -> AsyncIterator[Any]:
         raise NotImplementedError
 
@@ -89,6 +92,7 @@ class _BudgetBurningRuntime:
         budget: BudgetTracker | None = None,
         mcp_servers: list[MCPServerSpec] | None = None,
         guard: ToolGuard | None = None,
+        resume: ResumableState | None = None,
     ) -> Any:
         if budget is not None:
             while True:
@@ -104,6 +108,7 @@ class _BudgetBurningRuntime:
         budget: BudgetTracker | None = None,
         mcp_servers: list[MCPServerSpec] | None = None,
         guard: ToolGuard | None = None,
+        resume: ResumableState | None = None,
     ) -> AsyncIterator[Any]:
         raise NotImplementedError
 
@@ -409,6 +414,45 @@ async def test_default_guard_constructed_when_approval_required() -> None:
         output_model=_Output,
     )
     assert runtime.received_guard is not None
+
+
+class _PausingRuntime:
+    """Runtime that pauses on an approval (returns a ResumableState)."""
+
+    name: str = "pausing"
+
+    async def run(self, prompt: str, **kw: Any) -> Any:
+        from datetime import UTC, datetime
+
+        from harness.interruption import ApprovalInterruption
+
+        return ResumableState(
+            contract_name="tp",
+            contract_version="0.1.0",
+            workload="tp",
+            input_payload={"prompt": prompt},
+            pending_approvals=[
+                ApprovalInterruption(id="i1", created_at=datetime.now(UTC), tool="risky")
+            ],
+            trace_id="tr",
+        )
+
+    def stream(self, prompt: str, **kw: Any) -> AsyncIterator[Any]:
+        raise NotImplementedError
+
+
+@pytest.mark.asyncio
+async def test_resumable_state_returned_untouched() -> None:
+    """BL-002: a ResumableState from the runtime short-circuits parsing."""
+    contract: Contract[_Input, _Output] = Contract(name="tp", version="0.1.0")
+    result = await run_under_contract(
+        runtime=_PausingRuntime(),
+        contract=contract,
+        input=_Input(query="hi"),
+        output_model=_Output,
+    )
+    assert isinstance(result, ResumableState)
+    assert result.pending_approvals[0].tool == "risky"
 
 
 @pytest.mark.asyncio

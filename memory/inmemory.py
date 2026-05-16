@@ -30,6 +30,12 @@ from memory.validators import validate_key
 
 __all__ = ["InMemoryStore"]
 
+# HarnessEvent base fields the caller must supply for audit emission.
+# timestamp/kind are set per emit; parent_span_id is optional.
+_REQUIRED_BASE_FIELDS = frozenset(
+    {"workload", "contract", "contract_version", "trace_id", "span_id"}
+)
+
 
 @dataclass
 class _Entry:
@@ -62,7 +68,16 @@ class InMemoryStore:
         self._data: dict[str, _Entry] = {}
         self._lock = asyncio.Lock()
         self._sink: EventSink = sink if sink is not None else NullSink()
-        self._base = base_event_fields if base_event_fields is not None else {}
+        base = base_event_fields if base_event_fields is not None else {}
+        if base:
+            missing = _REQUIRED_BASE_FIELDS - base.keys()
+            if missing:
+                raise ValueError(
+                    "base_event_fields missing required keys: "
+                    f"{sorted(missing)} (a partial dict would fail mid-run "
+                    "on the first emitted event)"
+                )
+        self._base = base
 
     @property
     def namespace(self) -> Namespace:
@@ -149,7 +164,10 @@ class InMemoryStore:
     async def delete(self, key: str) -> None:
         validate_key(key)
         async with self._lock:
-            existed = self._data.pop(key, None) is not None
+            # An expired-but-unswept entry is semantically absent
+            # (read/mget treat it as a miss); the audit must agree.
+            existed = self._live_value(key, time.time()) is not None
+            self._data.pop(key, None)
         self._emit_delete(key, existed=existed)
 
     async def list_keys(self, prefix: str = "") -> list[str]:
@@ -194,7 +212,11 @@ class InMemoryStore:
         for k in keys:
             validate_key(k)
         async with self._lock:
-            existed = {k: self._data.pop(k, None) is not None for k in keys}
+            now = time.time()
+            existed: dict[str, bool] = {}
+            for k in keys:
+                existed[k] = self._live_value(k, now) is not None
+                self._data.pop(k, None)
         for k, did in existed.items():
             self._emit_delete(k, existed=did)
 

@@ -14,10 +14,10 @@ Each item has an ID, status, size estimate, source ADR, and notes.
 
 `HarnessToolGuard` and `BudgetTracker` ship in Phase 2 with full surfaces and event emission, but neither is wired into the default `PydanticAI` adapter's tool-call path. Tool calls bypass both at runtime today. Closing this is the L1-to-L2 bridge that any real workload needs.
 
-- `BL-001` [pending] [S] Wire `HarnessToolGuard` into the PydanticAI adapter so tool calls hit `guard.check(tool, arguments)` before execution and respect `REJECT`, `REQUIRE_APPROVAL`, and `APPROVE` decisions. (ADR 0002, ADR 0003)
-- `BL-002` [pending] [M] Live interruption-resume mid-run in the PydanticAI adapter: an `ApprovalInterruption` should pause the run, surface `ResumableState`, and resume cleanly on `.approve()` or `.deny()`. Lands with the first workload that needs human-in-the-loop approval. (ADR 0003)
-- `BL-003` [pending] [S] Background watchdog for wall-clock budget enforcement. Currently `BudgetTracker` checks at step boundaries; long-running tools can exceed `max_wall_clock_seconds` without preemption. (ADR 0003)
-- `BL-004` [pending] [S] Streaming budget enforcement: accumulate token usage during a stream and raise `BudgetExceeded` on threshold cross. (ADR 0003)
+- `BL-001` [in-progress] [S] Wire `HarnessToolGuard` into the PydanticAI adapter so tool calls hit `guard.check(tool, arguments)` before execution and respect `REJECT`, `REQUIRE_APPROVAL`, and `APPROVE` decisions. (ADR 0002, ADR 0003) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-002` [in-progress] [M] Live interruption-resume mid-run in the PydanticAI adapter: an `ApprovalInterruption` should pause the run, surface `ResumableState`, and resume cleanly on `.approve()` or `.deny()`. Lands with the first workload that needs human-in-the-loop approval. (ADR 0003) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-003` [in-progress] [S] Background watchdog for wall-clock budget enforcement. Currently `BudgetTracker` checks at step boundaries; long-running tools can exceed `max_wall_clock_seconds` without preemption. (ADR 0003) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-004` [in-progress] [S] Streaming budget enforcement: accumulate token usage during a stream and raise `BudgetExceeded` on threshold cross. (ADR 0003) — branch `claude/implement-l2-feature-5JpJX`
 
 ## Workload + skill validators
 
@@ -68,7 +68,7 @@ Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked
 - `BL-070` [pending] [M] Encryption at rest for memory adapters. Per-adapter concern; the framework should provide a `KeyProvider` Protocol. (ADR 0004)
 - `BL-071` [pending] [M] ACL / role-based per-key access controls on `MemoryStore`. The contract layer covers workload-boundary auth; per-key ACLs are an L2 refinement. (ADR 0004)
 - `BL-072` [in-progress] [L] CAS / MVCC primitives in adapters that support them. Exposed via a separate `CASMemoryStore` Protocol so non-CAS backends do not have to fake it. Protocol + InMemoryStore reference impl landed; per-adapter impls land with each adapter. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-073` [pending] [S] Per-tool quotas (e.g. up to 3 calls to `search`, up to 1 call to `delete`). Currently a single `max_tool_calls` counter applies to all. (ADR 0003)
+- `BL-073` [in-progress] [S] Per-tool quotas (e.g. up to 3 calls to `search`, up to 1 call to `delete`). Currently a single `max_tool_calls` counter applies to all. (ADR 0003) — branch `claude/implement-l2-feature-5JpJX`
 
 ## Memory convenience
 
