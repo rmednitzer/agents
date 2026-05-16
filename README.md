@@ -4,7 +4,7 @@ Infrastructure repository for agentic workloads: runtime, skills, harness, memor
 
 ## Status
 
-L1 framework plus the full L2 implementation wave (see
+L1 framework plus the full L2 implementation wave, merged to `main` (see
 [docs/backlog.md](./docs/backlog.md), [ADR 0007](./docs/adr/0007-l2-implementation-wave.md)).
 Every L2 change is additive to the L1 Protocols: new optional parameters,
 new modules, and side-by-side Protocols; nothing in the L1 surface was
@@ -35,7 +35,8 @@ See [CLAUDE.md](./CLAUDE.md) for repository structure and conventions.
   into the tool-call path: every local *and* MCP tool call passes the
   same guard gate (approve / reject / require-approval), a preemptive
   wall-clock watchdog, streaming budget enforcement, and a
-  pause/`ResumableState`/resume approval flow.
+  pause/`ResumableState`/resume approval flow. Provider selection and
+  credentials: [docs/runtime-providers.md](./docs/runtime-providers.md).
 - **Memory.** Namespace-bound `MemoryStore` with `InMemoryStore`
   reference plus `SQLiteStore`, `RedisStore`, `S3Store`, `DynamoDBStore`
   adapters; extension Protocols for batch, cursor scan,

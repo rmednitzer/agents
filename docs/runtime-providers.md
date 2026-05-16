@@ -85,6 +85,13 @@ variable in the runtime environment, and put `provider:model` in the
 manifest. Use the endpoint override to route through a gateway, proxy, or a
 local server.
 
+PydanticAI is the layer that maps the `provider:` prefix to a client and
+reads these variables. Its [models and providers
+documentation](https://pydantic.dev/docs/ai/models/overview/) lists the full
+provider matrix and the exact key variable each provider expects, and the
+[installation guide](https://pydantic.dev/docs/ai/overview/install/) covers
+the optional per-provider extras.
+
 ## Constructing the runtime in code
 
 The `agents` CLI dispatches deterministically and is model free on purpose,
@@ -121,3 +128,5 @@ keys, is tracked as `BL-120` in [backlog.md](./backlog.md).
 - [ADR 0001: Runtime adapter selection](./adr/0001-runtime-selection.md)
 - [harness/README.md](../harness/README.md)
 - `workloads/manifest.py` (the `RuntimeSpec` schema)
+- [PydanticAI: installation and setup](https://pydantic.dev/docs/ai/overview/install/)
+- [PydanticAI: models and providers](https://pydantic.dev/docs/ai/models/overview/) (the `provider:model` matrix and per-provider API key variables)
