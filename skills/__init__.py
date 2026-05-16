@@ -15,12 +15,18 @@ See docs/adr/0006-skills-and-dispatcher.md.
 
 from skills.dispatcher import Dispatcher
 from skills.dispatchers import (
+    DispatchStats,
+    EmbeddingDispatcher,
+    InstrumentedDispatcher,
     KeywordDispatcher,
     LaneDispatcher,
     LLMDispatcher,
+    MultiDispatcher,
+    MultiMode,
     RoutingChainDispatcher,
     SkillBasedDispatcher,
 )
+from skills.embeddings import EmbeddingProvider, cosine_similarity
 from skills.errors import (
     DispatchError,
     NoSkillFound,
@@ -39,10 +45,16 @@ from skills.validators import (
 
 __all__ = [
     "DispatchError",
+    "DispatchStats",
     "Dispatcher",
+    "EmbeddingDispatcher",
+    "EmbeddingProvider",
+    "InstrumentedDispatcher",
     "KeywordDispatcher",
     "LLMDispatcher",
     "LaneDispatcher",
+    "MultiDispatcher",
+    "MultiMode",
     "NoSkillFound",
     "RoutingChainDispatcher",
     "Skill",
@@ -53,6 +65,7 @@ __all__ = [
     "SkillManifestError",
     "SkillMatch",
     "SkillRegistry",
+    "cosine_similarity",
     "discover_skill",
     "parse_skill_md",
     "unknown_tools",

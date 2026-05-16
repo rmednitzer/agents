@@ -24,6 +24,7 @@ __all__ = [
     "BudgetExceededEvent",
     "ContractCompleted",
     "ContractStarted",
+    "DispatchObserved",
     "GovernanceViolated",
     "HarnessEvent",
     "InvariantViolated",
@@ -150,3 +151,19 @@ class MemoryDelete(HarnessEvent):
     namespace: str
     key: str
     existed: bool
+
+
+class DispatchObserved(HarnessEvent):
+    """One dispatch call's performance (BL-042).
+
+    Emitted by InstrumentedDispatcher: per-dispatcher latency, how many
+    skills matched, the top confidence, and whether the result fell
+    below the caller's confidence threshold (a fallback signal).
+    """
+
+    kind: Literal["dispatch_observed"] = "dispatch_observed"
+    dispatcher: str
+    latency_ms: float
+    matched: int
+    top_confidence: float
+    fell_back: bool

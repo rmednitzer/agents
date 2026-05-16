@@ -47,12 +47,12 @@ Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked
 
 - `BL-040` [in-progress] [S] Memory operation events (`MemoryRead`, `MemoryWrite`, `MemoryDelete`) emitted through `EventSink`. Surface in `harness.events` is ready; the `MemoryStore` Protocol needs an optional `sink` parameter. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
 - `BL-041` [pending] [S] OTel-Collector-compatible `EventSink` implementation. `HarnessEvent` already carries `trace_id`, `span_id`, `parent_span_id`. (ADR 0002)
-- `BL-042` [pending] [M] Dispatch performance instrumentation: per-dispatcher latency histograms, runtime token consumption, threshold-fallback rate. Feeds Grafana via OTel. (ADR 0006)
+- `BL-042` [in-progress] [M] Dispatch performance instrumentation: per-dispatcher latency histograms, runtime token consumption, threshold-fallback rate. Feeds Grafana via OTel. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
 
 ## Skill ecosystem
 
-- `BL-050` [pending] [S] `MultiDispatcher` ensemble that combines results from several dispatchers via vote, average, or weighted blend. (ADR 0006)
-- `BL-051` [pending] [M] Embedding-based dispatcher. Vector similarity between query and skill descriptions. Requires an embedding adapter or a Runtime that exposes embeddings. (ADR 0006)
+- `BL-050` [in-progress] [S] `MultiDispatcher` ensemble that combines results from several dispatchers via vote, average, or weighted blend. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-051` [in-progress] [M] Embedding-based dispatcher. Vector similarity between query and skill descriptions. Requires an embedding adapter or a Runtime that exposes embeddings. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
 - `BL-052` [pending] [M] Skill-level contracts (`skills/<name>/contract.py`) that compose with the workload contract. Composition rule: intersection of predicate sets. (ADR 0006)
 - `BL-053` [pending] [M] Skill versioning and rollback. Track multiple versions of the same skill; load by `name@version`. (ADR 0006)
 - `BL-054` [pending] [L] Skill installation from registries: `anthropics/skills` on GitHub, Vercel `skills.sh` marketplace. (ADR 0006)

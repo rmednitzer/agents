@@ -15,15 +15,23 @@ Five reference dispatchers ship with the framework:
 """
 
 from skills.dispatchers.chain import RoutingChainDispatcher
+from skills.dispatchers.embedding import EmbeddingDispatcher
+from skills.dispatchers.instrumented import DispatchStats, InstrumentedDispatcher
 from skills.dispatchers.keyword import KeywordDispatcher
 from skills.dispatchers.lane import LaneDispatcher
 from skills.dispatchers.llm import LLMDispatcher
+from skills.dispatchers.multi import MultiDispatcher, MultiMode
 from skills.dispatchers.skill_based import SkillBasedDispatcher
 
 __all__ = [
+    "DispatchStats",
+    "EmbeddingDispatcher",
+    "InstrumentedDispatcher",
     "KeywordDispatcher",
     "LLMDispatcher",
     "LaneDispatcher",
+    "MultiDispatcher",
+    "MultiMode",
     "RoutingChainDispatcher",
     "SkillBasedDispatcher",
 ]

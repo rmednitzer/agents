@@ -1,0 +1,112 @@
+"""MultiDispatcher: ensemble over several dispatchers (BL-050)."""
+
+from __future__ import annotations
+
+import asyncio
+from collections import defaultdict
+from enum import StrEnum
+from typing import Any
+
+from skills.dispatcher import Dispatcher
+from skills.types import SkillMatch
+
+__all__ = ["MultiDispatcher", "MultiMode"]
+
+
+class MultiMode(StrEnum):
+    """How to combine the members' per-skill confidences.
+
+    - VOTE: score = fraction of members that returned the skill at all;
+      ties broken by mean confidence. Rewards consensus over magnitude.
+    - AVERAGE: score = mean confidence across *all* members (a member
+      that did not return the skill contributes 0), so a skill only one
+      member loves cannot dominate.
+    - WEIGHTED: score = sum(weight_i * confidence_i) / sum(weights),
+      members that did not return the skill contributing 0.
+    """
+
+    VOTE = "vote"
+    AVERAGE = "average"
+    WEIGHTED = "weighted"
+
+
+class MultiDispatcher:
+    """Runs members concurrently and blends their SkillMatches.
+
+    Members are queried with an expanded ``limit`` (members may disagree
+    on the head, so a wider net before blending), then results are
+    aggregated per skill by the chosen mode and the top ``limit``
+    returned. Pure: no side effects, members are assumed pure too.
+    """
+
+    name: str = "multi"
+
+    def __init__(
+        self,
+        members: list[Dispatcher],
+        *,
+        mode: MultiMode = MultiMode.AVERAGE,
+        weights: list[float] | None = None,
+        candidate_limit: int = 10,
+    ) -> None:
+        if not members:
+            raise ValueError("MultiDispatcher requires at least one member")
+        if weights is not None and len(weights) != len(members):
+            raise ValueError("weights must align 1:1 with members")
+        if mode == MultiMode.WEIGHTED and weights is None:
+            raise ValueError("WEIGHTED mode requires weights")
+        self._members = members
+        self._mode = mode
+        self._weights = weights or [1.0] * len(members)
+        self._candidate_limit = candidate_limit
+
+    async def dispatch(
+        self,
+        query: str,
+        *,
+        context: dict[str, Any] | None = None,
+        limit: int = 1,
+    ) -> list[SkillMatch]:
+        if limit <= 0:
+            return []
+        results = await asyncio.gather(
+            *(
+                m.dispatch(query, context=context, limit=self._candidate_limit)
+                for m in self._members
+            )
+        )
+
+        confidences: dict[str, list[float]] = defaultdict(list)
+        weighted_sum: dict[str, float] = defaultdict(float)
+        voters: dict[str, int] = defaultdict(int)
+        for weight, matches in zip(self._weights, results, strict=True):
+            for match in matches:
+                confidences[match.skill_name].append(match.confidence)
+                weighted_sum[match.skill_name] += weight * match.confidence
+                voters[match.skill_name] += 1
+
+        n = len(self._members)
+        total_weight = sum(self._weights)
+        scored: list[tuple[float, str]] = []
+        for skill, confs in confidences.items():
+            if self._mode == MultiMode.VOTE:
+                score = voters[skill] / n
+            elif self._mode == MultiMode.AVERAGE:
+                score = sum(confs) / n
+            else:  # WEIGHTED
+                score = weighted_sum[skill] / total_weight if total_weight else 0.0
+            scored.append((score, skill))
+
+        scored.sort(key=lambda t: (t[0], sum(confidences[t[1]]) / n), reverse=True)
+        return [
+            SkillMatch(
+                skill_name=skill,
+                confidence=max(0.0, min(1.0, score)),
+                rationale=(
+                    f"{self._mode.value}: {voters[skill]}/{n} members, "
+                    f"mean conf {sum(confidences[skill]) / len(confidences[skill]):.3f}"
+                ),
+                dispatcher=self.name,
+            )
+            for score, skill in scored[:limit]
+        ]
