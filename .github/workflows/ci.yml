@@ -35,7 +35,7 @@ jobs:
           enable-cache: true
       - run: uv python install 3.12
       - run: uv sync --all-extras
-      - run: uv run mypy harness memory workloads
+      - run: uv run mypy harness memory workloads skills
 
   test:
     runs-on: ubuntu-latest

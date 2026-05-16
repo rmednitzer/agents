@@ -67,7 +67,8 @@ def load_workload(name: str) -> LoadedWorkload:
         ManifestNotFound: manifest.yaml is missing.
         ContractNotFound: contract.py is missing or does not export
             'contract'.
-        WorkloadValidationError: The manifest fails Pydantic validation.
+        WorkloadValidationError: manifest.yaml is not valid YAML, is not
+            a mapping, or fails Pydantic validation.
     """
     try:
         pkg = importlib.import_module(f"workloads.{name}")
@@ -83,7 +84,12 @@ def load_workload(name: str) -> LoadedWorkload:
     if not manifest_path.is_file():
         raise ManifestNotFound(name, str(manifest_path))
 
-    raw = yaml.safe_load(manifest_path.read_text())
+    try:
+        raw = yaml.safe_load(manifest_path.read_text())
+    except yaml.YAMLError as exc:
+        raise WorkloadValidationError(name, f"YAML parse: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise WorkloadValidationError(name, f"manifest must be a mapping, got {type(raw).__name__}")
     try:
         manifest = WorkloadManifest.model_validate(raw)
     except ValidationError as exc:

@@ -21,7 +21,7 @@ format:
 	uv run ruff format .
 
 type-check:
-	uv run mypy harness memory workloads
+	uv run mypy harness memory workloads skills
 
 test:
 	uv run pytest
