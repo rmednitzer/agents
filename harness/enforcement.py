@@ -156,11 +156,22 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         resume=resume,
     )
 
-    # 4a. An approval pause short-circuits: hand the ResumableState back
-    # to the caller untouched (BL-002). The guard already emitted the
-    # ApprovalRequested event, so the audit trail is complete.
+    # 4a. An approval pause short-circuits (BL-002). The harness owns the
+    # contract boundary, so it (not the runtime adapter) is the source of
+    # truth for identity and trace_id: stamp them onto the state the
+    # runtime produced, keeping its pending_approvals/completed_actions.
+    # Reusing this run's trace_id keeps the audit trail and any resume on
+    # one trace. The guard already emitted ApprovalRequested.
     if isinstance(result, ResumableState):
-        return result
+        return result.model_copy(
+            update={
+                "contract_name": contract.name,
+                "contract_version": contract.version,
+                "workload": contract.name,
+                "input_payload": input.model_dump(mode="json"),
+                "trace_id": trace_id,
+            }
+        )
 
     # 5. Parse output
     if isinstance(result, output_model):

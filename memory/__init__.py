@@ -12,6 +12,7 @@ Workloads serialize their own data; the store handles raw bytes.
 
 from memory.errors import MemoryError, NamespaceViolation
 from memory.inmemory import InMemoryStore
+from memory.sqlite import SQLiteStore
 from memory.store import (
     BatchMemoryStore,
     CASMemoryStore,
@@ -40,6 +41,7 @@ __all__ = [
     "MemoryStore",
     "Namespace",
     "NamespaceViolation",
+    "SQLiteStore",
     "ScannableStore",
     "SweepableStore",
     "TTLSweeper",

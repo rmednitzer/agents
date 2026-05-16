@@ -33,6 +33,7 @@ import asyncio
 import contextlib
 import functools
 import inspect
+import time
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -381,17 +382,23 @@ class PydanticAIRuntime:
 
         asyncio.wait_for cancels the run task the moment the deadline
         passes, instead of waiting for the next cooperative checkpoint.
-        On timeout, ``budget.check_wall_clock`` emits BudgetExceededEvent
-        and raises BudgetExceeded.
+        On timeout, ``budget.check_wall_clock`` is the authoritative
+        raise (it emits BudgetExceededEvent with the tracker's own
+        elapsed accounting). The fallback only fires in the rare case
+        where elapsed rounds exactly to the limit and the strict ``>``
+        check does not trip; it reports the real measured elapsed.
         """
         limit = budget.budget.max_wall_clock_seconds if budget is not None else None
         if limit is None:
             return await coro
+        start = time.monotonic()
         try:
             return await asyncio.wait_for(coro, timeout=limit)
         except TimeoutError:
-            budget.check_wall_clock()  # type: ignore[union-attr]
-            raise BudgetExceeded("wall_clock", limit, limit) from None
+            assert budget is not None
+            elapsed = time.monotonic() - start
+            budget.check_wall_clock()
+            raise BudgetExceeded("wall_clock", limit, elapsed) from None
 
     def _resumable(self, state: _GuardState, prompt: str) -> ResumableState:
         assert state.pause is not None

@@ -426,15 +426,16 @@ class _PausingRuntime:
 
         from harness.interruption import ApprovalInterruption
 
+        # Deliberately wrong identity/trace: the harness must overwrite.
         return ResumableState(
-            contract_name="tp",
-            contract_version="0.1.0",
-            workload="tp",
-            input_payload={"prompt": prompt},
+            contract_name="WRONG",
+            contract_version="WRONG",
+            workload="WRONG",
+            input_payload={"adapter": "junk"},
             pending_approvals=[
                 ApprovalInterruption(id="i1", created_at=datetime.now(UTC), tool="risky")
             ],
-            trace_id="tr",
+            trace_id="adapter-generated-trace",
         )
 
     def stream(self, prompt: str, **kw: Any) -> AsyncIterator[Any]:
@@ -442,17 +443,27 @@ class _PausingRuntime:
 
 
 @pytest.mark.asyncio
-async def test_resumable_state_returned_untouched() -> None:
-    """BL-002: a ResumableState from the runtime short-circuits parsing."""
-    contract: Contract[_Input, _Output] = Contract(name="tp", version="0.1.0")
+async def test_resumable_state_stamped_with_harness_identity() -> None:
+    """BL-002: harness owns identity + trace_id on the paused state."""
+    contract: Contract[_Input, _Output] = Contract(name="tp", version="2.3.4")
+    sink = MemorySink()
     result = await run_under_contract(
         runtime=_PausingRuntime(),
         contract=contract,
         input=_Input(query="hi"),
         output_model=_Output,
+        sink=sink,
     )
     assert isinstance(result, ResumableState)
+    # Runtime-supplied approvals are preserved...
     assert result.pending_approvals[0].tool == "risky"
+    # ...but the harness is the source of truth for identity + trace.
+    assert result.contract_name == "tp"
+    assert result.contract_version == "2.3.4"
+    assert result.workload == "tp"
+    assert result.input_payload == {"query": "hi"}
+    started = next(e for e in sink.events if e.kind == "contract_started")
+    assert result.trace_id == started.trace_id
 
 
 @pytest.mark.asyncio

@@ -20,21 +20,14 @@ import hashlib
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
-from harness.events import MemoryDelete, MemoryRead, MemoryWrite
-from harness.sinks import EventSink, NullSink
+from harness.sinks import EventSink
+from memory._audit import MemoryAudit
 from memory.types import Namespace
 from memory.validators import validate_key
 
 __all__ = ["InMemoryStore"]
-
-# HarnessEvent base fields the caller must supply for audit emission.
-# timestamp/kind are set per emit; parent_span_id is optional.
-_REQUIRED_BASE_FIELDS = frozenset(
-    {"workload", "contract", "contract_version", "trace_id", "span_id"}
-)
 
 
 @dataclass
@@ -67,60 +60,11 @@ class InMemoryStore:
         self._namespace = namespace
         self._data: dict[str, _Entry] = {}
         self._lock = asyncio.Lock()
-        self._sink: EventSink = sink if sink is not None else NullSink()
-        base = base_event_fields if base_event_fields is not None else {}
-        if base:
-            missing = _REQUIRED_BASE_FIELDS - base.keys()
-            if missing:
-                raise ValueError(
-                    "base_event_fields missing required keys: "
-                    f"{sorted(missing)} (a partial dict would fail mid-run "
-                    "on the first emitted event)"
-                )
-        self._base = base
+        self._audit = MemoryAudit(namespace.name, sink, base_event_fields)
 
     @property
     def namespace(self) -> Namespace:
         return self._namespace
-
-    # --- audit helpers -------------------------------------------------
-
-    def _emit_read(self, key: str, hit: bool) -> None:
-        if self._base:
-            self._sink.emit(
-                MemoryRead(
-                    timestamp=datetime.now(UTC),
-                    namespace=self._namespace.name,
-                    key=key,
-                    hit=hit,
-                    **self._base,
-                )
-            )
-
-    def _emit_write(self, key: str, value_bytes: int, ttl_seconds: float | None) -> None:
-        if self._base:
-            self._sink.emit(
-                MemoryWrite(
-                    timestamp=datetime.now(UTC),
-                    namespace=self._namespace.name,
-                    key=key,
-                    value_bytes=value_bytes,
-                    ttl_seconds=ttl_seconds,
-                    **self._base,
-                )
-            )
-
-    def _emit_delete(self, key: str, existed: bool) -> None:
-        if self._base:
-            self._sink.emit(
-                MemoryDelete(
-                    timestamp=datetime.now(UTC),
-                    namespace=self._namespace.name,
-                    key=key,
-                    existed=existed,
-                    **self._base,
-                )
-            )
 
     def _effective_ttl(self, ttl_seconds: float | None) -> float | None:
         return ttl_seconds if ttl_seconds is not None else self._namespace.retention_seconds
@@ -144,7 +88,7 @@ class InMemoryStore:
         validate_key(key)
         async with self._lock:
             value = self._live_value(key, time.time())
-        self._emit_read(key, hit=value is not None)
+        self._audit.read(key, hit=value is not None)
         return value
 
     async def write(
@@ -159,7 +103,7 @@ class InMemoryStore:
         expires_at = time.time() + effective_ttl if effective_ttl is not None else None
         async with self._lock:
             self._data[key] = _Entry(value=value, expires_at=expires_at)
-        self._emit_write(key, len(value), effective_ttl)
+        self._audit.write(key, value_bytes=len(value), ttl_seconds=effective_ttl)
 
     async def delete(self, key: str) -> None:
         validate_key(key)
@@ -168,7 +112,7 @@ class InMemoryStore:
             # (read/mget treat it as a miss); the audit must agree.
             existed = self._live_value(key, time.time()) is not None
             self._data.pop(key, None)
-        self._emit_delete(key, existed=existed)
+        self._audit.delete(key, existed=existed)
 
     async def list_keys(self, prefix: str = "") -> list[str]:
         async with self._lock:
@@ -189,7 +133,7 @@ class InMemoryStore:
             now = time.time()
             values = [self._live_value(k, now) for k in keys]
         for k, v in zip(keys, values, strict=True):
-            self._emit_read(k, hit=v is not None)
+            self._audit.read(k, hit=v is not None)
         return values
 
     async def mset(
@@ -206,7 +150,7 @@ class InMemoryStore:
             for k, v in items.items():
                 self._data[k] = _Entry(value=v, expires_at=expires_at)
         for k, v in items.items():
-            self._emit_write(k, len(v), effective_ttl)
+            self._audit.write(k, value_bytes=len(v), ttl_seconds=effective_ttl)
 
     async def mdelete(self, keys: Sequence[str]) -> None:
         for k in keys:
@@ -218,7 +162,7 @@ class InMemoryStore:
                 existed[k] = self._live_value(k, now) is not None
                 self._data.pop(k, None)
         for k, did in existed.items():
-            self._emit_delete(k, existed=did)
+            self._audit.delete(k, existed=did)
 
     # --- ScannableStore (BL-082) --------------------------------------
 
@@ -274,7 +218,7 @@ class InMemoryStore:
                 return False
             expires_at = time.time() + effective_ttl if effective_ttl is not None else None
             self._data[key] = _Entry(value=new, expires_at=expires_at)
-        self._emit_write(key, len(new), effective_ttl)
+        self._audit.write(key, value_bytes=len(new), ttl_seconds=effective_ttl)
         return True
 
     async def compare_and_delete(self, key: str, expected: bytes) -> bool:
@@ -284,7 +228,7 @@ class InMemoryStore:
             if current != expected:
                 return False
             del self._data[key]
-        self._emit_delete(key, existed=True)
+        self._audit.delete(key, existed=True)
         return True
 
     # --- SweepableStore (BL-080) --------------------------------------
