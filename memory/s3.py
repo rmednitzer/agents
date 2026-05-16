@@ -158,7 +158,15 @@ class S3Store:
         if cursor:
             kw["ContinuationToken"] = cursor
         resp = self._s3.list_objects_v2(**kw)
-        keys = sorted(item["Key"][len(self._prefix) :] for item in resp.get("Contents", []))
+        # Exclude expired-but-unswept keys so scan() agrees with
+        # read()/list_keys() and the ScannableStore contract (a page may
+        # then yield fewer than `count`; the caller continues via the
+        # cursor). The head-per-key cost is the documented S3 tradeoff.
+        keys = sorted(
+            short
+            for item in resp.get("Contents", [])
+            if self._get_live(short := item["Key"][len(self._prefix) :]) is not None
+        )
         next_cursor = resp.get("NextContinuationToken", "") if resp.get("IsTruncated") else ""
         return next_cursor, keys
 

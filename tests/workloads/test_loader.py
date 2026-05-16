@@ -157,6 +157,69 @@ def _full_workload(root: Path, name: str, manifest_text: str) -> Iterator[str]:
         importlib.invalidate_caches()
 
 
+def test_real_contract_import_error_propagates_not_missing(tmp_path: Path) -> None:
+    """A broken contract.py surfaces the real ImportError, not ContractNotFound."""
+    name = "_wl_brokencontract"
+    pkg = tmp_path / name
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "manifest.yaml").write_text(_MIN_MANIFEST.format(name=name))
+    (pkg / "contract.py").write_text("import a_module_that_truly_does_not_exist_xyz\n")
+    workloads.__path__.append(str(tmp_path))
+    importlib.invalidate_caches()
+    try:
+        with pytest.raises(ModuleNotFoundError, match="a_module_that_truly_does_not_exist_xyz"):
+            load_workload(name)
+    finally:
+        workloads.__path__.remove(str(tmp_path))
+        for m in (f"workloads.{name}", f"workloads.{name}.contract"):
+            sys.modules.pop(m, None)
+        importlib.invalidate_caches()
+
+
+def test_missing_contract_still_reports_contract_not_found(tmp_path: Path) -> None:
+    """A genuinely absent contract.py is still ContractNotFound (not masked)."""
+    name = "_wl_nocontract"
+    pkg = tmp_path / name
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "manifest.yaml").write_text(_MIN_MANIFEST.format(name=name))
+    workloads.__path__.append(str(tmp_path))
+    importlib.invalidate_caches()
+    try:
+        with pytest.raises(ContractNotFound, match="missing"):
+            load_workload(name)
+    finally:
+        workloads.__path__.remove(str(tmp_path))
+        sys.modules.pop(f"workloads.{name}", None)
+        importlib.invalidate_caches()
+
+
+def test_bl011_resolves_versioned_skill_spec(tmp_path: Path) -> None:
+    """BL-011 accepts the BL-053 name@version form via registry.get."""
+    from skills.registry import SkillRegistry
+    from skills.types import Skill, SkillManifest
+
+    gen = _full_workload(
+        tmp_path,
+        "_wl_verskill",
+        _MIN_MANIFEST.format(name="_wl_verskill") + "skills: ['calc@2.0.0']\n",
+    )
+    name = next(gen)
+    try:
+        reg = SkillRegistry()
+        reg.add(
+            Skill(
+                manifest=SkillManifest(name="calc", description="d", metadata={"version": "2.0.0"}),
+                path=tmp_path / "calc",
+            )
+        )
+        lw = load_workload(name, registry=reg)
+        assert lw.manifest.skills == ["calc@2.0.0"]
+    finally:
+        next(gen, None)
+
+
 def test_bl010_name_must_match_directory(tmp_path: Path) -> None:
     """BL-010: a manifest name that differs from the package dir is rejected."""
     gen = _temp_workload(tmp_path, "_dir_name_x", _MIN_MANIFEST.format(name="not_dir_name_x"))

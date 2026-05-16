@@ -108,6 +108,45 @@ async def test_conditional_cas(ddb_client: object) -> None:
 
 
 @pytest.mark.asyncio
+async def test_cas_treats_expired_row_as_absent(ddb_client: object) -> None:
+    """Read/CAS parity: an expired-but-present row counts as absent."""
+    s = _store(ddb_client)
+    await s.write("k", b"old", ttl_seconds=0.02)
+    await asyncio.sleep(0.05)
+    assert await s.read("k") is None
+    # CAS-create must succeed against the expired row...
+    assert await s.compare_and_set("k", None, b"new") is True
+    assert await s.read("k") == b"new"
+    # ...and compare-and-delete against an expired row must fail.
+    await s.write("e", b"x", ttl_seconds=0.02)
+    await asyncio.sleep(0.05)
+    assert await s.compare_and_delete("e", b"x") is False
+
+
+@pytest.mark.asyncio
+async def test_batch_write_retries_unprocessed_items(ddb_client: object) -> None:
+    """mset retries UnprocessedItems instead of silently dropping them."""
+    s = _store(ddb_client)
+    real = s._db.batch_write_item
+    calls = {"n": 0}
+
+    def flaky(**kw: object) -> object:
+        calls["n"] += 1
+        resp = real(**kw)  # actually process (PutRequest is idempotent)
+        if calls["n"] == 1:
+            # ...but report one item as throttled so the retry path runs.
+            ri = next(iter(kw["RequestItems"].values()))  # type: ignore[union-attr]
+            return {"UnprocessedItems": {s._table: ri[:1]}}
+        return resp
+
+    s._db.batch_write_item = flaky  # type: ignore[attr-defined]
+    await s.mset({"a": b"1", "b": b"2"})
+    assert calls["n"] >= 2  # retried
+    assert await s.read("a") == b"1"
+    assert await s.read("b") == b"2"
+
+
+@pytest.mark.asyncio
 async def test_audit_events(ddb_client: object) -> None:
     base = {
         "workload": "w",

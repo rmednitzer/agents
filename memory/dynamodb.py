@@ -20,6 +20,7 @@ Design:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -27,10 +28,13 @@ import time
 from typing import Any
 
 from memory._audit import MemoryAudit
+from memory.errors import MemoryError as _MemoryError
 from memory.types import Namespace
 from memory.validators import validate_key
 
 __all__ = ["DynamoDBStore"]
+
+_BATCH_MAX_RETRIES = 8
 
 
 class DynamoDBStore:
@@ -154,18 +158,36 @@ class DynamoDBStore:
             out.append(v)
         return out
 
+    async def _batch_write(self, requests: list[dict[str, Any]]) -> None:
+        """Submit write/delete requests in 25-item chunks.
+
+        DynamoDB returns throttled requests in ``UnprocessedItems``
+        rather than failing; ignoring them silently drops data. Each
+        chunk is retried (bounded, exponential backoff) until empty; if
+        items remain after the retry budget, raise so the caller does
+        NOT emit success audit for dropped writes.
+        """
+        for i in range(0, len(requests), 25):
+            pending = requests[i : i + 25]
+            for attempt in range(_BATCH_MAX_RETRIES):
+                resp = self._db.batch_write_item(RequestItems={self._table: pending})
+                pending = resp.get("UnprocessedItems", {}).get(self._table, [])
+                if not pending:
+                    break
+                await asyncio.sleep(min(2**attempt * 0.05, 2.0))
+            if pending:
+                raise _MemoryError(
+                    f"DynamoDB left {len(pending)} item(s) unprocessed after "
+                    f"{_BATCH_MAX_RETRIES} retries"
+                )
+
     async def mset(self, items: dict[str, bytes], *, ttl_seconds: float | None = None) -> None:
         for k in items:
             validate_key(k)
         ttl = self._ttl(ttl_seconds)
-        entries = list(items.items())
-        for i in range(0, len(entries), 25):
-            chunk = entries[i : i + 25]
-            self._db.batch_write_item(
-                RequestItems={
-                    self._table: [{"PutRequest": {"Item": self._item(k, v, ttl)}} for k, v in chunk]
-                }
-            )
+        await self._batch_write(
+            [{"PutRequest": {"Item": self._item(k, v, ttl)}} for k, v in items.items()]
+        )
         for k, v in items.items():
             self._audit.write(k, value_bytes=len(v), ttl_seconds=ttl)
 
@@ -173,15 +195,9 @@ class DynamoDBStore:
         for k in keys:
             validate_key(k)
         existed = {k: self._live_item(k) is not None for k in keys}
-        for i in range(0, len(keys), 25):
-            chunk = keys[i : i + 25]
-            self._db.batch_write_item(
-                RequestItems={
-                    self._table: [
-                        {"DeleteRequest": {"Key": {"pk": {"S": self._pk(k)}}}} for k in chunk
-                    ]
-                }
-            )
+        await self._batch_write(
+            [{"DeleteRequest": {"Key": {"pk": {"S": self._pk(k)}}}} for k in keys]
+        )
         for k, did in existed.items():
             self._audit.delete(k, existed=did)
 
@@ -220,15 +236,23 @@ class DynamoDBStore:
         ttl = self._ttl(ttl_seconds)
         from botocore.exceptions import ClientError
 
+        now = {"N": str(int(time.time()))}
         kw: dict[str, Any] = {
             "TableName": self._table,
             "Item": self._item(key, new, ttl),
         }
         if expected is None:
-            kw["ConditionExpression"] = "attribute_not_exists(pk)"
+            # Read treats an expired-but-unswept row as absent (Dynamo
+            # TTL deletion lags); CAS-create must agree, so an expired
+            # row also satisfies the "absent" precondition.
+            kw["ConditionExpression"] = (
+                "attribute_not_exists(pk) OR (attribute_exists(exp) AND exp < :now)"
+            )
+            kw["ExpressionAttributeValues"] = {":now": now}
         else:
-            kw["ConditionExpression"] = "v = :e"
-            kw["ExpressionAttributeValues"] = {":e": {"B": expected}}
+            # Match value AND not expired (an expired row is absent).
+            kw["ConditionExpression"] = "v = :e AND (attribute_not_exists(exp) OR exp > :now)"
+            kw["ExpressionAttributeValues"] = {":e": {"B": expected}, ":now": now}
         try:
             self._db.put_item(**kw)
         except ClientError as exc:
@@ -246,8 +270,13 @@ class DynamoDBStore:
             self._db.delete_item(
                 TableName=self._table,
                 Key={"pk": {"S": self._pk(key)}},
-                ConditionExpression="v = :e",
-                ExpressionAttributeValues={":e": {"B": expected}},
+                # Parity with read(): an expired row is absent, so a
+                # compare-and-delete against it must not succeed.
+                ConditionExpression="v = :e AND (attribute_not_exists(exp) OR exp > :now)",
+                ExpressionAttributeValues={
+                    ":e": {"B": expected},
+                    ":now": {"N": str(int(time.time()))},
+                },
             )
         except ClientError as exc:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":

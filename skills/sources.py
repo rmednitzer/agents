@@ -36,6 +36,40 @@ __all__ = [
 ]
 
 
+def _safe_name(name: str) -> str:
+    """Reject skill names that are not a single, traversal-free path part.
+
+    A skill name is attacker-influenced (it indexes into a registry /
+    repo). Anything with a separator, ``..``, a leading dot, or that is
+    absolute could escape the source root or install directory.
+    """
+    if (
+        not name
+        or name in (".", "..")
+        or name.startswith(".")
+        or "/" in name
+        or "\\" in name
+        or "\x00" in name
+        or Path(name).name != name
+    ):
+        raise SkillLoadError(name, "unsafe skill name (must be a single path component)")
+    return name
+
+
+def _safe_target(base: Path, member_rel: str) -> Path:
+    """Resolve an archive member under ``base``, refusing any escape.
+
+    Defends against tar path traversal (``../../etc``) and absolute
+    member paths in untrusted/compromised archives.
+    """
+    if member_rel.startswith(("/", "\\")) or ".." in Path(member_rel).parts:
+        raise SkillLoadError(member_rel, "unsafe archive member path")
+    resolved = (base / member_rel).resolve()
+    if resolved != base.resolve() and base.resolve() not in resolved.parents:
+        raise SkillLoadError(member_rel, "archive member escapes install directory")
+    return resolved
+
+
 @runtime_checkable
 class SkillSource(Protocol):
     """Materializes a skill bundle directory locally.
@@ -55,6 +89,7 @@ class LocalSkillSource:
         self._root = root
 
     def fetch(self, name: str, dest: Path) -> Path:
+        _safe_name(name)
         src = self._root / name
         if not (src / "SKILL.md").is_file():
             raise SkillLoadError(str(src), "no SKILL.md at source")
@@ -84,24 +119,26 @@ class GitHubSkillSource:
         self._prefix = path_prefix.strip("/")
 
     def fetch(self, name: str, dest: Path) -> Path:
+        _safe_name(name)
         url = self._CODELOAD.format(repo=self._repo, ref=self._ref)
         with urllib.request.urlopen(url, timeout=30) as resp:
             data = resp.read()
-        target = dest / name
+        target = (dest / name).resolve()
         if target.exists():
             shutil.rmtree(target)
         wanted = f"{self._prefix}/{name}/".lstrip("/")
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
             members = tar.getmembers()
             # Archive root is "<repo>-<ref>/"; strip it, then match the
-            # "<prefix>/<name>/" subtree.
+            # "<prefix>/<name>/" subtree. Every member path is validated
+            # against the install dir before any write (tar traversal).
             extracted = False
             for m in members:
                 rel = m.name.split("/", 1)[1] if "/" in m.name else ""
                 if not rel.startswith(wanted) or not m.isfile():
                     continue
                 inner = rel[len(wanted) :]
-                out = target / inner
+                out = _safe_target(target, inner)
                 out.parent.mkdir(parents=True, exist_ok=True)
                 src = tar.extractfile(m)
                 if src is not None:

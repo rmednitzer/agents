@@ -147,6 +147,33 @@ def test_bl053_unversioned_keeps_last_write_wins() -> None:
     assert r.versions("x") == ["0.0.0"]
 
 
+def test_lane_reindexed_when_current_version_changes() -> None:
+    """A new version with a different lane must not leave stale lane entries."""
+    r = SkillRegistry()
+    r.add(
+        Skill(
+            manifest=SkillManifest(
+                name="svc", description="d", metadata={"version": "1.0.0", "lane": "ops"}
+            ),
+            path=Path("/tmp/svc"),
+        )
+    )
+    assert r.by_lane("ops")
+    assert r.by_lane("ops")[0].name == "svc"
+    # Upgrade: same name, new version, different lane.
+    r.add(
+        Skill(
+            manifest=SkillManifest(
+                name="svc", description="d", metadata={"version": "2.0.0", "lane": "docs"}
+            ),
+            path=Path("/tmp/svc"),
+        )
+    )
+    assert r.by_lane("ops") == []  # no stale membership
+    assert [s.name for s in r.by_lane("docs")] == ["svc"]
+    assert r.lanes() == ["docs"]  # empty 'ops' pruned
+
+
 def test_example_skill_loads_from_repo() -> None:
     """The repo's skills/_example/ is discoverable."""
     r = SkillRegistry.from_directory(Path("skills"))

@@ -65,11 +65,19 @@ class SkillRegistry:
         # Re-insert so this version is last (current) in iteration order.
         versions.pop(skill.version, None)
         versions[skill.version] = skill
+        # by_lane() resolves names through _skills (the current
+        # version), so the lane index must track the current skill's
+        # lane: drop every stale entry for this name, then re-add under
+        # the new current lane. Without this, a version with a
+        # different (or absent) lane would still surface under the old
+        # lane after an upgrade/rollback.
+        for members in self._lanes.values():
+            if skill.name in members:
+                members.remove(skill.name)
+        self._lanes = {ln: m for ln, m in self._lanes.items() if m}
         lane = skill.lane
         if lane is not None:
-            existing = self._lanes.setdefault(lane, [])
-            if skill.name not in existing:
-                existing.append(skill.name)
+            self._lanes.setdefault(lane, []).append(skill.name)
 
     def get(self, name: str) -> Skill | None:
         """Resolve a skill. ``name`` or ``name@version`` (BL-053).

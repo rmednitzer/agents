@@ -86,20 +86,33 @@ def load_workload(
         optional main.
 
     Raises:
-        WorkloadNotFound: The package does not exist or is not
-            importable.
+        WorkloadNotFound: The package directory does not exist.
         ManifestNotFound: manifest.yaml is missing.
-        ContractNotFound: contract.py is missing or does not export
-            'contract'.
+        ContractNotFound: contract.py is missing or does not export a
+            Contract.
         WorkloadValidationError: manifest.yaml is not valid YAML, is not
             a mapping, fails Pydantic validation, declares a `name` that
             does not match the package directory (BL-010), or references
             a skill absent from `registry` (BL-011).
+        ImportError: The package, contract.py, or __main__.py exists but
+            failed to import (e.g. a missing dependency). The original
+            exception propagates unmodified so the real failure is not
+            masked as "not found".
     """
     try:
         pkg = importlib.import_module(f"workloads.{name}")
-    except ImportError as exc:
-        raise WorkloadNotFound(name, str(exc)) from exc
+    except ModuleNotFoundError as exc:
+        # The workload package itself being absent is "not found"; a
+        # ModuleNotFoundError naming some *other* module means the
+        # package exists but its __init__ failed to import a
+        # dependency -- surface that real error, do not mislabel it.
+        if exc.name in (f"workloads.{name}", "workloads", None):
+            raise WorkloadNotFound(name, str(exc)) from exc
+        raise
+    except ImportError:
+        # cannot-import-name / circular import inside the package: a
+        # real failure, not "not found". Propagate for honest triage.
+        raise
 
     pkg_file = getattr(pkg, "__file__", None)
     if pkg_file is None:
@@ -107,10 +120,19 @@ def load_workload(
     package_path = Path(pkg_file).parent
 
     def _import(submodule: str) -> ModuleType | None:
+        """Import workloads.<name>.<submodule>.
+
+        Returns None only when the submodule is genuinely absent; a
+        real import failure (missing dependency, syntax error) is
+        propagated, not swallowed.
+        """
+        target = f"workloads.{name}.{submodule}"
         try:
-            return importlib.import_module(f"workloads.{name}.{submodule}")
-        except ImportError:
-            return None
+            return importlib.import_module(target)
+        except ModuleNotFoundError as exc:
+            if exc.name == target:
+                return None
+            raise
 
     return _build_loaded_workload(name, package_path, _import, registry)
 
@@ -198,18 +220,20 @@ def _build_loaded_workload(
         )
 
     # BL-011: every declared skill must resolve when a registry is given.
+    # Use registry.get (resolves bare names AND the BL-053 name@version
+    # form); plain `in` only matches bare names.
     if registry is not None:
-        missing = [s for s in manifest.skills if s not in registry]
+        missing = [s for s in manifest.skills if registry.get(s) is None]
         if missing:
             raise WorkloadValidationError(
                 name,
                 f"skills not found in registry: {', '.join(sorted(missing))}",
             )
 
-    try:
-        contract_mod = import_submodule("contract")
-    except ImportError as exc:
-        raise ContractNotFound(name, f"cannot import contract module: {exc}") from exc
+    # A genuinely-absent contract.py is ContractNotFound; a real import
+    # failure inside it (missing dep, syntax error) propagates as the
+    # original exception for honest triage rather than being relabelled.
+    contract_mod = import_submodule("contract")
     if contract_mod is None:
         raise ContractNotFound(name, "contract.py is missing")
 

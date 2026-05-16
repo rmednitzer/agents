@@ -59,6 +59,43 @@ def test_missing_skill_raises(tmp_path: Path) -> None:
         install_skill(LocalSkillSource(tmp_path), "absent", tmp_path / "out")
 
 
+@pytest.mark.parametrize("evil", ["../escape", "a/b", "..", ".", "", "x\x00y"])
+def test_local_source_rejects_unsafe_names(tmp_path: Path, evil: str) -> None:
+    with pytest.raises(SkillLoadError, match="unsafe"):
+        LocalSkillSource(tmp_path).fetch(evil, tmp_path / "out")
+
+
+def test_github_source_rejects_unsafe_name(tmp_path: Path) -> None:
+    with pytest.raises(SkillLoadError, match="unsafe"):
+        GitHubSkillSource().fetch("../../etc", tmp_path / "out")
+
+
+def test_github_source_rejects_tar_path_traversal(tmp_path: Path, monkeypatch: Any) -> None:
+    # Member escapes the "<prefix>/<name>/" subtree via '..'.
+    archive = _make_tar_gz(
+        {
+            "skills-main/skills/cool/SKILL.md": _SKILL_MD.format(n="cool").encode(),
+            "skills-main/skills/cool/../../../pwned.txt": b"owned",
+        }
+    )
+
+    class _Resp:
+        def __enter__(self) -> _Resp:
+            return self
+
+        def __exit__(self, *a: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return archive
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Resp())
+    with pytest.raises(SkillLoadError, match=r"unsafe|escapes"):
+        install_skill(GitHubSkillSource(path_prefix="skills"), "cool", tmp_path / "o")
+    assert not (tmp_path / "pwned.txt").exists()
+    assert not (tmp_path.parent / "pwned.txt").exists()
+
+
 def _make_tar_gz(entries: dict[str, bytes]) -> bytes:
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:

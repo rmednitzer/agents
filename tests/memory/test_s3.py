@@ -87,6 +87,17 @@ async def test_batch_content_scan_sweep(s3_client: object) -> None:
 
 
 @pytest.mark.asyncio
+async def test_scan_excludes_expired_keys(s3_client: object) -> None:
+    """scan() must agree with read()/list_keys() on expiry."""
+    s = _store(s3_client)
+    await s.write("live", b"v")
+    await s.write("dead", b"v", ttl_seconds=0.02)
+    await asyncio.sleep(0.05)
+    _, page = await s.scan(count=100)
+    assert page == ["live"]
+
+
+@pytest.mark.asyncio
 async def test_audit_events(s3_client: object) -> None:
     base = {
         "workload": "w",
