@@ -19,6 +19,7 @@ Semantics deviation (documented per ADR 0004):
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 from typing import Any
@@ -72,13 +73,21 @@ class S3Store:
         return ttl_seconds if ttl_seconds is not None else self._namespace.retention_seconds
 
     def _get_live(self, key: str) -> bytes | None:
-        """Return value if present and unexpired; delete it if expired."""
+        """Return value if present and unexpired; delete it if expired.
+
+        Only a genuine not-found is a miss. Other ClientErrors
+        (AccessDenied, throttling, transient outages) propagate so a
+        backend failure is not silently reported as "key absent".
+        """
         try:
             obj = self._s3.get_object(Bucket=self._bucket, Key=self._okey(key))
         except self._s3.exceptions.NoSuchKey:
             return None
-        except self._s3.exceptions.ClientError:
-            return None
+        except self._s3.exceptions.ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in ("NoSuchKey", "NoSuchBucket", "404", "NotFound"):
+                return None
+            raise
         exp = obj.get("Metadata", {}).get(_EXPIRES_META)
         if exp is not None and time.time() > float(exp):
             self._s3.delete_object(Bucket=self._bucket, Key=self._okey(key))
@@ -86,9 +95,13 @@ class S3Store:
         body = obj["Body"].read()
         return bytes(body)
 
+    # boto3 is synchronous; every blocking call is offloaded to a worker
+    # thread so an asyncio workload's event loop is never stalled by S3
+    # network I/O. Audit emission stays on the loop (fast, in-memory).
+
     async def read(self, key: str) -> bytes | None:
         validate_key(key)
-        value = self._get_live(key)
+        value = await asyncio.to_thread(self._get_live, key)
         self._audit.read(key, hit=value is not None)
         return value
 
@@ -98,13 +111,23 @@ class S3Store:
         metadata: dict[str, str] = {}
         if ttl is not None:
             metadata[_EXPIRES_META] = str(time.time() + ttl)
-        self._s3.put_object(Bucket=self._bucket, Key=self._okey(key), Body=value, Metadata=metadata)
+        await asyncio.to_thread(
+            self._s3.put_object,
+            Bucket=self._bucket,
+            Key=self._okey(key),
+            Body=value,
+            Metadata=metadata,
+        )
         self._audit.write(key, value_bytes=len(value), ttl_seconds=ttl)
+
+    def _delete_sync(self, key: str) -> bool:
+        existed = self._get_live(key) is not None
+        self._s3.delete_object(Bucket=self._bucket, Key=self._okey(key))
+        return existed
 
     async def delete(self, key: str) -> None:
         validate_key(key)
-        existed = self._get_live(key) is not None
-        self._s3.delete_object(Bucket=self._bucket, Key=self._okey(key))
+        existed = await asyncio.to_thread(self._delete_sync, key)
         self._audit.delete(key, existed=existed)
 
     def _all_live_keys(self) -> list[str]:
@@ -125,16 +148,15 @@ class S3Store:
         return sorted(keys)
 
     async def list_keys(self, prefix: str = "") -> list[str]:
-        return [k for k in self._all_live_keys() if k.startswith(prefix)]
+        keys = await asyncio.to_thread(self._all_live_keys)
+        return [k for k in keys if k.startswith(prefix)]
 
     async def mget(self, keys: list[str]) -> list[bytes | None]:
         for k in keys:
             validate_key(k)
-        out: list[bytes | None] = []
-        for k in keys:
-            v = self._get_live(k)
+        out: list[bytes | None] = await asyncio.to_thread(lambda: [self._get_live(k) for k in keys])
+        for k, v in zip(keys, out, strict=True):
             self._audit.read(k, hit=v is not None)
-            out.append(v)
         return out
 
     async def mset(self, items: dict[str, bytes], *, ttl_seconds: float | None = None) -> None:
@@ -145,11 +167,7 @@ class S3Store:
         for k in keys:
             await self.delete(k)
 
-    async def scan(
-        self, *, cursor: str = "", prefix: str = "", count: int = 100
-    ) -> tuple[str, list[str]]:
-        if count <= 0:
-            return "", []
+    def _scan_sync(self, cursor: str, prefix: str, count: int) -> tuple[str, list[str]]:
         kw: dict[str, Any] = {
             "Bucket": self._bucket,
             "Prefix": f"{self._prefix}{prefix}",
@@ -170,12 +188,19 @@ class S3Store:
         next_cursor = resp.get("NextContinuationToken", "") if resp.get("IsTruncated") else ""
         return next_cursor, keys
 
+    async def scan(
+        self, *, cursor: str = "", prefix: str = "", count: int = 100
+    ) -> tuple[str, list[str]]:
+        if count <= 0:
+            return "", []
+        return await asyncio.to_thread(self._scan_sync, cursor, prefix, count)
+
     async def write_content(self, value: bytes, *, ttl_seconds: float | None = None) -> str:
         key = hashlib.sha256(value).hexdigest()
         await self.write(key, value, ttl_seconds=ttl_seconds)
         return key
 
-    async def sweep_expired(self) -> int:
+    def _sweep_sync(self) -> int:
         removed = 0
         token: str | None = None
         while True:
@@ -193,3 +218,6 @@ class S3Store:
                 break
             token = resp.get("NextContinuationToken")
         return removed
+
+    async def sweep_expired(self) -> int:
+        return await asyncio.to_thread(self._sweep_sync)

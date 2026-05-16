@@ -92,9 +92,12 @@ class DynamoDBStore:
             return None
         return item
 
+    # boto3 is synchronous; blocking calls run in a worker thread so an
+    # asyncio event loop is never stalled by DynamoDB network I/O.
+
     async def read(self, key: str) -> bytes | None:
         validate_key(key)
-        item = self._live_item(key)
+        item = await asyncio.to_thread(self._live_item, key)
         value = bytes(item["v"]["B"]) if item is not None else None
         self._audit.read(key, hit=value is not None)
         return value
@@ -108,13 +111,19 @@ class DynamoDBStore:
     async def write(self, key: str, value: bytes, *, ttl_seconds: float | None = None) -> None:
         validate_key(key)
         ttl = self._ttl(ttl_seconds)
-        self._db.put_item(TableName=self._table, Item=self._item(key, value, ttl))
+        await asyncio.to_thread(
+            self._db.put_item, TableName=self._table, Item=self._item(key, value, ttl)
+        )
         self._audit.write(key, value_bytes=len(value), ttl_seconds=ttl)
+
+    def _delete_sync(self, key: str) -> bool:
+        existed = self._live_item(key) is not None
+        self._db.delete_item(TableName=self._table, Key={"pk": {"S": self._pk(key)}})
+        return existed
 
     async def delete(self, key: str) -> None:
         validate_key(key)
-        existed = self._live_item(key) is not None
-        self._db.delete_item(TableName=self._table, Key={"pk": {"S": self._pk(key)}})
+        existed = await asyncio.to_thread(self._delete_sync, key)
         self._audit.delete(key, existed=existed)
 
     def _scan_page(self, start: dict[str, Any] | None, limit: int | None) -> Any:
@@ -129,7 +138,7 @@ class DynamoDBStore:
             kw["Limit"] = limit
         return self._db.scan(**kw)
 
-    async def list_keys(self, prefix: str = "") -> list[str]:
+    def _list_sync(self, prefix: str) -> list[str]:
         keys: list[str] = []
         start: dict[str, Any] | None = None
         now = time.time()
@@ -147,15 +156,23 @@ class DynamoDBStore:
                 break
         return sorted(keys)
 
+    async def list_keys(self, prefix: str = "") -> list[str]:
+        return await asyncio.to_thread(self._list_sync, prefix)
+
     async def mget(self, keys: list[str]) -> list[bytes | None]:
         for k in keys:
             validate_key(k)
-        out: list[bytes | None] = []
-        for k in keys:  # per-key keeps lazy-expiry semantics uniform
-            item = self._live_item(k)
-            v = bytes(item["v"]["B"]) if item is not None else None
+
+        def _mget_sync() -> list[bytes | None]:
+            result: list[bytes | None] = []
+            for k in keys:  # per-key keeps lazy-expiry semantics uniform
+                item = self._live_item(k)
+                result.append(bytes(item["v"]["B"]) if item is not None else None)
+            return result
+
+        out = await asyncio.to_thread(_mget_sync)
+        for k, v in zip(keys, out, strict=True):
             self._audit.read(k, hit=v is not None)
-            out.append(v)
         return out
 
     async def _batch_write(self, requests: list[dict[str, Any]]) -> None:
@@ -170,7 +187,9 @@ class DynamoDBStore:
         for i in range(0, len(requests), 25):
             pending = requests[i : i + 25]
             for attempt in range(_BATCH_MAX_RETRIES):
-                resp = self._db.batch_write_item(RequestItems={self._table: pending})
+                resp = await asyncio.to_thread(
+                    self._db.batch_write_item, RequestItems={self._table: pending}
+                )
                 pending = resp.get("UnprocessedItems", {}).get(self._table, [])
                 if not pending:
                     break
@@ -201,11 +220,7 @@ class DynamoDBStore:
         for k, did in existed.items():
             self._audit.delete(k, existed=did)
 
-    async def scan(
-        self, *, cursor: str = "", prefix: str = "", count: int = 100
-    ) -> tuple[str, list[str]]:
-        if count <= 0:
-            return "", []
+    def _scan_sync(self, cursor: str, prefix: str, count: int) -> tuple[str, list[str]]:
         start = json.loads(base64.b64decode(cursor).decode()) if cursor else None
         resp = self._scan_page(start, count)
         now = time.time()
@@ -218,6 +233,13 @@ class DynamoDBStore:
         lek = resp.get("LastEvaluatedKey")
         next_cursor = base64.b64encode(json.dumps(lek).encode()).decode() if lek else ""
         return next_cursor, keys
+
+    async def scan(
+        self, *, cursor: str = "", prefix: str = "", count: int = 100
+    ) -> tuple[str, list[str]]:
+        if count <= 0:
+            return "", []
+        return await asyncio.to_thread(self._scan_sync, cursor, prefix, count)
 
     async def write_content(self, value: bytes, *, ttl_seconds: float | None = None) -> str:
         key = hashlib.sha256(value).hexdigest()
@@ -254,7 +276,7 @@ class DynamoDBStore:
             kw["ConditionExpression"] = "v = :e AND (attribute_not_exists(exp) OR exp > :now)"
             kw["ExpressionAttributeValues"] = {":e": {"B": expected}, ":now": now}
         try:
-            self._db.put_item(**kw)
+            await asyncio.to_thread(lambda: self._db.put_item(**kw))
         except ClientError as exc:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 return False
@@ -267,16 +289,18 @@ class DynamoDBStore:
         from botocore.exceptions import ClientError
 
         try:
-            self._db.delete_item(
-                TableName=self._table,
-                Key={"pk": {"S": self._pk(key)}},
-                # Parity with read(): an expired row is absent, so a
-                # compare-and-delete against it must not succeed.
-                ConditionExpression="v = :e AND (attribute_not_exists(exp) OR exp > :now)",
-                ExpressionAttributeValues={
-                    ":e": {"B": expected},
-                    ":now": {"N": str(int(time.time()))},
-                },
+            await asyncio.to_thread(
+                lambda: self._db.delete_item(
+                    TableName=self._table,
+                    Key={"pk": {"S": self._pk(key)}},
+                    # Parity with read(): an expired row is absent, so a
+                    # compare-and-delete against it must not succeed.
+                    ConditionExpression=("v = :e AND (attribute_not_exists(exp) OR exp > :now)"),
+                    ExpressionAttributeValues={
+                        ":e": {"B": expected},
+                        ":now": {"N": str(int(time.time()))},
+                    },
+                )
             )
         except ClientError as exc:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
@@ -285,7 +309,7 @@ class DynamoDBStore:
         self._audit.delete(key, existed=True)
         return True
 
-    async def sweep_expired(self) -> int:
+    def _sweep_sync(self) -> int:
         removed = 0
         start: dict[str, Any] | None = None
         now = time.time()
@@ -300,3 +324,6 @@ class DynamoDBStore:
             if not start:
                 break
         return removed
+
+    async def sweep_expired(self) -> int:
+        return await asyncio.to_thread(self._sweep_sync)

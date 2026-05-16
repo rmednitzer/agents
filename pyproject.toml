@@ -40,6 +40,7 @@ aws = [
 ]
 otel = [
     "opentelemetry-sdk>=1.30.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.30.0",
 ]
 crypto = [
     "cryptography>=43.0.0",
@@ -57,6 +58,7 @@ dev = [
     "boto3>=1.40.0",
     "moto[s3,dynamodb]>=5.0.0",
     "opentelemetry-sdk>=1.30.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.30.0",
     "cryptography>=43.0.0",
 ]
 

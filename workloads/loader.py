@@ -172,11 +172,14 @@ def load_workload_from_path(
     def _import(submodule: str) -> ModuleType | None:
         file = package_path / f"{submodule}.py"
         if not file.is_file():
-            return None
+            return None  # genuinely absent
         mod_name = f"_oot_workload_{name}_{submodule}".replace("-", "_")
         spec = importlib.util.spec_from_file_location(mod_name, file)
         if spec is None or spec.loader is None:
-            return None
+            # The file exists but a loader could not be built: a real
+            # setup failure, not "absent". Surface it rather than let
+            # it be misreported as "contract.py is missing".
+            raise ImportError(f"cannot build import spec for {file}")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module

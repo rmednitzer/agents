@@ -71,6 +71,30 @@ async def test_prefix_scoped_role() -> None:
 
 
 @pytest.mark.asyncio
+async def test_scoped_list_cannot_enumerate_out_of_scope() -> None:
+    """Regression: a broad list prefix must not bypass a role's scope."""
+    policy = RoleACL(
+        roles={"carol": "scoped"},
+        grants={"scoped": {"read", "list"}},
+        prefixes={"scoped": ["team-a."]},
+    )
+    inner = _inner()
+    await inner.write("team-a.doc", b"mine")
+    await inner.write("team-b.secret", b"theirs")
+    s = ACLStore(inner, policy, "carol")
+
+    # Listing within scope is allowed...
+    assert await s.list_keys("team-a.") == ["team-a.doc"]
+    assert await s.list_keys("team-a.sub") == []
+    # ...but a broad/empty prefix that would reveal other teams' keys
+    # is denied (it is not within the granted scope).
+    with pytest.raises(AccessDenied):
+        await s.list_keys("")
+    with pytest.raises(AccessDenied):
+        await s.list_keys("team")
+
+
+@pytest.mark.asyncio
 async def test_acl_composes_over_encryption() -> None:
     inner = _inner()
     enc = EncryptedStore(inner, StaticKeyProvider(b"0" * 32))

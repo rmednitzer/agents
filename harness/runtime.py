@@ -182,6 +182,50 @@ def _resolved_decision(
     return None
 
 
+async def _gate(
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    guard: ToolGuard | None,
+    budget: BudgetTracker | None,
+    resume: ResumableState | None,
+    state: _GuardState,
+    used_approvals: set[str],
+) -> str | None:
+    """Guard + budget gate for one proposed tool call.
+
+    Returns a soft-reject message to surface to the model, or None to
+    proceed. Raises GovernanceViolation (hard reject), _ApprovalPause
+    (approval needed, no decision yet), or ApprovalDenied. Used for both
+    locally-defined tools and MCP-exposed tools so neither bypasses
+    governance / budget (BL-001/073).
+    """
+    if guard is not None:
+        response = await guard.check(name, arguments)
+        if response.decision == GuardDecision.REJECT:
+            if response.severity == Severity.HARD:
+                state.governance = GovernanceViolation(response.reason or "governance", name)
+                raise state.governance
+            return f"[blocked: {response.reason or 'governance predicate failed'}]"
+        if response.decision == GuardDecision.REQUIRE_APPROVAL:
+            decided = _resolved_decision(resume, name, used_approvals)
+            if decided is None:
+                interruption = ApprovalInterruption(
+                    id=response.interruption_id or uuid.uuid4().hex,
+                    created_at=datetime.now(UTC),
+                    tool=name,
+                    arguments=arguments,
+                )
+                state.pause = interruption
+                raise _ApprovalPause(interruption)
+            if decided.decision == "denied":
+                state.denied = ApprovalDeniedError(name, decided.decision_reason)
+                raise state.denied
+    if budget is not None:
+        budget.consume_tool_call(tool=name)
+    return None
+
+
 def _wrap_tool(
     tool: Any,
     *,
@@ -200,39 +244,20 @@ def _wrap_tool(
     name = _tool_name(tool)
     is_async = inspect.iscoroutinefunction(func)
 
-    async def _gate(arguments: dict[str, Any]) -> str | None:
-        """Return a soft-reject message to surface, or None to proceed.
-
-        Raises on hard reject / approval pause / denial.
-        """
-        if guard is not None:
-            response = await guard.check(name, arguments)
-            if response.decision == GuardDecision.REJECT:
-                if response.severity == Severity.HARD:
-                    state.governance = GovernanceViolation(response.reason or "governance", name)
-                    raise state.governance
-                return f"[blocked: {response.reason or 'governance predicate failed'}]"
-            if response.decision == GuardDecision.REQUIRE_APPROVAL:
-                decided = _resolved_decision(resume, name, used_approvals)
-                if decided is None:
-                    interruption = ApprovalInterruption(
-                        id=response.interruption_id or uuid.uuid4().hex,
-                        created_at=datetime.now(UTC),
-                        tool=name,
-                        arguments=arguments,
-                    )
-                    state.pause = interruption
-                    raise _ApprovalPause(interruption)
-                if decided.decision == "denied":
-                    state.denied = ApprovalDeniedError(name, decided.decision_reason)
-                    raise state.denied
-        if budget is not None:
-            budget.consume_tool_call(tool=name)
-        return None
+    async def _local_gate(arguments: dict[str, Any]) -> str | None:
+        return await _gate(
+            name,
+            arguments,
+            guard=guard,
+            budget=budget,
+            resume=resume,
+            state=state,
+            used_approvals=used_approvals,
+        )
 
     @functools.wraps(func)
     async def _async_wrapper(*args: Any, **kwargs: Any) -> Any:
-        soft = await _gate(kwargs)
+        soft = await _local_gate(kwargs)
         if soft is not None:
             return soft
         result = func(*args, **kwargs)
@@ -240,7 +265,7 @@ def _wrap_tool(
 
     @functools.wraps(func)
     async def _sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-        soft = await _gate(kwargs)
+        soft = await _local_gate(kwargs)
         if soft is not None:
             return soft
         return func(*args, **kwargs)
@@ -252,39 +277,45 @@ def _wrap_tool(
     return wrapper
 
 
-def _to_pydantic_mcp(spec: MCPServerSpec) -> Any:
+def _to_pydantic_mcp(spec: MCPServerSpec, process_tool_call: Any = None) -> Any:
     """Translate an MCPServerSpec into a PydanticAI MCP toolset.
 
     Honours the spec's ``headers`` (HTTP/SSE auth) and ``allowed_tools``
     allowlist -- both are validated manifest surface; dropping them
     would silently bypass workload-declared MCP restrictions.
+    ``process_tool_call`` routes every MCP tool invocation through the
+    harness guard + budget gate so MCP tools cannot bypass governance
+    or budgets (BL-001/073).
     """
     from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio, MCPServerStreamableHTTP
 
     server: Any
-    if spec.transport == MCPTransport.STDIO:
-        server = MCPServerStdio(
-            command=spec.command or "",
-            args=list(spec.args),
-            timeout=spec.timeout_seconds,
-        )
-    elif spec.transport == MCPTransport.SSE:
-        server = MCPServerSSE(
-            url=spec.url or "",
-            headers=dict(spec.headers),
-            timeout=spec.timeout_seconds,
-        )
-    else:
-        # 1.97 deprecates the explicit class in favour of MCPToolset(url)
-        # but keeps it functional through the pinned range; the Protocol
-        # boundary (ADR 0007) absorbs this churn. Silence the local
-        # DeprecationWarning rather than chase a pre-v2 API rename.
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
+    # 1.97 deprecates these explicit classes in favour of MCPToolset(...)
+    # but keeps them functional through the pinned range; the Protocol
+    # boundary (ADR 0007) absorbs this churn, so silence the local
+    # DeprecationWarning rather than chase a pre-v2 API rename.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        if spec.transport == MCPTransport.STDIO:
+            server = MCPServerStdio(
+                command=spec.command or "",
+                args=list(spec.args),
+                timeout=spec.timeout_seconds,
+                process_tool_call=process_tool_call,
+            )
+        elif spec.transport == MCPTransport.SSE:
+            server = MCPServerSSE(
+                url=spec.url or "",
+                headers=dict(spec.headers),
+                timeout=spec.timeout_seconds,
+                process_tool_call=process_tool_call,
+            )
+        else:
             server = MCPServerStreamableHTTP(
                 url=spec.url or "",
                 headers=dict(spec.headers),
                 timeout=spec.timeout_seconds,
+                process_tool_call=process_tool_call,
             )
 
     if spec.allowed_tools is not None:
@@ -340,7 +371,26 @@ class PydanticAIRuntime:
             )
             for t in (tools or [])
         ]
-        toolsets = [_to_pydantic_mcp(s) for s in (mcp_servers or [])]
+
+        async def _mcp_process(
+            ctx: Any, call_tool: Any, name: str, tool_args: dict[str, Any]
+        ) -> Any:
+            # Same guard + budget gate as local tools, so MCP tool calls
+            # cannot bypass governance/approval/budget (BL-001/073).
+            soft = await _gate(
+                name,
+                tool_args,
+                guard=guard,
+                budget=budget,
+                resume=resume,
+                state=state,
+                used_approvals=used_approvals,
+            )
+            if soft is not None:
+                return soft
+            return await call_tool(name, tool_args)
+
+        toolsets = [_to_pydantic_mcp(s, _mcp_process) for s in (mcp_servers or [])]
         return Agent(
             self.model,
             output_type=self._output_type,

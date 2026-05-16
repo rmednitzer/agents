@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
+import agents.cli as cli
 from agents.cli import build_parser, main
 
 
@@ -52,5 +54,44 @@ def test_bl021_run_example_reports_findings(capsys: pytest.CaptureFixture[str]) 
 
 def test_bl021_run_unknown_workload_errors(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["run", "_nope_xyz", "q"])
+    assert rc == 1
+    assert "error:" in capsys.readouterr().err
+
+
+def test_workloads_list_resilient_to_import_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A workload that raises a real ImportError is reported, not fatal."""
+    real_load = cli.load_workload
+    monkeypatch.setattr(cli, "_discover_workload_names", lambda: ["good", "broken"])
+
+    def _fake_load(name: str, *, registry: Any) -> Any:
+        if name == "broken":
+            raise ImportError("No module named 'missing_dep'")
+        return real_load("_example", registry=registry)
+
+    monkeypatch.setattr(cli, "load_workload", _fake_load)
+    rc = main(["workloads", "list"])
+    out = capsys.readouterr()
+    assert rc == 1  # a failure occurred...
+    assert "_example" in out.out  # ...but the good one still listed
+    assert "broken" in out.err
+    assert "missing_dep" in out.err
+
+
+def test_run_main_not_cli_callable_is_handled(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A main() that needs extra args yields a clean error, not a traceback."""
+
+    async def _bad_main(a: str, b: str) -> str:  # requires two positionals
+        return a + b
+
+    class _LW:
+        manifest = type("M", (), {"dispatcher": None, "skills": []})()
+        main = staticmethod(_bad_main)
+
+    monkeypatch.setattr(cli, "load_workload", lambda name, *, registry: _LW())
+    rc = main(["run", "x", "q"])
     assert rc == 1
     assert "error:" in capsys.readouterr().err

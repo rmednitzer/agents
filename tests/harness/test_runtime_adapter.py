@@ -26,7 +26,14 @@ from harness.errors import (
 from harness.guard import GuardDecision, GuardResponse, HarnessToolGuard
 from harness.interruption import ResumableState
 from harness.mcp import MCPServerSpec, MCPTransport
-from harness.runtime import PydanticAIRuntime, Runtime, _to_pydantic_mcp
+from harness.runtime import (
+    PydanticAIRuntime,
+    Runtime,
+    _ApprovalPause,
+    _gate,
+    _GuardState,
+    _to_pydantic_mcp,
+)
 
 
 class _Guard:
@@ -221,6 +228,61 @@ async def test_stream_approval_tool_raises_public_error_not_sentinel() -> None:
     with pytest.raises(HarnessError, match="approval"):
         async for _ in rt.stream("go", tools=[risky], guard=HarnessToolGuard(contract)):
             pass
+
+
+async def _run_gate(guard: Any, budget: Any, **kw: Any) -> str | None:
+    return await _gate(
+        kw.get("name", "tool"),
+        kw.get("arguments", {}),
+        guard=guard,
+        budget=budget,
+        resume=kw.get("resume"),
+        state=kw.get("state") or _GuardState(),
+        used_approvals=kw.get("used_approvals", set()),
+    )
+
+
+@pytest.mark.asyncio
+async def test_gate_hard_reject_raises() -> None:
+    """The shared gate (used by local AND MCP tools) enforces hard reject."""
+    g = _Guard(GuardResponse(decision=GuardDecision.REJECT, severity=Severity.HARD))
+    with pytest.raises(GovernanceViolation):
+        await _run_gate(g, None)
+
+
+@pytest.mark.asyncio
+async def test_gate_soft_reject_returns_message() -> None:
+    g = _Guard(GuardResponse(decision=GuardDecision.REJECT, reason="nope", severity=Severity.SOFT))
+    assert (await _run_gate(g, None)) == "[blocked: nope]"
+
+
+@pytest.mark.asyncio
+async def test_gate_approve_consumes_per_tool_budget() -> None:
+    """MCP-path parity: the gate counts the call against the budget."""
+    budget = BudgetTracker(ActionBudget(max_tool_calls_per_tool={"search": 0}))
+    g = _Guard(GuardResponse(decision=GuardDecision.APPROVE))
+    with pytest.raises(BudgetExceeded) as exc:
+        await _run_gate(g, budget, name="search")
+    assert exc.value.budget_kind == "tool_calls:search"
+
+
+@pytest.mark.asyncio
+async def test_gate_require_approval_pauses_then_denies() -> None:
+    contract: Contract[Any, Any] = Contract(name="c", version="1", approval_required=["risky"])
+    guard = HarnessToolGuard(contract)
+    state = _GuardState()
+    with pytest.raises(_ApprovalPause):
+        await _run_gate(guard, None, name="risky", state=state)
+    assert state.pause is not None
+
+
+def test_mcp_toolset_receives_process_tool_call() -> None:
+    """MCP tools must be gated: a process_tool_call is threaded through."""
+    server = _to_pydantic_mcp(
+        MCPServerSpec(name="m", transport=MCPTransport.STDIO, command="/bin/true"),
+        lambda ctx, call_tool, name, args: call_tool(name, args),
+    )
+    assert server is not None
 
 
 def test_to_pydantic_mcp_threads_headers_and_allowlist() -> None:

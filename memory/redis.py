@@ -89,7 +89,7 @@ class RedisStore:
         validate_key(key)
         ttl = self._ttl(ttl_seconds)
         if ttl is not None:
-            await self._r.set(self._k(key), value, px=int(ttl * 1000))
+            await self._r.set(self._k(key), value, px=max(1, int(ttl * 1000)))
         else:
             await self._r.set(self._k(key), value)
         self._audit.write(key, value_bytes=len(value), ttl_seconds=ttl)
@@ -128,7 +128,7 @@ class RedisStore:
         pipe = self._r.pipeline(transaction=False)
         for k, v in items.items():
             if ttl is not None:
-                pipe.set(self._k(k), v, px=int(ttl * 1000))
+                pipe.set(self._k(k), v, px=max(1, int(ttl * 1000)))
             else:
                 pipe.set(self._k(k), v)
         await pipe.execute()
@@ -189,7 +189,7 @@ class RedisStore:
                         return False
                     pipe.multi()
                     if ttl is not None:
-                        pipe.set(rk, new, px=int(ttl * 1000))
+                        pipe.set(rk, new, px=max(1, int(ttl * 1000)))
                     else:
                         pipe.set(rk, new)
                     await pipe.execute()

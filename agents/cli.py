@@ -60,9 +60,13 @@ def cmd_workloads_list(args: argparse.Namespace) -> int:
     for name in _discover_workload_names():
         try:
             lw = load_workload(name, registry=registry)
-        except WorkloadError as exc:
+        except Exception as exc:
+            # load_workload now propagates a real ImportError (a
+            # workload with a broken dependency) instead of masking it;
+            # listing must stay resilient -- report this one as
+            # unloadable and continue with the rest.
             failures += 1
-            print(f"{name}\t<unloadable: {exc}>", file=sys.stderr)
+            print(f"{name}\t<unloadable: {exc!r}>", file=sys.stderr)
             continue
         desc = " ".join(lw.manifest.description.split())
         print(f"{lw.manifest.name}\t{lw.manifest.version}\t{desc}")
@@ -108,7 +112,15 @@ async def _run_workload(name: str, query: str) -> dict[str, Any]:
     sig = inspect.signature(lw.main)
     if not sig.parameters:
         raise WorkloadError(f"workload {name!r} main() takes no query argument")
-    result = await lw.main(query)
+    try:
+        result = await lw.main(query)
+    except TypeError as exc:
+        # main(query) does not satisfy the single-positional-string CLI
+        # convention (extra required params / keyword-only args): a
+        # handled error, not an uncaught traceback.
+        raise WorkloadError(
+            f"workload {name!r} main() is not CLI-callable as main(query): {exc}"
+        ) from exc
     payload = result.model_dump() if isinstance(result, BaseModel) else result
     return {"workload": name, "dispatch": dispatch, "result": payload}
 

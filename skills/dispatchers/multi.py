@@ -97,7 +97,12 @@ class MultiDispatcher:
                 score = weighted_sum[skill] / total_weight if total_weight else 0.0
             scored.append((score, skill))
 
-        scored.sort(key=lambda t: (t[0], sum(confidences[t[1]]) / n), reverse=True)
+        # Tie-break by mean confidence over members that returned the
+        # skill (matches the docstring and the rationale string).
+        scored.sort(
+            key=lambda t: (t[0], sum(confidences[t[1]]) / len(confidences[t[1]])),
+            reverse=True,
+        )
         return [
             SkillMatch(
                 skill_name=skill,

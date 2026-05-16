@@ -98,6 +98,32 @@ async def test_scan_excludes_expired_keys(s3_client: object) -> None:
 
 
 @pytest.mark.asyncio
+async def test_non_notfound_client_error_propagates() -> None:
+    """Regression: AccessDenied/throttling must not be masked as a miss."""
+    from botocore.exceptions import ClientError as _CE
+
+    class _NoSuchKey(_CE):
+        pass
+
+    class _Exc:
+        ClientError = _CE
+        NoSuchKey = _NoSuchKey
+
+    class _FailingClient:
+        exceptions = _Exc()
+
+        def get_object(self, **kw: object) -> object:
+            raise _CE(
+                {"Error": {"Code": "AccessDenied", "Message": "denied"}},
+                "GetObject",
+            )
+
+    s = S3Store(Namespace(name="ns", workload="w"), _BUCKET, client=_FailingClient())
+    with pytest.raises(_CE):
+        await s.read("k")
+
+
+@pytest.mark.asyncio
 async def test_audit_events(s3_client: object) -> None:
     base = {
         "workload": "w",

@@ -64,9 +64,12 @@ class RoleACL:
         scope = self._prefixes.get(role)
         if not scope:
             return True
-        # 'list' authorizes when its prefix is within (or contains) a
-        # granted scope so a caller can page its own subtree.
-        return any(key.startswith(p) or (operation == "list" and p.startswith(key)) for p in scope)
+        # The target (key, or the list prefix) must be WITHIN a granted
+        # scope. A broad list prefix like "" or "team" is NOT authorized
+        # for a role scoped to "team-a." -- otherwise ACLStore.list_keys
+        # would return out-of-scope keys (data leak). Callers page their
+        # subtree by passing a prefix at or below their scope.
+        return any(key.startswith(p) for p in scope)
 
 
 class ACLStore:

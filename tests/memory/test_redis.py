@@ -93,6 +93,15 @@ async def test_cas_watch_multi() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sub_millisecond_ttl_does_not_break_px() -> None:
+    """Regression: ttl in (0, 0.001) must not produce Redis PX=0."""
+    s = _store()
+    await s.write("k", b"v", ttl_seconds=0.0004)  # int(*1000) == 0 -> guard to 1
+    await s.mset({"m": b"v"}, ttl_seconds=0.0004)
+    assert await s.compare_and_set("c", None, b"v", ttl_seconds=0.0004) is True
+
+
+@pytest.mark.asyncio
 async def test_audit_events() -> None:
     base = {
         "workload": "w",
