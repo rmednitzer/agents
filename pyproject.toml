@@ -25,7 +25,7 @@ classifiers = [
 dependencies = [
     "pydantic-ai>=0.0.20",
     "pydantic>=2.9",
-    "logfire>=2.0",
+    "logfire>=4.33.0",
 ]
 
 [project.optional-dependencies]
