@@ -110,6 +110,49 @@ Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked
 
 - `BL-090` [in-progress] [M] Out-of-tree workloads. Load from arbitrary filesystem paths or installed packages, not just the `workloads/` package tree. (ADR 0005)
 
+# L3 backlog
+
+Added 2026-05-16. Consolidated from ADR 0007's revisit triggers and the
+deferrals recorded in L2 code/docstrings. Status: all `pending` (not
+started). Same conventions as above; IDs use the `BL-1xx` range so they
+do not collide with L2 (`BL-0xx`).
+
+L3 is not "more breadth": L2 shipped the primitives, L3 mostly wires
+them into the default execution path and supplies real implementations
+behind the pluggable Protocols. The highest-leverage cluster is
+"default-path wiring + one real workload".
+
+## Default-path wiring
+
+The L2 primitives exist but are opt-in / manually engaged. L3 makes the
+framework use them by default.
+
+- `BL-100` [pending] [M] Auto-compose a workload's loaded skill contracts with its workload contract in `run_under_contract`. `compose_contracts` and `Skill.contract()` exist (BL-052, BL-060) but composition is caller-driven today. (ADR 0002, ADR 0006)
+- `BL-101` [pending] [M] Record predicate pass/fail into a `DriftMonitor` from the enforcement loop and emit a threshold-crossing event. `DriftMonitor` (BL-062) is standalone; nothing feeds it. (ADR 0002)
+- `BL-102` [pending] [M] Recovery control flow: let a `RecoveryHandler` outcome drive retry / substitute / escalate, not just emit-and-continue. Today recovery (BL-061) is observational; the soft path always continues unchanged. (ADR 0002)
+- `BL-103` [pending] [S] Fold `InstrumentedDispatcher` into the recommended default dispatcher composition and ship a worked OTel/Grafana wiring example. (ADR 0006, BL-042/050)
+- `BL-104` [pending] [S] Harness/workload-runner-managed `TTLSweeper` lifecycle (start/stop tied to a run), instead of fully manual opt-in. (ADR 0004, BL-080)
+
+## Real implementations behind the pluggable Protocols
+
+L2 shipped Protocols plus deterministic test doubles; L3 supplies
+production implementations.
+
+- `BL-110` [pending] [M] A concrete `EmbeddingProvider` (via a Runtime or a provider SDK) so `EmbeddingDispatcher` (BL-051) is usable without a hand-rolled provider. (ADR 0006)
+- `BL-111` [pending] [M] `KeyProvider` beyond `StaticKeyProvider`: env/file and a KMS-backed provider, plus key rotation/versioning for `EncryptedStore` (BL-070). (ADR 0004)
+- `BL-112` [pending] [M] Marketplace `SkillSource` (Vercel `skills.sh`) and checksum/signature verification on install. Extends BL-054. (ADR 0006)
+- `BL-113` [pending] [L] True OTel spans + trace-context propagation. `OTelSink` (BL-041) emits log records with trace/span as attributes because the OTel logs SDK is unstable; revisit when it stabilizes, add GenAI semantic conventions for streaming. (ADR 0002)
+- `BL-114` [pending] [L] Deeper PydanticAI resume via `DeferredToolRequests` / `message_history` instead of re-running the agent on resume. `_resumable` (BL-002) replays today; revisit when PydanticAI's pause/resume primitive is stable. (ADR 0003 revisit trigger)
+
+## Reference workload and loose ends
+
+- `BL-120` [pending] [L] A real reference workload exercising the wired runtime end-to-end against a live model (only `_example` stub exists). Becomes the adapter's CI smoke, gated to skip without API keys.
+- `BL-121` [pending] [S] Out-of-tree workloads from an installed package / `[project.entry-points]`, not just a filesystem path. Extends BL-090. (ADR 0005 revisit trigger)
+- `BL-122` [pending] [S] Attribute-based / dynamic `AccessPolicy`, and an `AccessDenied` audit event through `EventSink`. Extends BL-071. (ADR 0004)
+- `BL-123` [pending] [M] Cost and per-tool wall-clock / token budgets; today the per-tool cap (BL-073) is call-count only. (ADR 0003 revisit trigger)
+- `BL-124` [pending] [L] MVCC / version tokens beyond compare-and-set, and multi-key transactions where the backend supports them. Extends BL-072. (ADR 0004)
+- `BL-125` [pending] [S] `agents run` accepts typed input models + `--json` / streaming output, and an `agents skills install <source>` subcommand. Extends BL-021, BL-054. (ADR 0006)
+
 ## Resolved by later phases
 
 The ADR-0002/0005 deferrals are now fully addressed by the L2 wave
@@ -145,3 +188,4 @@ hardening.
 - When an item is started, change `[pending]` to `[in-progress]` and add the branch name.
 - When merged, change to `[resolved]` and add the merge commit.
 - New L2 items discovered after Phase 5 are added with the next free ID per section and dated.
+- L3 items use the `BL-1xx` range, are sourced from ADR 0007 revisit triggers and in-code deferrals, and are dated when added. The same start/merge status transitions apply.
