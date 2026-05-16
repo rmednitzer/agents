@@ -1,4 +1,4 @@
-# agents
+# Agents
 
 Infrastructure repository for agentic workloads: runtime, skills, harness, memory.
 
