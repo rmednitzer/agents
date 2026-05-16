@@ -91,7 +91,9 @@ def test_flatten_converts_none_keeps_scalar_list_and_encodes_nested() -> None:
     assert attrs["nested"] == '{"a": 1}'
 
 
-def test_otlp_factory_wires_provider_exporter_and_processor(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_otlp_factory_wires_provider_exporter_and_processor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, Any] = {}
 
     class _Exporter:

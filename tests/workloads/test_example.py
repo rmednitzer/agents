@@ -152,6 +152,9 @@ def test_cli_reads_stdin_when_path_omitted(
     assert payload["passed"] is True
 
 
+@pytest.mark.filterwarnings(
+    "ignore:'workloads._example.__main__' found in sys.modules:RuntimeWarning"
+)
 def test_module_entrypoint_runs_cli(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
