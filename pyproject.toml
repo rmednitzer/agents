@@ -44,7 +44,7 @@ Repository = "https://github.com/rmednitzer/agents"
 Issues = "https://github.com/rmednitzer/agents/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["harness", "memory", "workloads"]
+packages = ["harness", "memory", "skills", "workloads"]
 
 [tool.ruff]
 line-length = 100
