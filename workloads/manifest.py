@@ -34,7 +34,9 @@ class RuntimeSpec(BaseModel):
             "ollama:qwen3:30b-a3b". For stub adapters, "none" or any
             convention.
         parameters: Adapter-specific parameters (temperature, max tokens,
-            top_p, etc.). Passed through to the adapter unchanged.
+            top_p, etc.). Stored in the manifest. The harness does not
+            apply these automatically; workload wiring code may interpret
+            and forward them to the adapter.
     """
 
     model_config = ConfigDict(frozen=True)

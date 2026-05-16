@@ -37,7 +37,7 @@ runtime:
 selects the API:
 
 - `anthropic:claude-opus-4-7` reaches the Anthropic Messages API.
-- `openai:gpt-4o` reaches the OpenAI Chat Completions API.
+- `openai:gpt-4o` reaches the OpenAI API.
 - `ollama:qwen3:30b-a3b` reaches a local Ollama server (OpenAI compatible).
 
 `parameters` (temperature, max tokens, top_p) is a manifest-level field on

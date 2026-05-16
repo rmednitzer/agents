@@ -188,7 +188,7 @@
       "type": "object"
     },
     "RuntimeSpec": {
-      "description": "Runtime adapter selection for a workload.\n\nAttributes:\n    adapter: Adapter name. The default adapter is \"pydantic-ai\";\n        test bundles can use \"in-process-stub\" or similar.\n    model: Model identifier as expected by the adapter. For\n        pydantic-ai, this follows the \"provider:model\" convention,\n        e.g. \"anthropic:claude-opus-4-7\", \"openai:gpt-4o\",\n        \"ollama:qwen3:30b-a3b\". For stub adapters, \"none\" or any\n        convention.\n    parameters: Adapter-specific parameters (temperature, max tokens,\n        top_p, etc.). Passed through to the adapter unchanged.",
+      "description": "Runtime adapter selection for a workload.\n\nAttributes:\n    adapter: Adapter name. The default adapter is \"pydantic-ai\";\n        test bundles can use \"in-process-stub\" or similar.\n    model: Model identifier as expected by the adapter. For\n        pydantic-ai, this follows the \"provider:model\" convention,\n        e.g. \"anthropic:claude-opus-4-7\", \"openai:gpt-4o\",\n        \"ollama:qwen3:30b-a3b\". For stub adapters, \"none\" or any\n        convention.\n    parameters: Adapter-specific parameters (temperature, max tokens,\n        top_p, etc.). Stored in the manifest. The harness does not\n        apply these automatically; workload wiring code may interpret\n        and forward them to the adapter.",
       "properties": {
         "adapter": {
           "title": "Adapter",
