@@ -38,7 +38,7 @@ selects the API:
 
 - `anthropic:claude-opus-4-7` reaches the Anthropic Messages API.
 - `openai:gpt-4o` reaches the OpenAI API.
-- `ollama:qwen3:30b-a3b` reaches a local Ollama server (OpenAI compatible).
+- `ollama:qwen3:30b-a3b` reaches a local Ollama server.
 
 `parameters` (temperature, max tokens, top_p) is a manifest-level field on
 `RuntimeSpec`. The harness does not auto-forward it: the default
@@ -75,15 +75,29 @@ conventional environment. A search across `agents`, `harness`, `memory`,
 `api_key`, `base_url`, `os.environ`, and `getenv` returns nothing: credential
 handling is delegated, by design.
 
-- Anthropic: key `ANTHROPIC_API_KEY`, endpoint override `ANTHROPIC_BASE_URL`.
-- OpenAI: key `OPENAI_API_KEY`, endpoint override `OPENAI_BASE_URL`.
-- OpenAI compatible (Ollama, llama.cpp): key `OPENAI_API_KEY` (often a
-  placeholder value), with `OPENAI_BASE_URL` set to the local endpoint.
+Each provider prefix reads its own variables (verified against
+`pydantic_ai` 1.97.0):
 
-So "connecting a workload to a provider" reduces to two steps: set the key
-variable in the runtime environment, and put `provider:model` in the
-manifest. Use the endpoint override to route through a gateway, proxy, or a
-local server.
+- Anthropic (`anthropic:`): key `ANTHROPIC_API_KEY`, endpoint override
+  `ANTHROPIC_BASE_URL`.
+- OpenAI (`openai:`): key `OPENAI_API_KEY`, endpoint override
+  `OPENAI_BASE_URL`.
+- Ollama (`ollama:`): `OLLAMA_BASE_URL` is required and PydanticAI raises a
+  `UserError` if it is unset (`pydantic_ai/providers/ollama.py`);
+  `OLLAMA_API_KEY` is optional and falls back to a placeholder. These are
+  distinct from the `OPENAI_*` variables: setting `OPENAI_BASE_URL` does not
+  configure an `ollama:` model.
+- Other OpenAI compatible servers (llama.cpp, or Ollama addressed through
+  its OpenAI compatible endpoint) reached via the `openai:` prefix:
+  `OPENAI_API_KEY` (often a placeholder) with `OPENAI_BASE_URL` set to the
+  local endpoint.
+
+For a hosted provider (Anthropic, OpenAI), connecting reduces to two steps:
+set the key variable in the runtime environment, and put `provider:model`
+in the manifest. A local or self-hosted provider additionally requires its
+endpoint variable: an `ollama:` model does not connect unless
+`OLLAMA_BASE_URL` is set. Use an endpoint override to route a hosted
+provider through a gateway or proxy.
 
 PydanticAI is the layer that maps the `provider:` prefix to a client and
 reads these variables. Its [models and providers
