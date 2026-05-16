@@ -66,6 +66,37 @@ async def test_dispatcher_excludes_itself_from_catalog(tmp_path: Path) -> None:
     assert "router" not in runtime.last_prompt.split("Catalog:")[-1]
 
 
+@pytest.mark.asyncio
+async def test_versioned_dispatcher_skill_excluded_from_catalog(tmp_path: Path) -> None:
+    """A name@version dispatcher_skill is still excluded from its catalog."""
+    rd = tmp_path / "router"
+    rd.mkdir()
+    (rd / "SKILL.md").write_text(
+        "---\nname: router\ndescription: I route.\nmetadata:\n  version: 2.0.0\n---\nbody",
+        encoding="utf-8",
+    )
+    _write_skill(tmp_path, "real")
+    r = SkillRegistry.from_directory(tmp_path)
+    response = json.dumps([{"skill_name": "real", "confidence": 0.9, "rationale": ""}])
+    runtime = _StubRuntime(response)
+    d = SkillBasedDispatcher(r, "router@2.0.0", runtime)
+    matches = await d.dispatch("q")
+    assert [m.skill_name for m in matches] == ["real"]
+    assert "router" not in runtime.last_prompt.split("Catalog:")[-1]
+
+
+@pytest.mark.asyncio
+async def test_parses_array_amid_noise(tmp_path: Path) -> None:
+    """Greedy-regex regression: extra brackets around the array are tolerated."""
+    _write_skill(tmp_path, "router", "x")
+    _write_skill(tmp_path, "real")
+    r = SkillRegistry.from_directory(tmp_path)
+    noisy = 'Sure! [note]\n[{"skill_name": "real", "confidence": 0.7, "rationale": "ok"}]\n[done]'
+    d = SkillBasedDispatcher(r, "router", _StubRuntime(noisy))
+    matches = await d.dispatch("q")
+    assert [m.skill_name for m in matches] == ["real"]
+
+
 def test_dispatcher_skill_not_in_registry_raises(tmp_path: Path) -> None:
     r = SkillRegistry()
     with pytest.raises(SkillError, match="not in registry"):

@@ -95,3 +95,20 @@ def test_run_main_not_cli_callable_is_handled(
     rc = main(["run", "x", "q"])
     assert rc == 1
     assert "error:" in capsys.readouterr().err
+
+
+def test_run_does_not_mask_genuine_typeerror_in_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A TypeError raised *inside* main() must surface, not be relabelled."""
+
+    async def _buggy_main(q: str) -> str:  # valid signature...
+        raise TypeError("genuine bug in workload body")  # ...real bug
+
+    class _LW:
+        manifest = type("M", (), {"dispatcher": None, "skills": []})()
+        main = staticmethod(_buggy_main)
+
+    monkeypatch.setattr(cli, "load_workload", lambda name, *, registry: _LW())
+    with pytest.raises(TypeError, match="genuine bug in workload body"):
+        main(["run", "x", "q"])

@@ -109,18 +109,17 @@ async def _run_workload(name: str, query: str) -> dict[str, Any]:
             f"workload {name!r} has no __main__.main; invoke it "
             "programmatically via run_under_contract"
         )
-    sig = inspect.signature(lw.main)
-    if not sig.parameters:
-        raise WorkloadError(f"workload {name!r} main() takes no query argument")
+    # Validate the CLI calling convention up front by binding the single
+    # positional arg, NOT by catching TypeError around the call -- the
+    # latter would mask a genuine TypeError raised inside the workload
+    # body and mislabel a real bug as a signature error.
     try:
-        result = await lw.main(query)
+        inspect.signature(lw.main).bind(query)
     except TypeError as exc:
-        # main(query) does not satisfy the single-positional-string CLI
-        # convention (extra required params / keyword-only args): a
-        # handled error, not an uncaught traceback.
         raise WorkloadError(
             f"workload {name!r} main() is not CLI-callable as main(query): {exc}"
         ) from exc
+    result = await lw.main(query)
     payload = result.model_dump() if isinstance(result, BaseModel) else result
     return {"workload": name, "dispatch": dispatch, "result": payload}
 

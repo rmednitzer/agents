@@ -213,7 +213,10 @@ class DynamoDBStore:
     async def mdelete(self, keys: list[str]) -> None:
         for k in keys:
             validate_key(k)
-        existed = {k: self._live_item(k) is not None for k in keys}
+        # The existence pre-check is sync boto3 I/O; offload it so a
+        # large delete does not stall the event loop (parity with the
+        # other paths in this adapter).
+        existed = await asyncio.to_thread(lambda: {k: self._live_item(k) is not None for k in keys})
         await self._batch_write(
             [{"DeleteRequest": {"Key": {"pk": {"S": self._pk(k)}}}} for k in keys]
         )

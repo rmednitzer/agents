@@ -97,9 +97,10 @@ async def test_scan_excludes_expired_keys(s3_client: object) -> None:
     assert page == ["live"]
 
 
+@pytest.mark.parametrize("code", ["AccessDenied", "SlowDown", "NoSuchBucket"])
 @pytest.mark.asyncio
-async def test_non_notfound_client_error_propagates() -> None:
-    """Regression: AccessDenied/throttling must not be masked as a miss."""
+async def test_non_notfound_client_error_propagates(code: str) -> None:
+    """Regression: backend failures (incl. NoSuchBucket) are not misses."""
     from botocore.exceptions import ClientError as _CE
 
     class _NoSuchKey(_CE):
@@ -113,14 +114,32 @@ async def test_non_notfound_client_error_propagates() -> None:
         exceptions = _Exc()
 
         def get_object(self, **kw: object) -> object:
-            raise _CE(
-                {"Error": {"Code": "AccessDenied", "Message": "denied"}},
-                "GetObject",
-            )
+            raise _CE({"Error": {"Code": code, "Message": "x"}}, "GetObject")
 
     s = S3Store(Namespace(name="ns", workload="w"), _BUCKET, client=_FailingClient())
     with pytest.raises(_CE):
         await s.read("k")
+
+
+@pytest.mark.asyncio
+async def test_object_notfound_codes_are_misses() -> None:
+    """Object-level not-found still maps to None (not an error)."""
+    from botocore.exceptions import ClientError as _CE
+
+    class _Exc:
+        ClientError = _CE
+
+        class NoSuchKey(_CE):
+            pass
+
+    class _MissingClient:
+        exceptions = _Exc()
+
+        def get_object(self, **kw: object) -> object:
+            raise _CE({"Error": {"Code": "NoSuchKey", "Message": "x"}}, "GetObject")
+
+    s = S3Store(Namespace(name="ns", workload="w"), _BUCKET, client=_MissingClient())
+    assert await s.read("k") is None
 
 
 @pytest.mark.asyncio

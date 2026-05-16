@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from harness.runtime import Runtime
+from skills.dispatchers._json import first_json_array
 from skills.errors import DispatchError, SkillError
 from skills.registry import SkillRegistry
 from skills.types import Skill, SkillMatch
@@ -34,10 +34,15 @@ class SkillBasedDispatcher:
         dispatcher_skill: str,
         runtime: Runtime,
     ) -> None:
-        if registry.get(dispatcher_skill) is None:
+        resolved = registry.get(dispatcher_skill)
+        if resolved is None:
             raise SkillError(f"dispatcher_skill {dispatcher_skill!r} not in registry")
         self._registry = registry
         self._dispatcher_skill_name = dispatcher_skill
+        # registry.all() yields bare names; dispatcher_skill may be a
+        # name@version spec, so exclude by the resolved bare name to
+        # keep the routing catalog free of the router skill (BL-053).
+        self._dispatcher_skill_bare = resolved.name
         self._runtime = runtime
 
     async def dispatch(
@@ -56,8 +61,9 @@ class SkillBasedDispatcher:
         # The dispatcher skill's body is the routing instructions.
         routing_instructions = dispatcher_skill.body()
 
-        # Catalog excludes the dispatcher skill itself.
-        candidates = [s for s in self._registry.all() if s.name != self._dispatcher_skill_name]
+        # Catalog excludes the dispatcher skill itself (by bare name,
+        # since dispatcher_skill may be a name@version spec).
+        candidates = [s for s in self._registry.all() if s.name != self._dispatcher_skill_bare]
         if not candidates:
             return []
 
@@ -88,11 +94,11 @@ class SkillBasedDispatcher:
         candidates: list[Skill],
     ) -> list[SkillMatch]:
         text = raw if isinstance(raw, str) else json.dumps(raw)
-        match = re.search(r"\[.*\]", text, re.DOTALL)
-        if match is None:
+        payload = first_json_array(text)
+        if payload is None:
             raise DispatchError(f"skill-based dispatcher response missing JSON array: {text[:200]}")
         try:
-            data = json.loads(match.group(0))
+            data = json.loads(payload)
         except json.JSONDecodeError as exc:
             raise DispatchError(f"skill-based dispatcher JSON malformed: {exc}") from exc
         if not isinstance(data, list):

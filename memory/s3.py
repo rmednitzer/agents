@@ -75,9 +75,11 @@ class S3Store:
     def _get_live(self, key: str) -> bytes | None:
         """Return value if present and unexpired; delete it if expired.
 
-        Only a genuine not-found is a miss. Other ClientErrors
-        (AccessDenied, throttling, transient outages) propagate so a
-        backend failure is not silently reported as "key absent".
+        Only an object-level not-found is a miss. Other ClientErrors
+        (AccessDenied, throttling, transient outages, and
+        ``NoSuchBucket`` -- a misconfigured/deleted bucket is a backend
+        failure, not an absent key) propagate so an outage is not
+        silently reported as "key absent".
         """
         try:
             obj = self._s3.get_object(Bucket=self._bucket, Key=self._okey(key))
@@ -85,7 +87,7 @@ class S3Store:
             return None
         except self._s3.exceptions.ClientError as exc:
             code = str(exc.response.get("Error", {}).get("Code", ""))
-            if code in ("NoSuchKey", "NoSuchBucket", "404", "NotFound"):
+            if code in ("NoSuchKey", "404", "NotFound"):
                 return None
             raise
         exp = obj.get("Metadata", {}).get(_EXPIRES_META)
