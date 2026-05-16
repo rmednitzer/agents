@@ -4,6 +4,16 @@ load_workload(name) imports `workloads.<name>` as a Python package,
 finds the manifest.yaml in the package directory, parses it into a
 WorkloadManifest, imports the package's contract module, and optionally
 imports __main__.py for the entry point.
+
+Two L2 validators (ADR 0007) run after the manifest parses:
+
+- The manifest `name` must equal the package directory name. A silent
+  mismatch is a deployment hazard (the operator runs `python -m
+  workloads.<dir>` but the manifest, contract name, and memory namespace
+  carry a different identity).
+- If a SkillRegistry is supplied, every `skills:` entry must resolve in
+  it. This is opt-in: skill resolution requires the caller to have built
+  a registry, so the loader does not force one.
 """
 
 from __future__ import annotations
@@ -12,7 +22,7 @@ import importlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from pydantic import ValidationError
@@ -25,6 +35,9 @@ from workloads.errors import (
     WorkloadValidationError,
 )
 from workloads.manifest import WorkloadManifest
+
+if TYPE_CHECKING:
+    from skills.registry import SkillRegistry
 
 __all__ = [
     "LoadedWorkload",
@@ -50,12 +63,20 @@ class LoadedWorkload:
     main: Callable[..., Awaitable[Any]] | None = None
 
 
-def load_workload(name: str) -> LoadedWorkload:
+def load_workload(
+    name: str,
+    *,
+    registry: SkillRegistry | None = None,
+) -> LoadedWorkload:
     """Load a workload bundle by package name.
 
     Args:
         name: Workload package name. The loader imports
             `workloads.<name>` and reads its manifest.yaml.
+        registry: Optional SkillRegistry. When supplied, every entry in
+            the manifest's `skills:` list must resolve in it (BL-011);
+            an unresolved skill raises WorkloadValidationError. When
+            None, skill resolution is not checked.
 
     Returns:
         LoadedWorkload with manifest, contract, package_path, and
@@ -68,7 +89,9 @@ def load_workload(name: str) -> LoadedWorkload:
         ContractNotFound: contract.py is missing or does not export
             'contract'.
         WorkloadValidationError: manifest.yaml is not valid YAML, is not
-            a mapping, or fails Pydantic validation.
+            a mapping, fails Pydantic validation, declares a `name` that
+            does not match the package directory (BL-010), or references
+            a skill absent from `registry` (BL-011).
     """
     try:
         pkg = importlib.import_module(f"workloads.{name}")
@@ -94,6 +117,23 @@ def load_workload(name: str) -> LoadedWorkload:
         manifest = WorkloadManifest.model_validate(raw)
     except ValidationError as exc:
         raise WorkloadValidationError(name, str(exc)) from exc
+
+    # BL-010: manifest identity must match the package directory name.
+    if manifest.name != package_path.name:
+        raise WorkloadValidationError(
+            name,
+            f"manifest name {manifest.name!r} does not match package "
+            f"directory name {package_path.name!r}",
+        )
+
+    # BL-011: every declared skill must resolve when a registry is given.
+    if registry is not None:
+        missing = [s for s in manifest.skills if s not in registry]
+        if missing:
+            raise WorkloadValidationError(
+                name,
+                f"skills not found in registry: {', '.join(sorted(missing))}",
+            )
 
     try:
         contract_mod = importlib.import_module(f"workloads.{name}.contract")

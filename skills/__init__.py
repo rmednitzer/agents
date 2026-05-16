@@ -31,6 +31,11 @@ from skills.errors import (
 from skills.loader import discover_skill, parse_skill_md
 from skills.registry import SkillRegistry
 from skills.types import Skill, SkillManifest, SkillMatch
+from skills.validators import (
+    unknown_tools,
+    validate_allowed_tools,
+    validate_registry_tools,
+)
 
 __all__ = [
     "DispatchError",
@@ -50,4 +55,7 @@ __all__ = [
     "SkillRegistry",
     "discover_skill",
     "parse_skill_md",
+    "unknown_tools",
+    "validate_allowed_tools",
+    "validate_registry_tools",
 ]

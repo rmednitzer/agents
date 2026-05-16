@@ -60,6 +60,7 @@ from harness.mcp import (
 )
 from harness.runtime import PydanticAIRuntime, Runtime
 from harness.sinks import EventSink, JsonlSink, MemorySink, MultiSink, NullSink
+from harness.tools import ToolCatalog
 
 __all__ = [
     "ActionBudget",
@@ -107,6 +108,7 @@ __all__ = [
     "Runtime",
     "Severity",
     "SkillDispatched",
+    "ToolCatalog",
     "ToolGuard",
     "ToolSpec",
     "predicate",

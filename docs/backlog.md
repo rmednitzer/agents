@@ -23,10 +23,10 @@ Each item has an ID, status, size estimate, source ADR, and notes.
 
 Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked.
 
-- `BL-010` [pending] [XS] Workload loader: validate that `manifest.name` matches the package directory name. Silent mismatch today. (ADR 0005)
-- `BL-011` [pending] [S] Workload loader: validate that every `skills:` entry resolves in a `SkillRegistry`. Optional dependency: the registry must be passed at load time. (ADR 0005, ADR 0006)
-- `BL-012` [pending] [S] Validate skill `allowed-tools` entries against the harness's known tool catalog. (ADR 0006)
-- `BL-013` [pending] [S] Manifest JSON Schema generation (`WorkloadManifest.model_json_schema()`) emitted to `docs/schema/workload-manifest.json` for editor autocomplete. (ADR 0005)
+- `BL-010` [in-progress] [XS] Workload loader: validate that `manifest.name` matches the package directory name. Silent mismatch today. (ADR 0005) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-011` [in-progress] [S] Workload loader: validate that every `skills:` entry resolves in a `SkillRegistry`. Optional dependency: the registry must be passed at load time. (ADR 0005, ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-012` [in-progress] [S] Validate skill `allowed-tools` entries against the harness's known tool catalog. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-013` [in-progress] [S] Manifest JSON Schema generation (`WorkloadManifest.model_json_schema()`) emitted to `docs/schema/workload-manifest.json` for editor autocomplete. (ADR 0005) — branch `claude/implement-l2-feature-5JpJX`
 
 ## CLI surface
 

@@ -118,6 +118,17 @@ class Skill:
         raw = self.manifest.metadata.get("triggers", "")
         return [t.strip().lower() for t in raw.split(",") if t.strip()]
 
+    @property
+    def allowed_tools(self) -> list[str]:
+        """Parsed ``allowed-tools`` declaration.
+
+        The Agent Skills spec encodes allowed-tools as a single
+        space-separated string. Returns the tokens in declaration order;
+        empty when the skill declares none.
+        """
+        raw = self.manifest.allowed_tools or ""
+        return [t for t in raw.split() if t]
+
     def body(self) -> str:
         """Lazy-load the SKILL.md body (everything after the frontmatter)."""
         if self._body is None:
