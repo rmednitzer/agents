@@ -1,0 +1,16 @@
+name: _example
+version: 0.1.0
+description: >
+  Validates a markdown document against the repository's contract style
+  conventions (H1 required, no em-dashes, no double-dashes outside HTML
+  comments). Reference bundle for the workload convention.
+runtime:
+  adapter: in-process-stub
+  model: none
+  parameters: {}
+memory_namespace: null
+mcp_servers: []
+skills: []
+dispatcher: null
+budget: null
+exit_conditions: {}

@@ -26,6 +26,7 @@ dependencies = [
     "pydantic-ai>=1.97.0",
     "pydantic>=2.13.4",
     "logfire>=4.33.0",
+    "pyyaml>=6.0.2",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +36,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.15.13",
     "mypy>=2.1.0",
+    "types-PyYAML>=6.0.12.20240917",
 ]
 
 [project.urls]
