@@ -5,6 +5,7 @@ reach into submodules. See CLAUDE.md and docs/adr/ for architecture.
 """
 
 from harness.budgets import ActionBudget, BudgetKind, BudgetTracker
+from harness.composition import compose_contracts
 from harness.contract import (
     Contract,
     FunctionPredicate,
@@ -12,6 +13,7 @@ from harness.contract import (
     Severity,
     predicate,
 )
+from harness.drift import DriftMonitor, jensen_shannon_divergence
 from harness.enforcement import run_under_contract
 from harness.errors import (
     ApprovalDenied,
@@ -40,6 +42,7 @@ from harness.events import (
     MemoryWrite,
     PostconditionViolated,
     PreconditionViolated,
+    RecoveryApplied,
     SkillDispatched,
 )
 from harness.guard import (
@@ -62,6 +65,7 @@ from harness.mcp import (
     MCPTransport,
     ToolSpec,
 )
+from harness.recovery import RecoveryHandler, RecoveryOutcome
 from harness.runtime import PydanticAIRuntime, Runtime
 from harness.sinks import EventSink, JsonlSink, MemorySink, MultiSink, NullSink
 from harness.tools import ToolCatalog
@@ -82,6 +86,7 @@ __all__ = [
     "ContractCompleted",
     "ContractStarted",
     "DispatchObserved",
+    "DriftMonitor",
     "EventSink",
     "FunctionPredicate",
     "GovernanceViolated",
@@ -112,6 +117,9 @@ __all__ = [
     "Predicate",
     "ProposedAction",
     "PydanticAIRuntime",
+    "RecoveryApplied",
+    "RecoveryHandler",
+    "RecoveryOutcome",
     "ResumableState",
     "Runtime",
     "Severity",
@@ -119,6 +127,8 @@ __all__ = [
     "ToolCatalog",
     "ToolGuard",
     "ToolSpec",
+    "compose_contracts",
+    "jensen_shannon_divergence",
     "predicate",
     "run_under_contract",
 ]

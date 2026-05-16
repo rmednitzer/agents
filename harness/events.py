@@ -33,6 +33,7 @@ __all__ = [
     "MemoryWrite",
     "PostconditionViolated",
     "PreconditionViolated",
+    "RecoveryApplied",
     "SkillDispatched",
 ]
 
@@ -151,6 +152,22 @@ class MemoryDelete(HarnessEvent):
     namespace: str
     key: str
     existed: bool
+
+
+class RecoveryApplied(HarnessEvent):
+    """A soft violation's recovery handler ran (BL-061, the R in P,I,G,R).
+
+    ``predicate`` is the soft predicate that failed; ``stage`` is which
+    obligation it belonged to (precondition/invariant/postcondition);
+    ``action`` is the handler's short description of what it did;
+    ``recovered`` is the handler's own success signal.
+    """
+
+    kind: Literal["recovery_applied"] = "recovery_applied"
+    predicate: str
+    stage: str
+    action: str
+    recovered: bool
 
 
 class DispatchObserved(HarnessEvent):

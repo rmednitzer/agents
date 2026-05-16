@@ -53,15 +53,15 @@ Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked
 
 - `BL-050` [in-progress] [S] `MultiDispatcher` ensemble that combines results from several dispatchers via vote, average, or weighted blend. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
 - `BL-051` [in-progress] [M] Embedding-based dispatcher. Vector similarity between query and skill descriptions. Requires an embedding adapter or a Runtime that exposes embeddings. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-052` [pending] [M] Skill-level contracts (`skills/<name>/contract.py`) that compose with the workload contract. Composition rule: intersection of predicate sets. (ADR 0006)
+- `BL-052` [in-progress] [M] Skill-level contracts (`skills/<name>/contract.py`) that compose with the workload contract. Composition rule: intersection of predicate sets. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
 - `BL-053` [pending] [M] Skill versioning and rollback. Track multiple versions of the same skill; load by `name@version`. (ADR 0006)
 - `BL-054` [pending] [L] Skill installation from registries: `anthropics/skills` on GitHub, Vercel `skills.sh` marketplace. (ADR 0006)
 
 ## Composition (Bhardwaj agent-contract tuple)
 
-- `BL-060` [pending] [M] Workload + skill contract composition. Intersection of predicate sets, governance union, approval-required union. (ADR 0002)
-- `BL-061` [pending] [M] Recovery handlers for soft violations: the R in the Bhardwaj tuple. Predicates today flag-and-emit; recovery actions are unspecified. (ADR 0002)
-- `BL-062` [pending] [L] JSD distributional drift instrumentation across runs. Aggregated state distribution per predicate. (ADR 0002)
+- `BL-060` [in-progress] [M] Workload + skill contract composition. Intersection of predicate sets, governance union, approval-required union. (ADR 0002) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-061` [in-progress] [M] Recovery handlers for soft violations: the R in the Bhardwaj tuple. Predicates today flag-and-emit; recovery actions are unspecified. (ADR 0002) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-062` [in-progress] [L] JSD distributional drift instrumentation across runs. Aggregated state distribution per predicate. (ADR 0002) — branch `claude/implement-l2-feature-5JpJX`
 
 ## Production hardening
 

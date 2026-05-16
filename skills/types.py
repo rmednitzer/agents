@@ -17,8 +17,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+if TYPE_CHECKING:
+    from harness.contract import Contract
 
 __all__ = [
     "Skill",
@@ -100,6 +104,9 @@ class Skill:
     references: dict[str, Path] = field(default_factory=dict)
     scripts: dict[str, Path] = field(default_factory=dict)
     assets: dict[str, Path] = field(default_factory=dict)
+    contract_path: Path | None = None
+    _contract: Contract[Any, Any] | None = None
+    _contract_loaded: bool = False
 
     @property
     def name(self) -> str:
@@ -136,6 +143,22 @@ class Skill:
 
             self._body = _read_body_only(self.path / "SKILL.md")
         return self._body
+
+    def contract(self) -> Contract[Any, Any] | None:
+        """Lazy-load the skill's own contract (BL-052), or None.
+
+        A skill may ship ``contract.py`` exporting ``contract: Contract``;
+        it composes with the workload contract via
+        harness.compose_contracts. Returns None when the skill ships no
+        contract. Raises SkillManifestError if contract.py exists but
+        does not export a valid Contract.
+        """
+        if not self._contract_loaded:
+            from skills.loader import _load_skill_contract
+
+            self._contract = _load_skill_contract(self)
+            self._contract_loaded = True
+        return self._contract
 
 
 class SkillMatch(BaseModel):
