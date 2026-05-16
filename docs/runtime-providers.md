@@ -40,8 +40,14 @@ selects the API:
 - `openai:gpt-4o` reaches the OpenAI Chat Completions API.
 - `ollama:qwen3:30b-a3b` reaches a local Ollama server (OpenAI compatible).
 
-`parameters` (temperature, max tokens, top_p) is passed through to the
-adapter unchanged. For stub or test bundles the convention is
+`parameters` (temperature, max tokens, top_p) is a manifest-level field on
+`RuntimeSpec`. The harness does not auto-forward it: the default
+`PydanticAIRuntime` constructor takes only `model`, `output_type`, and
+`instructions` (`harness/runtime.py`, lines 339 to 348), and no harness code
+reads `RuntimeSpec.parameters`. A workload's own wiring code is responsible
+for reading these values from its manifest and applying them when it
+constructs the runtime or model. Declaring `parameters` alone therefore has
+no effect today. For stub or test bundles the convention is
 `adapter: in-process-stub` with `model: none`, which performs no model call.
 
 ## The connection path
