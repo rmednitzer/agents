@@ -121,6 +121,18 @@ class Skill:
         return self.manifest.metadata.get("lane")
 
     @property
+    def version(self) -> str:
+        """Skill version (BL-053).
+
+        The Agent Skills spec has no version frontmatter field, so the
+        framework reads the open ``metadata`` map's ``version`` key
+        (spec-compliant: foreign tools ignore it). Defaults to "0.0.0"
+        when unset, so an unversioned skill occupies a single bucket and
+        keeps the L1 last-write-wins behaviour.
+        """
+        return self.manifest.metadata.get("version", "0.0.0")
+
+    @property
     def triggers(self) -> list[str]:
         raw = self.manifest.metadata.get("triggers", "")
         return [t.strip().lower() for t in raw.split(",") if t.strip()]

@@ -36,6 +36,12 @@ from skills.errors import (
 )
 from skills.loader import discover_skill, parse_skill_md
 from skills.registry import SkillRegistry
+from skills.sources import (
+    GitHubSkillSource,
+    LocalSkillSource,
+    SkillSource,
+    install_skill,
+)
 from skills.types import Skill, SkillManifest, SkillMatch
 from skills.validators import (
     unknown_tools,
@@ -49,10 +55,12 @@ __all__ = [
     "Dispatcher",
     "EmbeddingDispatcher",
     "EmbeddingProvider",
+    "GitHubSkillSource",
     "InstrumentedDispatcher",
     "KeywordDispatcher",
     "LLMDispatcher",
     "LaneDispatcher",
+    "LocalSkillSource",
     "MultiDispatcher",
     "MultiMode",
     "NoSkillFound",
@@ -65,8 +73,10 @@ __all__ = [
     "SkillManifestError",
     "SkillMatch",
     "SkillRegistry",
+    "SkillSource",
     "cosine_similarity",
     "discover_skill",
+    "install_skill",
     "parse_skill_md",
     "unknown_tools",
     "validate_allowed_tools",

@@ -25,6 +25,9 @@ class SkillRegistry:
     def __init__(self) -> None:
         self._skills: dict[str, Skill] = {}
         self._lanes: dict[str, list[str]] = {}
+        # name -> version -> Skill (BL-053). Insertion order is retained
+        # so "current" == most recently added, matching L1 last-write-wins.
+        self._versions: dict[str, dict[str, Skill]] = {}
 
     @classmethod
     def from_directory(cls, root: Path) -> SkillRegistry:
@@ -50,8 +53,18 @@ class SkillRegistry:
         return registry
 
     def add(self, skill: Skill) -> None:
-        """Add a skill to the registry. Last-write-wins on name conflict."""
+        """Add a skill. Distinct versions coexist (BL-053).
+
+        Same name + same version overwrites (last-write-wins, the L1
+        behaviour for unversioned skills). A different version is kept
+        alongside; the most recently added version becomes "current"
+        (what ``get(name)`` and iteration return).
+        """
         self._skills[skill.name] = skill
+        versions = self._versions.setdefault(skill.name, {})
+        # Re-insert so this version is last (current) in iteration order.
+        versions.pop(skill.version, None)
+        versions[skill.version] = skill
         lane = skill.lane
         if lane is not None:
             existing = self._lanes.setdefault(lane, [])
@@ -59,7 +72,19 @@ class SkillRegistry:
                 existing.append(skill.name)
 
     def get(self, name: str) -> Skill | None:
+        """Resolve a skill. ``name`` or ``name@version`` (BL-053).
+
+        Bare name returns the current (most recently added) version.
+        ``name@version`` returns that exact version, or None.
+        """
+        if "@" in name:
+            base, _, version = name.partition("@")
+            return self._versions.get(base, {}).get(version)
         return self._skills.get(name)
+
+    def versions(self, name: str) -> list[str]:
+        """Versions registered for ``name``, in registration order."""
+        return list(self._versions.get(name, {}).keys())
 
     def all(self) -> list[Skill]:
         return list(self._skills.values())

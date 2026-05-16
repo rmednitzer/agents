@@ -101,6 +101,52 @@ def test_from_directory_missing_root_returns_empty(tmp_path: Path) -> None:
     assert len(r) == 0
 
 
+def _versioned(name: str, version: str) -> Skill:
+    return Skill(
+        manifest=SkillManifest(name=name, description="d", metadata={"version": version}),
+        path=Path("/tmp/" + name),
+    )
+
+
+def test_bl053_versions_coexist_and_resolve_by_spec() -> None:
+    r = SkillRegistry()
+    r.add(_versioned("calc", "1.0.0"))
+    r.add(_versioned("calc", "2.0.0"))
+    assert sorted(r.versions("calc")) == ["1.0.0", "2.0.0"]
+    v1 = r.get("calc@1.0.0")
+    v2 = r.get("calc@2.0.0")
+    assert v1 is not None
+    assert v1.version == "1.0.0"
+    assert v2 is not None
+    assert v2.version == "2.0.0"
+    assert r.get("calc@9.9.9") is None
+    assert len(r) == 1  # one name, multiple versions
+
+
+def test_bl053_current_is_most_recently_added() -> None:
+    r = SkillRegistry()
+    r.add(_versioned("calc", "1.0.0"))
+    r.add(_versioned("calc", "2.0.0"))
+    current = r.get("calc")
+    assert current is not None
+    assert current.version == "2.0.0"  # last added is current
+    # Rollback by re-adding the older version makes it current again.
+    r.add(_versioned("calc", "1.0.0"))
+    rolled = r.get("calc")
+    assert rolled is not None
+    assert rolled.version == "1.0.0"
+
+
+def test_bl053_unversioned_keeps_last_write_wins() -> None:
+    r = SkillRegistry()
+    r.add(_make_skill("x", description="first"))
+    r.add(_make_skill("x", description="second"))
+    skill = r.get("x")
+    assert skill is not None
+    assert skill.description == "second"
+    assert r.versions("x") == ["0.0.0"]
+
+
 def test_example_skill_loads_from_repo() -> None:
     """The repo's skills/_example/ is discoverable."""
     r = SkillRegistry.from_directory(Path("skills"))
