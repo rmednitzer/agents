@@ -65,8 +65,8 @@ Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked
 
 ## Production hardening
 
-- `BL-070` [pending] [M] Encryption at rest for memory adapters. Per-adapter concern; the framework should provide a `KeyProvider` Protocol. (ADR 0004)
-- `BL-071` [pending] [M] ACL / role-based per-key access controls on `MemoryStore`. The contract layer covers workload-boundary auth; per-key ACLs are an L2 refinement. (ADR 0004)
+- `BL-070` [in-progress] [M] Encryption at rest for memory adapters. Per-adapter concern; the framework should provide a `KeyProvider` Protocol. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-071` [in-progress] [M] ACL / role-based per-key access controls on `MemoryStore`. The contract layer covers workload-boundary auth; per-key ACLs are an L2 refinement. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
 - `BL-072` [in-progress] [L] CAS / MVCC primitives in adapters that support them. Exposed via a separate `CASMemoryStore` Protocol so non-CAS backends do not have to fake it. Protocol + InMemoryStore reference impl landed; per-adapter impls land with each adapter. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
 - `BL-073` [in-progress] [S] Per-tool quotas (e.g. up to 3 calls to `search`, up to 1 call to `delete`). Currently a single `max_tool_calls` counter applies to all. (ADR 0003) — branch `claude/implement-l2-feature-5JpJX`
 

@@ -33,8 +33,12 @@ dependencies = [
 aws = [
     { name = "boto3" },
 ]
+crypto = [
+    { name = "cryptography" },
+]
 dev = [
     { name = "boto3" },
+    { name = "cryptography" },
     { name = "fakeredis" },
     { name = "moto", extra = ["dynamodb", "s3"] },
     { name = "mypy" },
@@ -57,6 +61,8 @@ redis = [
 requires-dist = [
     { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.40.0" },
     { name = "boto3", marker = "extra == 'dev'", specifier = ">=1.40.0" },
+    { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=43.0.0" },
+    { name = "cryptography", marker = "extra == 'dev'", specifier = ">=43.0.0" },
     { name = "fakeredis", marker = "extra == 'dev'", specifier = ">=2.20.0" },
     { name = "logfire", specifier = ">=4.33.0" },
     { name = "moto", extras = ["s3", "dynamodb"], marker = "extra == 'dev'", specifier = ">=5.0.0" },
@@ -74,7 +80,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.13" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12.20240917" },
 ]
-provides-extras = ["redis", "aws", "otel", "dev"]
+provides-extras = ["redis", "aws", "otel", "crypto", "dev"]
 
 [[package]]
 name = "aiofile"
