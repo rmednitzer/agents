@@ -45,7 +45,7 @@ Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked
 
 ## Observability
 
-- `BL-040` [pending] [S] Memory operation events (`MemoryRead`, `MemoryWrite`, `MemoryDelete`) emitted through `EventSink`. Surface in `harness.events` is ready; the `MemoryStore` Protocol needs an optional `sink` parameter. (ADR 0004)
+- `BL-040` [in-progress] [S] Memory operation events (`MemoryRead`, `MemoryWrite`, `MemoryDelete`) emitted through `EventSink`. Surface in `harness.events` is ready; the `MemoryStore` Protocol needs an optional `sink` parameter. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
 - `BL-041` [pending] [S] OTel-Collector-compatible `EventSink` implementation. `HarnessEvent` already carries `trace_id`, `span_id`, `parent_span_id`. (ADR 0002)
 - `BL-042` [pending] [M] Dispatch performance instrumentation: per-dispatcher latency histograms, runtime token consumption, threshold-fallback rate. Feeds Grafana via OTel. (ADR 0006)
 
@@ -67,15 +67,15 @@ Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked
 
 - `BL-070` [pending] [M] Encryption at rest for memory adapters. Per-adapter concern; the framework should provide a `KeyProvider` Protocol. (ADR 0004)
 - `BL-071` [pending] [M] ACL / role-based per-key access controls on `MemoryStore`. The contract layer covers workload-boundary auth; per-key ACLs are an L2 refinement. (ADR 0004)
-- `BL-072` [pending] [L] CAS / MVCC primitives in adapters that support them. Exposed via a separate `MemoryStoreCAS` Protocol so non-CAS backends do not have to fake it. (ADR 0004)
+- `BL-072` [in-progress] [L] CAS / MVCC primitives in adapters that support them. Exposed via a separate `CASMemoryStore` Protocol so non-CAS backends do not have to fake it. Protocol + InMemoryStore reference impl landed; per-adapter impls land with each adapter. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
 - `BL-073` [pending] [S] Per-tool quotas (e.g. up to 3 calls to `search`, up to 1 call to `delete`). Currently a single `max_tool_calls` counter applies to all. (ADR 0003)
 
 ## Memory convenience
 
-- `BL-080` [pending] [S] Active TTL sweep background task for `MemoryStore` adapters that benefit from it. `InMemoryStore` uses lazy expiry today. (ADR 0004)
-- `BL-081` [pending] [S] Multi-key batch operations: `mget(keys)`, `mset(items)`, `mdelete(keys)`. (ADR 0004)
-- `BL-082` [pending] [M] Iterator-style `list_keys` for very large keyspaces. Cursor-based; bounded result pages. (ADR 0004)
-- `BL-083` [pending] [S] Content addressing: `write_content(value) -> sha256-hex-key`. Useful for immutable storage patterns. (ADR 0004)
+- `BL-080` [in-progress] [S] Active TTL sweep background task for `MemoryStore` adapters that benefit from it. `InMemoryStore` uses lazy expiry today. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-081` [in-progress] [S] Multi-key batch operations: `mget(keys)`, `mset(items)`, `mdelete(keys)`. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-082` [in-progress] [M] Iterator-style `list_keys` for very large keyspaces. Cursor-based; bounded result pages. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-083` [in-progress] [S] Content addressing: `write_content(value) -> sha256-hex-key`. Useful for immutable storage patterns. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
 
 ## Workload convenience
 

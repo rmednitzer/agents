@@ -27,6 +27,9 @@ __all__ = [
     "GovernanceViolated",
     "HarnessEvent",
     "InvariantViolated",
+    "MemoryDelete",
+    "MemoryRead",
+    "MemoryWrite",
     "PostconditionViolated",
     "PreconditionViolated",
     "SkillDispatched",
@@ -119,3 +122,31 @@ class SkillDispatched(HarnessEvent):
     dispatcher: str
     confidence: float
     rationale: str
+
+
+class MemoryRead(HarnessEvent):
+    """A MemoryStore.read. ``hit`` is False for a missing/expired key."""
+
+    kind: Literal["memory_read"] = "memory_read"
+    namespace: str
+    key: str
+    hit: bool
+
+
+class MemoryWrite(HarnessEvent):
+    """A MemoryStore.write. ``value_bytes`` is the stored payload size."""
+
+    kind: Literal["memory_write"] = "memory_write"
+    namespace: str
+    key: str
+    value_bytes: int
+    ttl_seconds: float | None = None
+
+
+class MemoryDelete(HarnessEvent):
+    """A MemoryStore.delete. ``existed`` is False if the key was absent."""
+
+    kind: Literal["memory_delete"] = "memory_delete"
+    namespace: str
+    key: str
+    existed: bool

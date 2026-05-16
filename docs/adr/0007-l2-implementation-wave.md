@@ -66,8 +66,10 @@ surface by wrapping each tool with a pre-execution guard check and by
 consuming PydanticAI `RunUsage` into the `BudgetTracker`. A background
 asyncio watchdog enforces wall-clock; per-tool quotas extend the single
 counter; streaming accumulates usage. This is the ADR 0003 design with
-the runtime wiring it deferred. PydanticAI 1.97 is pinned; the adapter
-isolates its API behind the `Runtime` Protocol so churn stays local.
+the runtime wiring it deferred. PydanticAI is floor-pinned
+(`pydantic-ai>=1.97.0`) and resolution-locked via `uv.lock` (currently
+1.97.0); the adapter isolates its API behind the `Runtime` Protocol so
+version churn stays local.
 
 ## Consequences
 

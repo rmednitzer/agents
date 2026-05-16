@@ -51,9 +51,12 @@ def generate(check: bool) -> int:
     """Write or verify every schema target.
 
     Returns a process exit code: 0 on success, 1 if ``check`` is set and
-    at least one committed file is missing or stale.
+    at least one committed file is missing or stale. ``--check`` is
+    side-effect free: it never creates the directory or any file; a
+    missing directory or file is simply reported as stale.
     """
-    _SCHEMA_DIR.mkdir(parents=True, exist_ok=True)
+    if not check:
+        _SCHEMA_DIR.mkdir(parents=True, exist_ok=True)
     stale: list[str] = []
     for filename, model in _TARGETS.items():
         path = _SCHEMA_DIR / filename

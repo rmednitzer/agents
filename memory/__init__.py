@@ -12,7 +12,15 @@ Workloads serialize their own data; the store handles raw bytes.
 
 from memory.errors import MemoryError, NamespaceViolation
 from memory.inmemory import InMemoryStore
-from memory.store import MemoryStore
+from memory.store import (
+    BatchMemoryStore,
+    CASMemoryStore,
+    ContentAddressableStore,
+    MemoryStore,
+    ScannableStore,
+    SweepableStore,
+)
+from memory.sweep import TTLSweeper
 from memory.types import Namespace
 from memory.validators import (
     KEY_MAX_LENGTH,
@@ -24,11 +32,17 @@ from memory.validators import (
 __all__ = [
     "KEY_MAX_LENGTH",
     "NAMESPACE_NAME_PATTERN",
+    "BatchMemoryStore",
+    "CASMemoryStore",
+    "ContentAddressableStore",
     "InMemoryStore",
     "MemoryError",
     "MemoryStore",
     "Namespace",
     "NamespaceViolation",
+    "ScannableStore",
+    "SweepableStore",
+    "TTLSweeper",
     "validate_key",
     "validate_namespace_name",
 ]
