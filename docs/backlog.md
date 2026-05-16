@@ -2,6 +2,35 @@
 
 Consolidated from ADRs 0002 through 0006. Generated 2026-05-16 after Phase 5 (`7c26543`).
 
+## Implementation status
+
+All 35 items (BL-001 .. BL-090) are **implemented and tested** on
+branch `claude/implement-l2-feature-5JpJX` (PR #20), delivered as
+reviewable batches with the rationale in
+[ADR 0007](./adr/0007-l2-implementation-wave.md). Per the Maintenance
+convention below, items stay `[in-progress]` until the PR merges to
+`main`; on merge they flip to `[resolved]` with the merge commit.
+
+Where each item landed (module / public symbol):
+
+- BL-001..004, 073: `harness.runtime.PydanticAIRuntime` (guard gate,
+  `ResumableState` resume, wall-clock watchdog, streaming budget),
+  `harness.budgets` per-tool quotas.
+- BL-010..013: `workloads.loader`, `harness.ToolCatalog`,
+  `skills.validators`, `scripts/gen_schema.py` + `docs/schema/`.
+- BL-020..022: `agents` CLI package.
+- BL-030..033: `memory.{redis,sqlite,s3,dynamodb}`.
+- BL-040, 080..083, 072: `memory._audit`, `memory.store` extension
+  Protocols, `memory.sweep`, `InMemoryStore`/adapters.
+- BL-041, 042: `harness.OTelSink`, `skills.InstrumentedDispatcher`.
+- BL-050..054: `skills.dispatchers.{multi,embedding}`,
+  `skills.embeddings`, skill `contract()`, registry versioning,
+  `skills.sources`.
+- BL-060..062: `harness.compose_contracts`, `harness.recovery`,
+  `harness.drift`.
+- BL-070, 071: `memory.EncryptedStore`, `memory.ACLStore`.
+- BL-090: `workloads.load_workload_from_path`.
+
 ## Conventions
 
 Each item has an ID, status, size estimate, source ADR, and notes.
@@ -14,90 +43,102 @@ Each item has an ID, status, size estimate, source ADR, and notes.
 
 `HarnessToolGuard` and `BudgetTracker` ship in Phase 2 with full surfaces and event emission, but neither is wired into the default `PydanticAI` adapter's tool-call path. Tool calls bypass both at runtime today. Closing this is the L1-to-L2 bridge that any real workload needs.
 
-- `BL-001` [in-progress] [S] Wire `HarnessToolGuard` into the PydanticAI adapter so tool calls hit `guard.check(tool, arguments)` before execution and respect `REJECT`, `REQUIRE_APPROVAL`, and `APPROVE` decisions. (ADR 0002, ADR 0003) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-002` [in-progress] [M] Live interruption-resume mid-run in the PydanticAI adapter: an `ApprovalInterruption` should pause the run, surface `ResumableState`, and resume cleanly on `.approve()` or `.deny()`. Lands with the first workload that needs human-in-the-loop approval. (ADR 0003) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-003` [in-progress] [S] Background watchdog for wall-clock budget enforcement. Currently `BudgetTracker` checks at step boundaries; long-running tools can exceed `max_wall_clock_seconds` without preemption. (ADR 0003) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-004` [in-progress] [S] Streaming budget enforcement: accumulate token usage during a stream and raise `BudgetExceeded` on threshold cross. (ADR 0003) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-001` [in-progress] [S] Wire `HarnessToolGuard` into the PydanticAI adapter so tool calls hit `guard.check(tool, arguments)` before execution and respect `REJECT`, `REQUIRE_APPROVAL`, and `APPROVE` decisions. (ADR 0002, ADR 0003)
+- `BL-002` [in-progress] [M] Live interruption-resume mid-run in the PydanticAI adapter: an `ApprovalInterruption` should pause the run, surface `ResumableState`, and resume cleanly on `.approve()` or `.deny()`. Lands with the first workload that needs human-in-the-loop approval. (ADR 0003)
+- `BL-003` [in-progress] [S] Background watchdog for wall-clock budget enforcement. Currently `BudgetTracker` checks at step boundaries; long-running tools can exceed `max_wall_clock_seconds` without preemption. (ADR 0003)
+- `BL-004` [in-progress] [S] Streaming budget enforcement: accumulate token usage during a stream and raise `BudgetExceeded` on threshold cross. (ADR 0003)
 
 ## Workload + skill validators
 
 Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked.
 
-- `BL-010` [in-progress] [XS] Workload loader: validate that `manifest.name` matches the package directory name. Silent mismatch today. (ADR 0005) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-011` [in-progress] [S] Workload loader: validate that every `skills:` entry resolves in a `SkillRegistry`. Optional dependency: the registry must be passed at load time. (ADR 0005, ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-012` [in-progress] [S] Validate skill `allowed-tools` entries against the harness's known tool catalog. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-013` [in-progress] [S] Manifest JSON Schema generation (`WorkloadManifest.model_json_schema()`) emitted to `docs/schema/workload-manifest.json` for editor autocomplete. (ADR 0005) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-010` [in-progress] [XS] Workload loader: validate that `manifest.name` matches the package directory name. Silent mismatch today. (ADR 0005)
+- `BL-011` [in-progress] [S] Workload loader: validate that every `skills:` entry resolves in a `SkillRegistry`. Optional dependency: the registry must be passed at load time. (ADR 0005, ADR 0006)
+- `BL-012` [in-progress] [S] Validate skill `allowed-tools` entries against the harness's known tool catalog. (ADR 0006)
+- `BL-013` [in-progress] [S] Manifest JSON Schema generation (`WorkloadManifest.model_json_schema()`) emitted to `docs/schema/workload-manifest.json` for editor autocomplete. (ADR 0005)
 
 ## CLI surface
 
-- `BL-020` [in-progress] [S] `python -m agents workloads list` -> prints every loadable workload's name, version, description. (ADR 0005) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-021` [in-progress] [M] `python -m agents run <workload> <query>` -> loads the workload, dispatches via its configured `Dispatcher`, runs under contract, prints structured result. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-022` [in-progress] [S] `python -m agents skills list` -> prints every skill in `skills/`, grouped by lane. — branch `claude/implement-l2-feature-5JpJX`
+- `BL-020` [in-progress] [S] `python -m agents workloads list` -> prints every loadable workload's name, version, description. (ADR 0005)
+- `BL-021` [in-progress] [M] `python -m agents run <workload> <query>` -> loads the workload, dispatches via its configured `Dispatcher`, runs under contract, prints structured result. (ADR 0006)
+- `BL-022` [in-progress] [S] `python -m agents skills list` -> prints every skill in `skills/`, grouped by lane.
 
 ## Memory adapters
 
 `InMemoryStore` is the only `MemoryStore` adapter today. Production deployments need durable backends.
 
-- `BL-030` [in-progress] [M] Redis adapter. Pipelining for batch ops, WATCH/MULTI for atomic CAS, native TTL via `PX`. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-031` [in-progress] [M] SQLite adapter for durable single-host workloads. WAL mode, per-namespace tables. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-032` [in-progress] [M] S3 adapter for blobs and audit packs. Eventually-consistent; document the semantics deviation. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-033` [in-progress] [L] DynamoDB adapter for AWS-native deployments. Strongly-consistent reads optional. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-030` [in-progress] [M] Redis adapter. Pipelining for batch ops, WATCH/MULTI for atomic CAS, native TTL via `PX`. (ADR 0004)
+- `BL-031` [in-progress] [M] SQLite adapter for durable single-host workloads. WAL mode, per-namespace tables. (ADR 0004)
+- `BL-032` [in-progress] [M] S3 adapter for blobs and audit packs. Eventually-consistent; document the semantics deviation. (ADR 0004)
+- `BL-033` [in-progress] [L] DynamoDB adapter for AWS-native deployments. Strongly-consistent reads optional. (ADR 0004)
 
 ## Observability
 
-- `BL-040` [in-progress] [S] Memory operation events (`MemoryRead`, `MemoryWrite`, `MemoryDelete`) emitted through `EventSink`. Surface in `harness.events` is ready; the `MemoryStore` Protocol needs an optional `sink` parameter. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-041` [in-progress] [S] OTel-Collector-compatible `EventSink` implementation. `HarnessEvent` already carries `trace_id`, `span_id`, `parent_span_id`. (ADR 0002) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-042` [in-progress] [M] Dispatch performance instrumentation: per-dispatcher latency histograms, runtime token consumption, threshold-fallback rate. Feeds Grafana via OTel. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-040` [in-progress] [S] Memory operation events (`MemoryRead`, `MemoryWrite`, `MemoryDelete`) emitted through `EventSink`. Surface in `harness.events` is ready; the `MemoryStore` Protocol needs an optional `sink` parameter. (ADR 0004)
+- `BL-041` [in-progress] [S] OTel-Collector-compatible `EventSink` implementation. `HarnessEvent` already carries `trace_id`, `span_id`, `parent_span_id`. (ADR 0002)
+- `BL-042` [in-progress] [M] Dispatch performance instrumentation: per-dispatcher latency histograms, runtime token consumption, threshold-fallback rate. Feeds Grafana via OTel. (ADR 0006)
 
 ## Skill ecosystem
 
-- `BL-050` [in-progress] [S] `MultiDispatcher` ensemble that combines results from several dispatchers via vote, average, or weighted blend. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-051` [in-progress] [M] Embedding-based dispatcher. Vector similarity between query and skill descriptions. Requires an embedding adapter or a Runtime that exposes embeddings. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-052` [in-progress] [M] Skill-level contracts (`skills/<name>/contract.py`) that compose with the workload contract. Composition rule: intersection of predicate sets. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-053` [in-progress] [M] Skill versioning and rollback. Track multiple versions of the same skill; load by `name@version`. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-054` [in-progress] [L] Skill installation from registries: `anthropics/skills` on GitHub, Vercel `skills.sh` marketplace. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-050` [in-progress] [S] `MultiDispatcher` ensemble that combines results from several dispatchers via vote, average, or weighted blend. (ADR 0006)
+- `BL-051` [in-progress] [M] Embedding-based dispatcher. Vector similarity between query and skill descriptions. Requires an embedding adapter or a Runtime that exposes embeddings. (ADR 0006)
+- `BL-052` [in-progress] [M] Skill-level contracts (`skills/<name>/contract.py`) that compose with the workload contract. Composition rule: intersection of predicate sets. (ADR 0006)
+- `BL-053` [in-progress] [M] Skill versioning and rollback. Track multiple versions of the same skill; load by `name@version`. (ADR 0006)
+- `BL-054` [in-progress] [L] Skill installation from registries: `anthropics/skills` on GitHub, Vercel `skills.sh` marketplace. (ADR 0006)
 
 ## Composition (Bhardwaj agent-contract tuple)
 
-- `BL-060` [in-progress] [M] Workload + skill contract composition. Intersection of predicate sets, governance union, approval-required union. (ADR 0002) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-061` [in-progress] [M] Recovery handlers for soft violations: the R in the Bhardwaj tuple. Predicates today flag-and-emit; recovery actions are unspecified. (ADR 0002) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-062` [in-progress] [L] JSD distributional drift instrumentation across runs. Aggregated state distribution per predicate. (ADR 0002) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-060` [in-progress] [M] Workload + skill contract composition. Intersection of predicate sets, governance union, approval-required union. (ADR 0002)
+- `BL-061` [in-progress] [M] Recovery handlers for soft violations: the R in the Bhardwaj tuple. Predicates today flag-and-emit; recovery actions are unspecified. (ADR 0002)
+- `BL-062` [in-progress] [L] JSD distributional drift instrumentation across runs. Aggregated state distribution per predicate. (ADR 0002)
 
 ## Production hardening
 
-- `BL-070` [in-progress] [M] Encryption at rest for memory adapters. Per-adapter concern; the framework should provide a `KeyProvider` Protocol. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-071` [in-progress] [M] ACL / role-based per-key access controls on `MemoryStore`. The contract layer covers workload-boundary auth; per-key ACLs are an L2 refinement. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-072` [in-progress] [L] CAS / MVCC primitives in adapters that support them. Exposed via a separate `CASMemoryStore` Protocol so non-CAS backends do not have to fake it. Protocol + InMemoryStore reference impl landed; per-adapter impls land with each adapter. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-073` [in-progress] [S] Per-tool quotas (e.g. up to 3 calls to `search`, up to 1 call to `delete`). Currently a single `max_tool_calls` counter applies to all. (ADR 0003) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-070` [in-progress] [M] Encryption at rest for memory adapters. Per-adapter concern; the framework should provide a `KeyProvider` Protocol. (ADR 0004)
+- `BL-071` [in-progress] [M] ACL / role-based per-key access controls on `MemoryStore`. The contract layer covers workload-boundary auth; per-key ACLs are an L2 refinement. (ADR 0004)
+- `BL-072` [in-progress] [L] CAS / MVCC primitives in adapters that support them. Exposed via a separate `CASMemoryStore` Protocol so non-CAS backends do not have to fake it. Protocol + InMemoryStore reference impl landed; per-adapter impls land with each adapter. (ADR 0004)
+- `BL-073` [in-progress] [S] Per-tool quotas (e.g. up to 3 calls to `search`, up to 1 call to `delete`). Currently a single `max_tool_calls` counter applies to all. (ADR 0003)
 
 ## Memory convenience
 
-- `BL-080` [in-progress] [S] Active TTL sweep background task for `MemoryStore` adapters that benefit from it. `InMemoryStore` uses lazy expiry today. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-081` [in-progress] [S] Multi-key batch operations: `mget(keys)`, `mset(items)`, `mdelete(keys)`. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-082` [in-progress] [M] Iterator-style `list_keys` for very large keyspaces. Cursor-based; bounded result pages. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-083` [in-progress] [S] Content addressing: `write_content(value) -> sha256-hex-key`. Useful for immutable storage patterns. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-080` [in-progress] [S] Active TTL sweep background task for `MemoryStore` adapters that benefit from it. `InMemoryStore` uses lazy expiry today. (ADR 0004)
+- `BL-081` [in-progress] [S] Multi-key batch operations: `mget(keys)`, `mset(items)`, `mdelete(keys)`. (ADR 0004)
+- `BL-082` [in-progress] [M] Iterator-style `list_keys` for very large keyspaces. Cursor-based; bounded result pages. (ADR 0004)
+- `BL-083` [in-progress] [S] Content addressing: `write_content(value) -> sha256-hex-key`. Useful for immutable storage patterns. (ADR 0004)
 
 ## Workload convenience
 
-- `BL-090` [in-progress] [M] Out-of-tree workloads. Load from arbitrary filesystem paths or installed packages, not just the `workloads/` package tree. (ADR 0005) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-090` [in-progress] [M] Out-of-tree workloads. Load from arbitrary filesystem paths or installed packages, not just the `workloads/` package tree. (ADR 0005)
 
 ## Resolved by later phases
 
-- `ADR-0002` "Live governance enforcement... Phase 2": Phase 2 shipped the surface (`ToolGuard`, `HarnessToolGuard`, `GovernanceViolated` event). Runtime wiring is the residual work in `BL-001` / `BL-003`. Mark as `partially resolved`.
-- `ADR-0002` "Live approval interruption... Phase 2": same as above; surface complete, adapter wiring is `BL-002`. Mark as `partially resolved`.
-- `ADR-0005` "Skill resolution... lands with Phase 5": Phase 5 shipped `SkillRegistry`. Validation itself is `BL-011`. Mark as `unblocked`.
+The ADR-0002/0005 deferrals are now fully addressed by the L2 wave
+(ADR 0007), not just partially:
 
-## Suggested first-week sequence
+- `ADR-0002` "Live governance enforcement": surface (Phase 2) + runtime
+  wiring (`BL-001`, `BL-003`) both shipped. Governance now fires for
+  local **and** MCP tool calls. Resolved.
+- `ADR-0002` "Live approval interruption": surface + adapter wiring
+  (`BL-002`) shipped: pause -> `ResumableState` -> resume. Resolved.
+- `ADR-0002` recovery (R in P,I,G,R) and JSD drift: `BL-061`, `BL-062`.
+  Resolved.
+- `ADR-0005` "Skill resolution": `SkillRegistry` (Phase 5) + the
+  `BL-011` validator (version-aware) shipped. Resolved.
 
-If you start picking off items, this ordering minimizes review surface and resolves the highest-leverage gaps first.
+## Suggested first-week sequence (completed)
 
-1. `BL-010` (XS): workload name-matches-directory validator. Quick safety win.
-2. `BL-011` (S): workload skills resolution validator. Cheap follow-on, now unblocked.
-3. `BL-001` (S): wire `HarnessToolGuard` into the PydanticAI adapter. Real workloads need this.
-4. `BL-040` (S): memory operation events through `EventSink`. Closes the L1 audit story end-to-end.
-5. `BL-020` (S): `agents workloads list`. Low-cost discoverability win.
+This ordering was the recommended entry path; the whole backlog was
+delivered, so it is retained only as historical context.
 
-Roughly a half-day of work and the L1 framework moves from "scaffolded" to "wired through end to end."
+1. `BL-010` (XS): workload name-matches-directory validator. Done.
+2. `BL-011` (S): workload skills resolution validator. Done.
+3. `BL-001` (S): wire `HarnessToolGuard` into the PydanticAI adapter. Done.
+4. `BL-040` (S): memory operation events through `EventSink`. Done.
+5. `BL-020` (S): `agents workloads list`. Done.
+
+The L1 framework moved from "scaffolded" to "wired through end to end",
+plus production memory backends, observability, composition, and
+hardening.
 
 ## Maintenance
 
