@@ -38,10 +38,10 @@ Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked
 
 `InMemoryStore` is the only `MemoryStore` adapter today. Production deployments need durable backends.
 
-- `BL-030` [pending] [M] Redis adapter. Pipelining for batch ops, Lua scripts for atomic CAS, native TTL via `EXPIRE`. (ADR 0004)
+- `BL-030` [in-progress] [M] Redis adapter. Pipelining for batch ops, WATCH/MULTI for atomic CAS, native TTL via `PX`. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
 - `BL-031` [in-progress] [M] SQLite adapter for durable single-host workloads. WAL mode, per-namespace tables. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-032` [pending] [M] S3 adapter for blobs and audit packs. Eventually-consistent; document the semantics deviation. (ADR 0004)
-- `BL-033` [pending] [L] DynamoDB adapter for AWS-native deployments. Strongly-consistent reads optional. (ADR 0004)
+- `BL-032` [in-progress] [M] S3 adapter for blobs and audit packs. Eventually-consistent; document the semantics deviation. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-033` [in-progress] [L] DynamoDB adapter for AWS-native deployments. Strongly-consistent reads optional. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
 
 ## Observability
 

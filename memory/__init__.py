@@ -10,8 +10,11 @@ construction of additional stores.
 Workloads serialize their own data; the store handles raw bytes.
 """
 
+from memory.dynamodb import DynamoDBStore
 from memory.errors import MemoryError, NamespaceViolation
 from memory.inmemory import InMemoryStore
+from memory.redis import RedisStore
+from memory.s3 import S3Store
 from memory.sqlite import SQLiteStore
 from memory.store import (
     BatchMemoryStore,
@@ -36,11 +39,14 @@ __all__ = [
     "BatchMemoryStore",
     "CASMemoryStore",
     "ContentAddressableStore",
+    "DynamoDBStore",
     "InMemoryStore",
     "MemoryError",
     "MemoryStore",
     "Namespace",
     "NamespaceViolation",
+    "RedisStore",
+    "S3Store",
     "SQLiteStore",
     "ScannableStore",
     "SweepableStore",
