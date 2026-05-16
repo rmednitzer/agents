@@ -30,9 +30,9 @@ Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked
 
 ## CLI surface
 
-- `BL-020` [pending] [S] `python -m agents workloads list` -> prints every loadable workload's name, version, description. (ADR 0005)
-- `BL-021` [pending] [M] `python -m agents run <workload> <query>` -> loads the workload, dispatches via its configured `Dispatcher`, runs under contract, prints structured result. (ADR 0006)
-- `BL-022` [pending] [S] `python -m agents skills list` -> prints every skill in `skills/`, grouped by lane.
+- `BL-020` [in-progress] [S] `python -m agents workloads list` -> prints every loadable workload's name, version, description. (ADR 0005) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-021` [in-progress] [M] `python -m agents run <workload> <query>` -> loads the workload, dispatches via its configured `Dispatcher`, runs under contract, prints structured result. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
+- `BL-022` [in-progress] [S] `python -m agents skills list` -> prints every skill in `skills/`, grouped by lane. — branch `claude/implement-l2-feature-5JpJX`
 
 ## Memory adapters
 
