@@ -1,4 +1,4 @@
-.PHONY: help install lint format type-check test check ci clean
+.PHONY: help install lint format type-check test check ci schema clean
 
 help:
 	@echo "Targets:"
@@ -9,6 +9,7 @@ help:
 	@echo "  test       pytest"
 	@echo "  check      lint + type-check + test"
 	@echo "  ci         same as check (for parity with CI)"
+	@echo "  schema     regenerate docs/schema/*.json from the models"
 	@echo "  clean      remove caches and build artifacts"
 
 install:
@@ -21,7 +22,7 @@ format:
 	uv run ruff format .
 
 type-check:
-	uv run mypy harness memory workloads skills
+	uv run mypy agents harness memory workloads skills
 
 test:
 	uv run pytest
@@ -29,6 +30,9 @@ test:
 check: lint type-check test
 
 ci: check
+
+schema:
+	uv run python scripts/gen_schema.py
 
 clean:
 	rm -rf .ruff_cache .mypy_cache .pytest_cache build dist *.egg-info

@@ -8,13 +8,18 @@ Per the Agent Skills spec:
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from pydantic import ValidationError
 
 from skills.errors import SkillLoadError, SkillManifestError
 from skills.types import Skill, SkillManifest
+
+if TYPE_CHECKING:
+    from harness.contract import Contract
 
 __all__ = [
     "discover_skill",
@@ -133,13 +138,54 @@ def discover_skill(skill_dir: Path) -> Skill:
     scripts = _discover_resources(skill_dir / "scripts")
     assets = _discover_resources(skill_dir / "assets")
 
+    contract_file = skill_dir / "contract.py"
+    contract_path = contract_file if contract_file.is_file() else None
+
     return Skill(
         manifest=manifest,
         path=skill_dir,
         references=references,
         scripts=scripts,
         assets=assets,
+        contract_path=contract_path,
     )
+
+
+def _load_skill_contract(skill: Skill) -> Contract[Any, Any] | None:
+    """Import a skill's contract.py and return its ``contract`` export.
+
+    Returns None when the skill ships no contract.py. The module is
+    loaded from its file path (skills are directories, not importable
+    packages) under a synthetic module name.
+
+    Raises:
+        SkillManifestError: contract.py exists but cannot be imported or
+            does not export a Contract instance.
+    """
+    from harness.contract import Contract
+
+    if skill.contract_path is None:
+        return None
+    path = skill.contract_path
+    spec = importlib.util.spec_from_file_location(
+        f"skills._contract_{skill.name.replace('-', '_')}", path
+    )
+    if spec is None or spec.loader is None:
+        raise SkillManifestError(str(path), "cannot create import spec")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        raise SkillManifestError(str(path), f"import failed: {exc}") from exc
+    contract = getattr(module, "contract", None)
+    if contract is None:
+        raise SkillManifestError(str(path), "contract.py does not export 'contract'")
+    if not isinstance(contract, Contract):
+        raise SkillManifestError(
+            str(path),
+            f"'contract' is not a Contract (got {type(contract).__name__})",
+        )
+    return contract
 
 
 def _discover_resources(directory: Path) -> dict[str, Path]:

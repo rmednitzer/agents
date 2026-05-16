@@ -10,9 +10,23 @@ construction of additional stores.
 Workloads serialize their own data; the store handles raw bytes.
 """
 
-from memory.errors import MemoryError, NamespaceViolation
+from memory.acl import AccessPolicy, ACLStore, Operation, RoleACL
+from memory.dynamodb import DynamoDBStore
+from memory.encryption import EncryptedStore, KeyProvider, StaticKeyProvider
+from memory.errors import AccessDenied, MemoryError, NamespaceViolation
 from memory.inmemory import InMemoryStore
-from memory.store import MemoryStore
+from memory.redis import RedisStore
+from memory.s3 import S3Store
+from memory.sqlite import SQLiteStore
+from memory.store import (
+    BatchMemoryStore,
+    CASMemoryStore,
+    ContentAddressableStore,
+    MemoryStore,
+    ScannableStore,
+    SweepableStore,
+)
+from memory.sweep import TTLSweeper
 from memory.types import Namespace
 from memory.validators import (
     KEY_MAX_LENGTH,
@@ -24,11 +38,29 @@ from memory.validators import (
 __all__ = [
     "KEY_MAX_LENGTH",
     "NAMESPACE_NAME_PATTERN",
+    "ACLStore",
+    "AccessDenied",
+    "AccessPolicy",
+    "BatchMemoryStore",
+    "CASMemoryStore",
+    "ContentAddressableStore",
+    "DynamoDBStore",
+    "EncryptedStore",
     "InMemoryStore",
+    "KeyProvider",
     "MemoryError",
     "MemoryStore",
     "Namespace",
     "NamespaceViolation",
+    "Operation",
+    "RedisStore",
+    "RoleACL",
+    "S3Store",
+    "SQLiteStore",
+    "ScannableStore",
+    "StaticKeyProvider",
+    "SweepableStore",
+    "TTLSweeper",
     "validate_key",
     "validate_namespace_name",
 ]

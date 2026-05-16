@@ -9,6 +9,7 @@ the output, validates postconditions, emits structured events throughout.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -27,10 +28,12 @@ from harness.events import (
     InvariantViolated,
     PostconditionViolated,
     PreconditionViolated,
+    RecoveryApplied,
 )
 from harness.guard import HarnessToolGuard, ToolGuard
 from harness.interruption import ResumableState
 from harness.mcp import MCPServerSpec
+from harness.recovery import RecoveryHandler
 from harness.runtime import Runtime
 from harness.sinks import EventSink, NullSink
 
@@ -50,6 +53,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
     budget: ActionBudget | None = None,
     mcp_servers: list[MCPServerSpec] | None = None,
     guard: ToolGuard | None = None,
+    recovery: Mapping[str, RecoveryHandler] | None = None,
 ) -> OutputT | ResumableState:
     """Execute a workload under contract.
 
@@ -73,6 +77,11 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         guard: Tool guard. If None and the contract has governance
             predicates or approval_required entries, a HarnessToolGuard
             is constructed from the contract.
+        recovery: Optional map of predicate name -> RecoveryHandler
+            (BL-061). On a SOFT pre/invariant/post violation whose
+            predicate name is in the map, the handler runs and a
+            RecoveryApplied event is emitted; the run still continues
+            (soft semantics are unchanged). None preserves L1 behaviour.
 
     Returns:
         OutputT on successful completion.
@@ -101,6 +110,25 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
 
     active_sink.emit(ContractStarted(timestamp=started_at, **base))
 
+    async def _recover(predicate: str, stage: str, state: Any) -> None:
+        """Run the registered handler for a soft violation, if any."""
+        if recovery is None:
+            return
+        handler = recovery.get(predicate)
+        if handler is None:
+            return
+        outcome = await handler.recover(predicate=predicate, stage=stage, state=state)
+        active_sink.emit(
+            RecoveryApplied(
+                timestamp=datetime.now(UTC),
+                predicate=predicate,
+                stage=stage,
+                action=outcome.action,
+                recovered=outcome.recovered,
+                **base,
+            )
+        )
+
     if resume is not None:
         unresolved = [ai for ai in resume.pending_approvals if ai.decision == "pending"]
         if unresolved:
@@ -120,6 +148,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
             )
             if pred_pre.severity == Severity.HARD:
                 raise PreconditionViolation(pred_pre.name)
+            await _recover(pred_pre.name, "precondition", input)
 
     # 2. Invariants (pre-run check; in-loop checks delegated to runtime)
     inv_state: Any = invariant_state if invariant_state is not None else input
@@ -136,6 +165,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
             )
             if pred_inv.severity == Severity.HARD:
                 raise InvariantViolation(pred_inv.name)
+            await _recover(pred_inv.name, "invariant", inv_state)
 
     # 3. Construct per-run mutable objects
     tracker: BudgetTracker | None = None
@@ -153,7 +183,25 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         budget=tracker,
         mcp_servers=mcp_servers,
         guard=active_guard,
+        resume=resume,
     )
+
+    # 4a. An approval pause short-circuits (BL-002). The harness owns the
+    # contract boundary, so it (not the runtime adapter) is the source of
+    # truth for identity and trace_id: stamp them onto the state the
+    # runtime produced, keeping its pending_approvals/completed_actions.
+    # Reusing this run's trace_id keeps the audit trail and any resume on
+    # one trace. The guard already emitted ApprovalRequested.
+    if isinstance(result, ResumableState):
+        return result.model_copy(
+            update={
+                "contract_name": contract.name,
+                "contract_version": contract.version,
+                "workload": contract.name,
+                "input_payload": input.model_dump(mode="json"),
+                "trace_id": trace_id,
+            }
+        )
 
     # 5. Parse output
     if isinstance(result, output_model):
@@ -175,6 +223,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
             )
             if pred_post.severity == Severity.HARD:
                 raise PostconditionViolation(pred_post.name)
+            await _recover(pred_post.name, "postcondition", output)
 
     completed_at = datetime.now(UTC)
     duration_ms = (completed_at - started_at).total_seconds() * 1000.0

@@ -1,0 +1,294 @@
+{
+  "$defs": {
+    "ActionBudget": {
+      "description": "Immutable action budget spec.\n\nAll fields are optional; None means unlimited for that dimension.\n\n``max_tool_calls`` is the aggregate cap across every tool.\n``max_tool_calls_per_tool`` (BL-073) caps individual tools, e.g.\n``{\"search\": 3, \"delete\": 1}``; a tool absent from the map is\nbounded only by the aggregate cap. Both are enforced.",
+      "properties": {
+        "max_steps": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Steps"
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Tokens"
+        },
+        "max_tool_calls": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Tool Calls"
+        },
+        "max_tool_calls_per_tool": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Tool Calls Per Tool"
+        },
+        "max_wall_clock_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Wall Clock Seconds"
+        }
+      },
+      "title": "ActionBudget",
+      "type": "object"
+    },
+    "MCPServerSpec": {
+      "description": "Declarative MCP server specification.\n\nValidated at construction:\n\n- stdio transport requires command.\n- http and sse transports require url.\n- timeout_seconds must be positive.",
+      "properties": {
+        "allowed_tools": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Allowed Tools"
+        },
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Args",
+          "type": "array"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Headers",
+          "type": "object"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 30.0,
+          "title": "Timeout Seconds",
+          "type": "number"
+        },
+        "transport": {
+          "$ref": "#/$defs/MCPTransport"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "name",
+        "transport"
+      ],
+      "title": "MCPServerSpec",
+      "type": "object"
+    },
+    "MCPTransport": {
+      "description": "MCP transport mode.",
+      "enum": [
+        "stdio",
+        "http",
+        "sse"
+      ],
+      "title": "MCPTransport",
+      "type": "string"
+    },
+    "Namespace": {
+      "description": "A memory namespace.\n\nAttributes:\n    name: Namespace identifier. Validated against\n        NAMESPACE_NAME_PATTERN at construction.\n    workload: Name of the workload that owns this namespace. Used\n        for event correlation and audit; not enforced at the store\n        level (the store is already namespace-bound).\n    retention_seconds: Default TTL applied to writes that do not\n        specify an explicit ttl_seconds. None means writes persist\n        until deleted.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "retention_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retention Seconds"
+        },
+        "workload": {
+          "title": "Workload",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "workload"
+      ],
+      "title": "Namespace",
+      "type": "object"
+    },
+    "RuntimeSpec": {
+      "description": "Runtime adapter selection for a workload.\n\nAttributes:\n    adapter: Adapter name. The default adapter is \"pydantic-ai\";\n        test bundles can use \"in-process-stub\" or similar.\n    model: Model identifier as expected by the adapter. For\n        pydantic-ai, this follows the \"provider:model\" convention,\n        e.g. \"anthropic:claude-opus-4-7\", \"openai:gpt-4o\",\n        \"ollama:qwen3:30b-a3b\". For stub adapters, \"none\" or any\n        convention.\n    parameters: Adapter-specific parameters (temperature, max tokens,\n        top_p, etc.). Passed through to the adapter unchanged.",
+      "properties": {
+        "adapter": {
+          "title": "Adapter",
+          "type": "string"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        }
+      },
+      "required": [
+        "adapter",
+        "model"
+      ],
+      "title": "RuntimeSpec",
+      "type": "object"
+    }
+  },
+  "description": "Top-level manifest for a workload bundle.\n\nA workload directory contains:\n\n- manifest.yaml: this file, validated into WorkloadManifest\n- __init__.py: makes the directory a Python package\n- contract.py: must export `contract: Contract[InputT, OutputT]`\n- __main__.py: optional, must export `main: async callable`\n- README.md: optional, human-readable description\n\nAttributes:\n    name: Workload identifier. Must match the package directory name.\n    version: Semantic version of the workload.\n    description: One-paragraph human description.\n    runtime: Which runtime adapter and model to use.\n    memory_namespace: Namespace this workload binds to, if any.\n    mcp_servers: MCP servers the runtime starts for this workload.\n    skills: Skill names the workload requires (resolved by\n        SkillRegistry in Phase 5).\n    dispatcher: Dispatcher name or skill name (resolved in Phase 5).\n        None means no dispatch, the workload runs without skill\n        routing.\n    budget: Action budget for runs of this workload. None means\n        unlimited.\n    exit_conditions: Workload-specific exit criteria (e.g.\n        {\"on_first_match\": true}). Interpretation is workload-\n        defined.",
+  "properties": {
+    "budget": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActionBudget"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "dispatcher": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dispatcher"
+    },
+    "exit_conditions": {
+      "additionalProperties": true,
+      "title": "Exit Conditions",
+      "type": "object"
+    },
+    "mcp_servers": {
+      "items": {
+        "$ref": "#/$defs/MCPServerSpec"
+      },
+      "title": "Mcp Servers",
+      "type": "array"
+    },
+    "memory_namespace": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Namespace"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "runtime": {
+      "$ref": "#/$defs/RuntimeSpec"
+    },
+    "skills": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Skills",
+      "type": "array"
+    },
+    "version": {
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "version",
+    "description",
+    "runtime"
+  ],
+  "title": "WorkloadManifest",
+  "type": "object"
+}

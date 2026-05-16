@@ -7,6 +7,7 @@ from typing import Any
 
 from harness.budgets import BudgetTracker
 from harness.guard import ToolGuard
+from harness.interruption import ResumableState
 from harness.mcp import MCPServerSpec
 from harness.runtime import PydanticAIRuntime, Runtime
 
@@ -23,6 +24,7 @@ class _ProtocolCompliantRuntime:
         budget: BudgetTracker | None = None,
         mcp_servers: list[MCPServerSpec] | None = None,
         guard: ToolGuard | None = None,
+        resume: ResumableState | None = None,
     ) -> Any:
         return "ok"
 
@@ -35,6 +37,7 @@ class _ProtocolCompliantRuntime:
         budget: BudgetTracker | None = None,
         mcp_servers: list[MCPServerSpec] | None = None,
         guard: ToolGuard | None = None,
+        resume: ResumableState | None = None,
     ) -> AsyncIterator[Any]:
         raise NotImplementedError
 

@@ -119,3 +119,173 @@ def test_non_mapping_manifest_raises_workload_validation_error(tmp_path: Path) -
             load_workload(name)
     finally:
         next(gen, None)
+
+
+_MIN_MANIFEST = (
+    "name: {name}\n"
+    "version: 0.1.0\n"
+    "description: d\n"
+    "runtime:\n"
+    "  adapter: in-process-stub\n"
+    "  model: none\n"
+)
+
+_CONTRACT_PY = (
+    "from pydantic import BaseModel\n"
+    "from harness import Contract\n"
+    "class I(BaseModel):\n    x: str\n"
+    "class O(BaseModel):\n    y: str\n"
+    'contract: Contract[I, O] = Contract(name="{name}", version="0.1.0")\n'
+)
+
+
+def _full_workload(root: Path, name: str, manifest_text: str) -> Iterator[str]:
+    """Materialize a temp workload with manifest + contract, importable."""
+    pkg_dir = root / name
+    pkg_dir.mkdir()
+    (pkg_dir / "__init__.py").write_text("")
+    (pkg_dir / "manifest.yaml").write_text(manifest_text)
+    (pkg_dir / "contract.py").write_text(_CONTRACT_PY.format(name=name))
+    workloads.__path__.append(str(root))
+    importlib.invalidate_caches()
+    try:
+        yield name
+    finally:
+        workloads.__path__.remove(str(root))
+        for mod in (f"workloads.{name}", f"workloads.{name}.contract"):
+            sys.modules.pop(mod, None)
+        importlib.invalidate_caches()
+
+
+def test_real_contract_import_error_propagates_not_missing(tmp_path: Path) -> None:
+    """A broken contract.py surfaces the real ImportError, not ContractNotFound."""
+    name = "_wl_brokencontract"
+    pkg = tmp_path / name
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "manifest.yaml").write_text(_MIN_MANIFEST.format(name=name))
+    (pkg / "contract.py").write_text("import a_module_that_truly_does_not_exist_xyz\n")
+    workloads.__path__.append(str(tmp_path))
+    importlib.invalidate_caches()
+    try:
+        with pytest.raises(ModuleNotFoundError, match="a_module_that_truly_does_not_exist_xyz"):
+            load_workload(name)
+    finally:
+        workloads.__path__.remove(str(tmp_path))
+        for m in (f"workloads.{name}", f"workloads.{name}.contract"):
+            sys.modules.pop(m, None)
+        importlib.invalidate_caches()
+
+
+def test_missing_contract_still_reports_contract_not_found(tmp_path: Path) -> None:
+    """A genuinely absent contract.py is still ContractNotFound (not masked)."""
+    name = "_wl_nocontract"
+    pkg = tmp_path / name
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "manifest.yaml").write_text(_MIN_MANIFEST.format(name=name))
+    workloads.__path__.append(str(tmp_path))
+    importlib.invalidate_caches()
+    try:
+        with pytest.raises(ContractNotFound, match="missing"):
+            load_workload(name)
+    finally:
+        workloads.__path__.remove(str(tmp_path))
+        sys.modules.pop(f"workloads.{name}", None)
+        importlib.invalidate_caches()
+
+
+def test_bl011_resolves_versioned_skill_spec(tmp_path: Path) -> None:
+    """BL-011 accepts the BL-053 name@version form via registry.get."""
+    from skills.registry import SkillRegistry
+    from skills.types import Skill, SkillManifest
+
+    gen = _full_workload(
+        tmp_path,
+        "_wl_verskill",
+        _MIN_MANIFEST.format(name="_wl_verskill") + "skills: ['calc@2.0.0']\n",
+    )
+    name = next(gen)
+    try:
+        reg = SkillRegistry()
+        reg.add(
+            Skill(
+                manifest=SkillManifest(name="calc", description="d", metadata={"version": "2.0.0"}),
+                path=tmp_path / "calc",
+            )
+        )
+        lw = load_workload(name, registry=reg)
+        assert lw.manifest.skills == ["calc@2.0.0"]
+    finally:
+        next(gen, None)
+
+
+def test_bl010_name_must_match_directory(tmp_path: Path) -> None:
+    """BL-010: a manifest name that differs from the package dir is rejected."""
+    gen = _temp_workload(tmp_path, "_dir_name_x", _MIN_MANIFEST.format(name="not_dir_name_x"))
+    name = next(gen)
+    try:
+        with pytest.raises(WorkloadValidationError, match="does not match package"):
+            load_workload(name)
+    finally:
+        next(gen, None)
+
+
+def test_bl010_example_workload_name_matches() -> None:
+    """The in-tree _example bundle satisfies the directory-name validator."""
+    lw = load_workload("_example")
+    assert lw.manifest.name == lw.package_path.name == "_example"
+
+
+def test_bl011_unresolved_skill_rejected(tmp_path: Path) -> None:
+    """BL-011: a skill absent from the supplied registry fails the load."""
+    from skills.registry import SkillRegistry
+    from skills.types import Skill, SkillManifest
+
+    gen = _full_workload(
+        tmp_path,
+        "_wl_skillcheck",
+        _MIN_MANIFEST.format(name="_wl_skillcheck") + "skills: [present, absent]\n",
+    )
+    name = next(gen)
+    try:
+        reg = SkillRegistry()
+        reg.add(
+            Skill(
+                manifest=SkillManifest(name="present", description="d"),
+                path=tmp_path / "present",
+            )
+        )
+        with pytest.raises(WorkloadValidationError, match="absent"):
+            load_workload(name, registry=reg)
+        # No registry => skill resolution is not checked.
+        lw = load_workload(name)
+        assert lw.manifest.skills == ["present", "absent"]
+    finally:
+        next(gen, None)
+
+
+def test_bl011_all_skills_resolved(tmp_path: Path) -> None:
+    """BL-011: load succeeds when every declared skill resolves."""
+    from skills.registry import SkillRegistry
+    from skills.types import Skill, SkillManifest
+
+    gen = _full_workload(
+        tmp_path,
+        "_wl_skillok",
+        _MIN_MANIFEST.format(name="_wl_skillok") + "skills: [a, b]\n",
+    )
+    name = next(gen)
+    try:
+        reg = SkillRegistry()
+        for sn in ("a", "b"):
+            reg.add(
+                Skill(
+                    manifest=SkillManifest(name=sn, description="d"),
+                    path=tmp_path / sn,
+                )
+            )
+        lw = load_workload(name, registry=reg)
+        assert lw.manifest.skills == ["a", "b"]
+    finally:
+        next(gen, None)

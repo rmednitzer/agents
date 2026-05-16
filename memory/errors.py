@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 __all__ = [
+    "AccessDenied",
     "MemoryError",
     "NamespaceViolation",
 ]
@@ -32,3 +33,17 @@ class NamespaceViolation(MemoryError):
     def __init__(self, reason: str) -> None:
         super().__init__(f"Namespace violation: {reason}")
         self.reason = reason
+
+
+class AccessDenied(MemoryError):
+    """A principal is not authorized for an operation on a key (BL-071).
+
+    Raised by ACLStore when the bound principal's role does not permit
+    the attempted operation (read/write/delete/list) on the given key.
+    """
+
+    def __init__(self, principal: str, operation: str, key: str) -> None:
+        super().__init__(f"principal {principal!r} denied {operation!r} on key {key!r}")
+        self.principal = principal
+        self.operation = operation
+        self.key = key

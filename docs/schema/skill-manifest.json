@@ -1,0 +1,62 @@
+{
+  "description": "YAML frontmatter of a SKILL.md file.\n\nConforms to https://agentskills.io/specification:\n\n- name: required, 1-64 chars, lowercase alphanumeric + hyphens, no\n  leading/trailing/consecutive hyphens. Must match parent directory\n  name (enforced by the loader, not by this model).\n- description: required, 1-1024 chars, describes what + when.\n- license, compatibility (1-500 chars): optional.\n- metadata: open extension point, str -> str.\n- allowed_tools (alias 'allowed-tools'): optional space-separated\n  string of pre-approved tools. Experimental per spec.\n\nFramework-specific extensions in metadata (recognized by name):\n- lane: groups skills for hierarchical dispatch.\n- triggers: comma-separated keywords for KeywordDispatcher.\n- namespace: memory namespace the skill expects to be available.",
+  "properties": {
+    "allowed-tools": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Allowed-Tools"
+    },
+    "compatibility": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Compatibility"
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "license": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "License"
+    },
+    "metadata": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Metadata",
+      "type": "object"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "description"
+  ],
+  "title": "SkillManifest",
+  "type": "object"
+}

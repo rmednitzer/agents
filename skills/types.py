@@ -17,8 +17,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+if TYPE_CHECKING:
+    from harness.contract import Contract
 
 __all__ = [
     "Skill",
@@ -100,6 +104,9 @@ class Skill:
     references: dict[str, Path] = field(default_factory=dict)
     scripts: dict[str, Path] = field(default_factory=dict)
     assets: dict[str, Path] = field(default_factory=dict)
+    contract_path: Path | None = None
+    _contract: Contract[Any, Any] | None = None
+    _contract_loaded: bool = False
 
     @property
     def name(self) -> str:
@@ -114,9 +121,32 @@ class Skill:
         return self.manifest.metadata.get("lane")
 
     @property
+    def version(self) -> str:
+        """Skill version (BL-053).
+
+        The Agent Skills spec has no version frontmatter field, so the
+        framework reads the open ``metadata`` map's ``version`` key
+        (spec-compliant: foreign tools ignore it). Defaults to "0.0.0"
+        when unset, so an unversioned skill occupies a single bucket and
+        keeps the L1 last-write-wins behaviour.
+        """
+        return self.manifest.metadata.get("version", "0.0.0")
+
+    @property
     def triggers(self) -> list[str]:
         raw = self.manifest.metadata.get("triggers", "")
         return [t.strip().lower() for t in raw.split(",") if t.strip()]
+
+    @property
+    def allowed_tools(self) -> list[str]:
+        """Parsed ``allowed-tools`` declaration.
+
+        The Agent Skills spec encodes allowed-tools as a single
+        space-separated string. Returns the tokens in declaration order;
+        empty when the skill declares none.
+        """
+        raw = self.manifest.allowed_tools or ""
+        return [t for t in raw.split() if t]
 
     def body(self) -> str:
         """Lazy-load the SKILL.md body (everything after the frontmatter)."""
@@ -125,6 +155,22 @@ class Skill:
 
             self._body = _read_body_only(self.path / "SKILL.md")
         return self._body
+
+    def contract(self) -> Contract[Any, Any] | None:
+        """Lazy-load the skill's own contract (BL-052), or None.
+
+        A skill may ship ``contract.py`` exporting ``contract: Contract``;
+        it composes with the workload contract via
+        harness.compose_contracts. Returns None when the skill ships no
+        contract. Raises SkillManifestError if contract.py exists but
+        does not export a valid Contract.
+        """
+        if not self._contract_loaded:
+            from skills.loader import _load_skill_contract
+
+            self._contract = _load_skill_contract(self)
+            self._contract_loaded = True
+        return self._contract
 
 
 class SkillMatch(BaseModel):

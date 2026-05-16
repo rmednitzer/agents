@@ -28,20 +28,29 @@ Component contracts:
 
 ```
 agents/
-  workloads/   individual agent workloads
-  skills/      reusable skill definitions
+  agents/      operator CLI package (python -m agents)
+  workloads/   individual agent workloads + loader
+  skills/      reusable skill definitions, registry, dispatchers
   harness/     orchestration and execution control
   memory/      memory backends, schemas, retrieval
   tests/       test suite, mirrors source layout
-  docs/        architecture, ADRs, design notes
+  docs/        architecture, ADRs, backlog, generated JSON Schema
   scripts/     operational and developer scripts
 ```
 
+The L1 framework plus the full L2 wave are implemented; see
+`docs/backlog.md` (line-item tracker) and `docs/adr/0007-l2-implementation-wave.md`
+(cross-cutting decisions).
+
 ## Conventions
 
-Language: Python (>=3.12 expected; pin in pyproject.toml when first code lands).
+Language: Python, pinned at `requires-python = ">=3.12"` in pyproject.toml. CI runs on 3.12.
 
-Formatting: ruff for lint and format, mypy for type checks. Configure in pyproject.toml.
+Formatting: ruff (lint + format) and mypy (strict) are configured in pyproject.toml. Run `make check` (lint + type-check + test) before pushing.
+
+Additive-to-L1 rule (ADR 0007): L2 and later changes are additive to the L1 Protocols. Use new optional keyword parameters (defaults preserving L1 behaviour), new modules, or new Protocols beside the existing ones. Do not remove or change an L1 import path or signature. Surface configuration errors at load time, not mid-run.
+
+Documentation style: no em-dashes and no `--` outside HTML comments (the repo's own markdown rule, dogfooded by `workloads/_example`). Use commas, colons, or parentheses instead.
 
 Naming:
 - Workloads: `workloads/<purpose>/` (snake_case, describes mission, not technology).
@@ -72,9 +81,11 @@ New harness module:
 3. If it changes an existing contract, write a short ADR under `docs/adr/`.
 
 New memory backend:
-1. Add `memory/<backend>/` with a clear adapter.
-2. Document namespace ownership, retention, isolation guarantees in `memory/<backend>/README.md`.
-3. State migration path from prior backends if applicable.
+1. Add `memory/<backend>.py` implementing the `MemoryStore` Protocol (single module; the existing adapters are `memory/{inmemory,sqlite,redis,s3,dynamodb}.py`).
+2. Import any third-party driver lazily inside `__init__` with a clear error naming the extra; declare the extra in `[project.optional-dependencies]`. The package must import and type-check with the driver absent.
+3. Reuse `memory._audit.MemoryAudit` for the optional `sink`/`base_event_fields` surface; offload blocking I/O via `asyncio.to_thread`; validate keys with `memory.validators`.
+4. Implement only the extension Protocols the backend can honour (Batch/Scan/ContentAddressable/CAS/Sweepable); do not fake unsupported ones.
+5. Tests under `tests/memory/`, using an in-process double (`fakeredis`, `moto`) guarded by `pytest.importorskip`. Document retention, isolation, and any semantics deviation in `memory/README.md` and the module docstring.
 
 ## Quality bar
 
@@ -82,7 +93,8 @@ New memory backend:
 - Every component has a one-paragraph README explaining its contract.
 - Every directory under `workloads/`, `skills/`, `harness/`, `memory/` has a README.md.
 - Tests are not optional for harness and memory; advisory for workloads and skills.
-- CI must pass before merge once workflows land.
+- CI (lint, type-check, test) must pass before merge. `python scripts/gen_schema.py --check` guards JSON Schema drift and runs in the suite; regenerate with `make schema` after changing a manifest model.
+- Changes stay additive to the L1 Protocols (see Conventions / ADR 0007).
 
 ## Risk
 
@@ -93,10 +105,15 @@ This repo defines authority boundaries between humans, agents, and tools. Treat 
 
 ## Build and test
 
-To be defined when first code lands. Convention:
-- `make test` runs unit tests.
-- `make lint` runs ruff plus mypy.
-- `make check` runs both.
+Uses `uv`. Set up: `uv sync --all-extras` (installs every optional backend plus test doubles so CI exercises all adapters).
+
+- `make test` runs pytest.
+- `make lint` runs `ruff check`.
+- `make type-check` runs `mypy agents harness memory workloads skills`.
+- `make check` runs lint + type-check + test (run before pushing).
+- `make schema` regenerates `docs/schema/*.json` from the Pydantic models.
+
+The PydanticAI runtime is tested deterministically with `TestModel`/`FunctionModel` (no network or API keys). Optional-backend tests skip cleanly when their driver is absent.
 
 ## Contributing
 

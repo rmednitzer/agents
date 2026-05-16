@@ -24,11 +24,16 @@ __all__ = [
     "BudgetExceededEvent",
     "ContractCompleted",
     "ContractStarted",
+    "DispatchObserved",
     "GovernanceViolated",
     "HarnessEvent",
     "InvariantViolated",
+    "MemoryDelete",
+    "MemoryRead",
+    "MemoryWrite",
     "PostconditionViolated",
     "PreconditionViolated",
+    "RecoveryApplied",
     "SkillDispatched",
 ]
 
@@ -119,3 +124,63 @@ class SkillDispatched(HarnessEvent):
     dispatcher: str
     confidence: float
     rationale: str
+
+
+class MemoryRead(HarnessEvent):
+    """A MemoryStore.read. ``hit`` is False for a missing/expired key."""
+
+    kind: Literal["memory_read"] = "memory_read"
+    namespace: str
+    key: str
+    hit: bool
+
+
+class MemoryWrite(HarnessEvent):
+    """A MemoryStore.write. ``value_bytes`` is the stored payload size."""
+
+    kind: Literal["memory_write"] = "memory_write"
+    namespace: str
+    key: str
+    value_bytes: int
+    ttl_seconds: float | None = None
+
+
+class MemoryDelete(HarnessEvent):
+    """A MemoryStore.delete. ``existed`` is False if the key was absent."""
+
+    kind: Literal["memory_delete"] = "memory_delete"
+    namespace: str
+    key: str
+    existed: bool
+
+
+class RecoveryApplied(HarnessEvent):
+    """A soft violation's recovery handler ran (BL-061, the R in P,I,G,R).
+
+    ``predicate`` is the soft predicate that failed; ``stage`` is which
+    obligation it belonged to (precondition/invariant/postcondition);
+    ``action`` is the handler's short description of what it did;
+    ``recovered`` is the handler's own success signal.
+    """
+
+    kind: Literal["recovery_applied"] = "recovery_applied"
+    predicate: str
+    stage: str
+    action: str
+    recovered: bool
+
+
+class DispatchObserved(HarnessEvent):
+    """One dispatch call's performance (BL-042).
+
+    Emitted by InstrumentedDispatcher: per-dispatcher latency, how many
+    skills matched, the top confidence, and whether the result fell
+    below the caller's confidence threshold (a fallback signal).
+    """
+
+    kind: Literal["dispatch_observed"] = "dispatch_observed"
+    dispatcher: str
+    latency_ms: float
+    matched: int
+    top_confidence: float
+    fell_back: bool

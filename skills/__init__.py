@@ -15,12 +15,18 @@ See docs/adr/0006-skills-and-dispatcher.md.
 
 from skills.dispatcher import Dispatcher
 from skills.dispatchers import (
+    DispatchStats,
+    EmbeddingDispatcher,
+    InstrumentedDispatcher,
     KeywordDispatcher,
     LaneDispatcher,
     LLMDispatcher,
+    MultiDispatcher,
+    MultiMode,
     RoutingChainDispatcher,
     SkillBasedDispatcher,
 )
+from skills.embeddings import EmbeddingProvider, cosine_similarity
 from skills.errors import (
     DispatchError,
     NoSkillFound,
@@ -30,14 +36,33 @@ from skills.errors import (
 )
 from skills.loader import discover_skill, parse_skill_md
 from skills.registry import SkillRegistry
+from skills.sources import (
+    GitHubSkillSource,
+    LocalSkillSource,
+    SkillSource,
+    install_skill,
+)
 from skills.types import Skill, SkillManifest, SkillMatch
+from skills.validators import (
+    unknown_tools,
+    validate_allowed_tools,
+    validate_registry_tools,
+)
 
 __all__ = [
     "DispatchError",
+    "DispatchStats",
     "Dispatcher",
+    "EmbeddingDispatcher",
+    "EmbeddingProvider",
+    "GitHubSkillSource",
+    "InstrumentedDispatcher",
     "KeywordDispatcher",
     "LLMDispatcher",
     "LaneDispatcher",
+    "LocalSkillSource",
+    "MultiDispatcher",
+    "MultiMode",
     "NoSkillFound",
     "RoutingChainDispatcher",
     "Skill",
@@ -48,6 +73,12 @@ __all__ = [
     "SkillManifestError",
     "SkillMatch",
     "SkillRegistry",
+    "SkillSource",
+    "cosine_similarity",
     "discover_skill",
+    "install_skill",
     "parse_skill_md",
+    "unknown_tools",
+    "validate_allowed_tools",
+    "validate_registry_tools",
 ]

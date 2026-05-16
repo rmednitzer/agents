@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from harness.runtime import Runtime
+from skills.dispatchers._json import first_json_array
 from skills.errors import DispatchError
 from skills.registry import SkillRegistry
 from skills.types import Skill, SkillMatch
@@ -106,5 +106,4 @@ class LLMDispatcher:
 
     @staticmethod
     def _extract_json_array(text: str) -> str | None:
-        match = re.search(r"\[.*\]", text, re.DOTALL)
-        return match.group(0) if match else None
+        return first_json_array(text)

@@ -35,6 +35,11 @@ class ActionBudget(BaseModel):
     """Immutable action budget spec.
 
     All fields are optional; None means unlimited for that dimension.
+
+    ``max_tool_calls`` is the aggregate cap across every tool.
+    ``max_tool_calls_per_tool`` (BL-073) caps individual tools, e.g.
+    ``{"search": 3, "delete": 1}``; a tool absent from the map is
+    bounded only by the aggregate cap. Both are enforced.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -43,6 +48,7 @@ class ActionBudget(BaseModel):
     max_tokens: int | None = None
     max_wall_clock_seconds: float | None = None
     max_tool_calls: int | None = None
+    max_tool_calls_per_tool: dict[str, int] | None = None
 
 
 class BudgetTracker:
@@ -71,6 +77,7 @@ class BudgetTracker:
         self._steps = 0
         self._tokens = 0
         self._tool_calls = 0
+        self._per_tool: dict[str, int] = {}
         self._started_at = datetime.now(UTC)
 
     @property
@@ -99,10 +106,24 @@ class BudgetTracker:
         self._tokens += n
         self._check("tokens", float(self._tokens), self._budget.max_tokens)
 
-    def consume_tool_call(self, n: int = 1) -> None:
-        """Record n tool calls consumed and enforce the tool_calls limit."""
+    def consume_tool_call(self, n: int = 1, *, tool: str | None = None) -> None:
+        """Record n tool calls and enforce the aggregate + per-tool caps.
+
+        ``tool`` is the tool name. When given and a per-tool cap applies
+        (BL-073), that cap is enforced after the aggregate cap. Calling
+        without ``tool`` preserves the L1 behaviour (aggregate only).
+        """
         self._tool_calls += n
         self._check("tool_calls", float(self._tool_calls), self._budget.max_tool_calls)
+        if tool is not None:
+            self._per_tool[tool] = self._per_tool.get(tool, 0) + n
+            per_tool = self._budget.max_tool_calls_per_tool or {}
+            if tool in per_tool:
+                self._check(
+                    f"tool_calls:{tool}",
+                    float(self._per_tool[tool]),
+                    per_tool[tool],
+                )
 
     def check_wall_clock(self) -> None:
         """Check elapsed wall-clock time against max_wall_clock_seconds."""
