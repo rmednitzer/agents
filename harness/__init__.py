@@ -65,6 +65,7 @@ from harness.mcp import (
     MCPTransport,
     ToolSpec,
 )
+from harness.otel import OTelSink
 from harness.recovery import RecoveryHandler, RecoveryOutcome
 from harness.runtime import PydanticAIRuntime, Runtime
 from harness.sinks import EventSink, JsonlSink, MemorySink, MultiSink, NullSink
@@ -110,6 +111,7 @@ __all__ = [
     "MemoryWrite",
     "MultiSink",
     "NullSink",
+    "OTelSink",
     "PostconditionViolated",
     "PostconditionViolation",
     "PreconditionViolated",

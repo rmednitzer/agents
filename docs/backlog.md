@@ -46,7 +46,7 @@ Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked
 ## Observability
 
 - `BL-040` [in-progress] [S] Memory operation events (`MemoryRead`, `MemoryWrite`, `MemoryDelete`) emitted through `EventSink`. Surface in `harness.events` is ready; the `MemoryStore` Protocol needs an optional `sink` parameter. (ADR 0004) — branch `claude/implement-l2-feature-5JpJX`
-- `BL-041` [pending] [S] OTel-Collector-compatible `EventSink` implementation. `HarnessEvent` already carries `trace_id`, `span_id`, `parent_span_id`. (ADR 0002)
+- `BL-041` [in-progress] [S] OTel-Collector-compatible `EventSink` implementation. `HarnessEvent` already carries `trace_id`, `span_id`, `parent_span_id`. (ADR 0002) — branch `claude/implement-l2-feature-5JpJX`
 - `BL-042` [in-progress] [M] Dispatch performance instrumentation: per-dispatcher latency histograms, runtime token consumption, threshold-fallback rate. Feeds Grafana via OTel. (ADR 0006) — branch `claude/implement-l2-feature-5JpJX`
 
 ## Skill ecosystem
@@ -79,7 +79,7 @@ Now that Phase 5 ships `SkillRegistry`, several Phase 4 validators are unblocked
 
 ## Workload convenience
 
-- `BL-090` [pending] [M] Out-of-tree workloads. Load from arbitrary filesystem paths or installed packages, not just the `workloads/` package tree. (ADR 0005)
+- `BL-090` [in-progress] [M] Out-of-tree workloads. Load from arbitrary filesystem paths or installed packages, not just the `workloads/` package tree. (ADR 0005) — branch `claude/implement-l2-feature-5JpJX`
 
 ## Resolved by later phases
 

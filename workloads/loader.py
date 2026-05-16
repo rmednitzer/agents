@@ -19,9 +19,11 @@ Two L2 validators (ADR 0007) run after the manifest parses:
 from __future__ import annotations
 
 import importlib
+import importlib.util
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -42,6 +44,7 @@ if TYPE_CHECKING:
 __all__ = [
     "LoadedWorkload",
     "load_workload",
+    "load_workload_from_path",
 ]
 
 
@@ -103,6 +106,74 @@ def load_workload(
         raise WorkloadNotFound(name, "package has no __file__")
     package_path = Path(pkg_file).parent
 
+    def _import(submodule: str) -> ModuleType | None:
+        try:
+            return importlib.import_module(f"workloads.{name}.{submodule}")
+        except ImportError:
+            return None
+
+    return _build_loaded_workload(name, package_path, _import, registry)
+
+
+def load_workload_from_path(
+    path: str | Path,
+    *,
+    registry: SkillRegistry | None = None,
+) -> LoadedWorkload:
+    """Load an out-of-tree workload from an arbitrary directory (BL-090).
+
+    The directory need not be under the ``workloads`` package tree or on
+    ``sys.path``: ``contract.py`` and the optional ``__main__.py`` are
+    imported by file path under synthetic module names. The directory's
+    own name is the workload identity for the BL-010 check, so the same
+    name/skills validators apply as for in-tree workloads.
+
+    Args:
+        path: Filesystem path to the workload directory.
+        registry: Optional SkillRegistry for the BL-011 skills check.
+
+    Returns:
+        LoadedWorkload with manifest, contract, package_path, optional main.
+
+    Raises:
+        WorkloadNotFound: The path is not an existing directory.
+        ManifestNotFound: manifest.yaml is missing.
+        ContractNotFound: contract.py is missing or invalid.
+        WorkloadValidationError: manifest invalid, name does not match
+            the directory (BL-010), or a skill is unresolved (BL-011).
+    """
+    package_path = Path(path).resolve()
+    name = package_path.name
+    if not package_path.is_dir():
+        raise WorkloadNotFound(name, f"not a directory: {package_path}")
+
+    def _import(submodule: str) -> ModuleType | None:
+        file = package_path / f"{submodule}.py"
+        if not file.is_file():
+            return None
+        mod_name = f"_oot_workload_{name}_{submodule}".replace("-", "_")
+        spec = importlib.util.spec_from_file_location(mod_name, file)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    return _build_loaded_workload(name, package_path, _import, registry)
+
+
+def _build_loaded_workload(
+    name: str,
+    package_path: Path,
+    import_submodule: Callable[[str], ModuleType | None],
+    registry: SkillRegistry | None,
+) -> LoadedWorkload:
+    """Shared manifest parse + L2 validators + contract/main resolution.
+
+    ``import_submodule(stem)`` returns the workload's ``contract`` /
+    ``__main__`` module (or None if absent); the in-tree and
+    out-of-tree loaders differ only in how that import is performed.
+    """
     manifest_path = package_path / "manifest.yaml"
     if not manifest_path.is_file():
         raise ManifestNotFound(name, str(manifest_path))
@@ -136,9 +207,11 @@ def load_workload(
             )
 
     try:
-        contract_mod = importlib.import_module(f"workloads.{name}.contract")
+        contract_mod = import_submodule("contract")
     except ImportError as exc:
         raise ContractNotFound(name, f"cannot import contract module: {exc}") from exc
+    if contract_mod is None:
+        raise ContractNotFound(name, "contract.py is missing")
 
     contract = getattr(contract_mod, "contract", None)
     if contract is None:
@@ -150,13 +223,11 @@ def load_workload(
         )
 
     main: Callable[..., Awaitable[Any]] | None = None
-    try:
-        main_mod = importlib.import_module(f"workloads.{name}.__main__")
+    main_mod = import_submodule("__main__")
+    if main_mod is not None:
         main_candidate = getattr(main_mod, "main", None)
         if main_candidate is not None and callable(main_candidate):
             main = main_candidate
-    except ImportError:
-        pass
 
     return LoadedWorkload(
         manifest=manifest,
