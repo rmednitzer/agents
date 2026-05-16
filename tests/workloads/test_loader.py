@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import importlib
+import sys
+from collections.abc import Iterator
+from pathlib import Path
+
 import pytest
 
+import workloads
 from harness.contract import Contract
 from workloads.errors import (
     ContractNotFound,
@@ -12,6 +18,26 @@ from workloads.errors import (
     WorkloadValidationError,
 )
 from workloads.loader import LoadedWorkload, load_workload
+
+
+def _temp_workload(root: Path, name: str, manifest_text: str) -> Iterator[str]:
+    """Materialize a temporary workload package and make it importable.
+
+    Yields the workload name for use with load_workload, then tears down
+    the package path entry and any cached modules.
+    """
+    pkg_dir = root / name
+    pkg_dir.mkdir()
+    (pkg_dir / "__init__.py").write_text("")
+    (pkg_dir / "manifest.yaml").write_text(manifest_text)
+    workloads.__path__.append(str(root))
+    importlib.invalidate_caches()
+    try:
+        yield name
+    finally:
+        workloads.__path__.remove(str(root))
+        sys.modules.pop(f"workloads.{name}", None)
+        importlib.invalidate_caches()
 
 
 def test_load_example_workload() -> None:
@@ -67,3 +93,29 @@ def test_loaded_workload_errors_are_distinguishable() -> None:
     for err in (err1, err2, err3, err4):
         assert isinstance(err, WorkloadError)
         assert err.name == "x"
+
+
+def test_malformed_manifest_yaml_raises_workload_validation_error(tmp_path: Path) -> None:
+    """A syntactically invalid manifest.yaml surfaces as WorkloadValidationError.
+
+    Regression: previously the raw yaml.YAMLError leaked, violating the
+    loader's documented Raises: contract.
+    """
+    gen = _temp_workload(tmp_path, "_audit_broken_yaml", "name: x\n  bad: : indent\n")
+    name = next(gen)
+    try:
+        with pytest.raises(WorkloadValidationError):
+            load_workload(name)
+    finally:
+        next(gen, None)
+
+
+def test_non_mapping_manifest_raises_workload_validation_error(tmp_path: Path) -> None:
+    """A manifest that parses to a non-mapping is rejected with a clear error."""
+    gen = _temp_workload(tmp_path, "_audit_scalar_manifest", "just-a-string\n")
+    name = next(gen)
+    try:
+        with pytest.raises(WorkloadValidationError, match="must be a mapping"):
+            load_workload(name)
+    finally:
+        next(gen, None)
