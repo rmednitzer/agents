@@ -1,9 +1,9 @@
 """The enforcement loop.
 
 run_under_contract is the single entry point. It validates preconditions
-and invariants, calls the runtime, parses the output, validates
-postconditions, emits structured events throughout, and routes approval
-interruptions through ResumableState (live wiring in Phase 2).
+and invariants, constructs a BudgetTracker and HarnessToolGuard when
+applicable, calls the runtime with those plus MCP server specs, parses
+the output, validates postconditions, emits structured events throughout.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from harness.budgets import ActionBudget, BudgetTracker
 from harness.contract import Contract, Severity
 from harness.errors import (
     InvariantViolation,
@@ -27,7 +28,9 @@ from harness.events import (
     PostconditionViolated,
     PreconditionViolated,
 )
+from harness.guard import HarnessToolGuard, ToolGuard
 from harness.interruption import ResumableState
+from harness.mcp import MCPServerSpec
 from harness.runtime import Runtime
 from harness.sinks import EventSink, NullSink
 
@@ -44,6 +47,9 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
     sink: EventSink | None = None,
     resume: ResumableState | None = None,
     invariant_state: Any | None = None,
+    budget: ActionBudget | None = None,
+    mcp_servers: list[MCPServerSpec] | None = None,
+    guard: ToolGuard | None = None,
 ) -> OutputT | ResumableState:
     """Execute a workload under contract.
 
@@ -59,16 +65,25 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
             (not pending) before this is accepted.
         invariant_state: Optional observable state for invariants. If
             None, invariants are checked against the input.
+        budget: ActionBudget spec. If provided, a BudgetTracker is
+            constructed and passed to the runtime. The runtime adapter
+            is responsible for calling consume_* methods.
+        mcp_servers: MCP server specs to pass to the runtime. The
+            adapter handles lifecycle.
+        guard: Tool guard. If None and the contract has governance
+            predicates or approval_required entries, a HarnessToolGuard
+            is constructed from the contract.
 
     Returns:
         OutputT on successful completion.
-        ResumableState if execution is interrupted by an approval request
-        (Phase 2 wiring; Phase 1 always returns OutputT or raises).
+        ResumableState if execution is interrupted by an approval request.
 
     Raises:
         PreconditionViolation: A hard precondition failed.
         PostconditionViolation: A hard postcondition failed.
         InvariantViolation: A hard invariant failed.
+        BudgetExceeded: An action budget was exceeded.
+        GovernanceViolation: A hard governance predicate failed.
         ValueError: A resume state has unresolved pending approvals.
     """
     active_sink: EventSink = sink if sink is not None else NullSink()
@@ -106,7 +121,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
             if pred_pre.severity == Severity.HARD:
                 raise PreconditionViolation(pred_pre.name)
 
-    # 2. Invariants (pre-run check; in-loop checks land in Phase 2)
+    # 2. Invariants (pre-run check; in-loop checks delegated to runtime)
     inv_state: Any = invariant_state if invariant_state is not None else input
     for pred_inv in contract.invariants:
         if not pred_inv(inv_state):
@@ -122,19 +137,31 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
             if pred_inv.severity == Severity.HARD:
                 raise InvariantViolation(pred_inv.name)
 
-    # 3. Runtime invocation
+    # 3. Construct per-run mutable objects
+    tracker: BudgetTracker | None = None
+    if budget is not None:
+        tracker = BudgetTracker(budget, sink=active_sink, base_event_fields=base)
+
+    active_guard: ToolGuard | None = guard
+    if active_guard is None and (contract.governance or contract.approval_required):
+        active_guard = HarnessToolGuard(contract, sink=active_sink, base_event_fields=base)
+
+    # 4. Runtime invocation
     result = await runtime.run(
         prompt=input.model_dump_json(),
         deps=deps,
+        budget=tracker,
+        mcp_servers=mcp_servers,
+        guard=active_guard,
     )
 
-    # 4. Parse output
+    # 5. Parse output
     if isinstance(result, output_model):
         output: OutputT = result
     else:
         output = output_model.model_validate(result)
 
-    # 5. Postconditions
+    # 6. Postconditions
     for pred_post in contract.postconditions:
         if not pred_post(output):
             active_sink.emit(

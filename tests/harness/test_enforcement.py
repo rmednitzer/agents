@@ -1,4 +1,4 @@
-"""Tests for harness.enforcement."""
+"""Tests for harness.enforcement, including Phase 2 budget + guard wiring."""
 
 from __future__ import annotations
 
@@ -8,9 +8,11 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
+from harness.budgets import ActionBudget, BudgetTracker
 from harness.contract import Contract, Severity, predicate
 from harness.enforcement import run_under_contract
 from harness.errors import (
+    BudgetExceeded,
     InvariantViolation,
     PostconditionViolation,
     PreconditionViolation,
@@ -20,6 +22,8 @@ from harness.events import (
     ContractStarted,
     PreconditionViolated,
 )
+from harness.guard import ToolGuard
+from harness.mcp import MCPServerSpec
 from harness.runtime import Runtime
 from harness.sinks import MemorySink
 
@@ -33,12 +37,15 @@ class _Output(BaseModel):
 
 
 class _StubRuntime:
-    """Test runtime that returns a fixed Output instance."""
+    """Test runtime that records what the harness passed and returns a fixed Output."""
 
     name: str = "stub"
 
     def __init__(self, output: _Output | dict[str, Any]) -> None:
         self._output = output
+        self.received_budget: BudgetTracker | None = None
+        self.received_mcp_servers: list[MCPServerSpec] | None = None
+        self.received_guard: ToolGuard | None = None
 
     async def run(
         self,
@@ -46,8 +53,13 @@ class _StubRuntime:
         *,
         tools: list[Any] | None = None,
         deps: Any | None = None,
-        max_steps: int | None = None,
+        budget: BudgetTracker | None = None,
+        mcp_servers: list[MCPServerSpec] | None = None,
+        guard: ToolGuard | None = None,
     ) -> Any:
+        self.received_budget = budget
+        self.received_mcp_servers = mcp_servers
+        self.received_guard = guard
         return self._output
 
     def stream(
@@ -56,7 +68,42 @@ class _StubRuntime:
         *,
         tools: list[Any] | None = None,
         deps: Any | None = None,
-        max_steps: int | None = None,
+        budget: BudgetTracker | None = None,
+        mcp_servers: list[MCPServerSpec] | None = None,
+        guard: ToolGuard | None = None,
+    ) -> AsyncIterator[Any]:
+        raise NotImplementedError
+
+
+class _BudgetBurningRuntime:
+    """Test runtime that exhausts the budget tracker's steps limit."""
+
+    name: str = "burner"
+
+    async def run(
+        self,
+        prompt: str,
+        *,
+        tools: list[Any] | None = None,
+        deps: Any | None = None,
+        budget: BudgetTracker | None = None,
+        mcp_servers: list[MCPServerSpec] | None = None,
+        guard: ToolGuard | None = None,
+    ) -> Any:
+        if budget is not None:
+            while True:
+                budget.consume_step()
+        return _Output(text="never")
+
+    def stream(
+        self,
+        prompt: str,
+        *,
+        tools: list[Any] | None = None,
+        deps: Any | None = None,
+        budget: BudgetTracker | None = None,
+        mcp_servers: list[MCPServerSpec] | None = None,
+        guard: ToolGuard | None = None,
     ) -> AsyncIterator[Any]:
         raise NotImplementedError
 
@@ -250,3 +297,128 @@ async def test_all_events_share_trace_id() -> None:
     assert len(started) == 1
     assert len(completed) == 1
     assert len(violated) == 1
+
+
+@pytest.mark.asyncio
+async def test_budget_passed_to_runtime() -> None:
+    """When budget is provided, the runtime receives a BudgetTracker."""
+    contract: Contract[_Input, _Output] = Contract(name="tb1", version="0.1.0")
+    runtime = _StubRuntime(_Output(text="ok"))
+    await run_under_contract(
+        runtime=runtime,
+        contract=contract,
+        input=_Input(query="hi"),
+        output_model=_Output,
+        budget=ActionBudget(max_steps=10),
+    )
+    assert runtime.received_budget is not None
+    assert runtime.received_budget.budget.max_steps == 10
+
+
+@pytest.mark.asyncio
+async def test_no_budget_means_no_tracker() -> None:
+    """When budget is omitted, no tracker is constructed."""
+    contract: Contract[_Input, _Output] = Contract(name="tb2", version="0.1.0")
+    runtime = _StubRuntime(_Output(text="ok"))
+    await run_under_contract(
+        runtime=runtime,
+        contract=contract,
+        input=_Input(query="hi"),
+        output_model=_Output,
+    )
+    assert runtime.received_budget is None
+
+
+@pytest.mark.asyncio
+async def test_budget_exceeded_propagates() -> None:
+    """A runtime that exhausts the budget triggers BudgetExceeded."""
+    contract: Contract[_Input, _Output] = Contract(name="tb3", version="0.1.0")
+    runtime = _BudgetBurningRuntime()
+    sink = MemorySink()
+    with pytest.raises(BudgetExceeded) as exc_info:
+        await run_under_contract(
+            runtime=runtime,
+            contract=contract,
+            input=_Input(query="hi"),
+            output_model=_Output,
+            budget=ActionBudget(max_steps=5),
+            sink=sink,
+        )
+    assert exc_info.value.budget_kind == "steps"
+    kinds = [e.kind for e in sink.events]
+    assert "budget_exceeded" in kinds
+
+
+@pytest.mark.asyncio
+async def test_mcp_servers_passed_to_runtime() -> None:
+    """mcp_servers parameter threads through to the runtime."""
+    from harness.mcp import MCPTransport
+
+    contract: Contract[_Input, _Output] = Contract(name="tm1", version="0.1.0")
+    runtime = _StubRuntime(_Output(text="ok"))
+    servers = [
+        MCPServerSpec(
+            name="local-tool",
+            transport=MCPTransport.STDIO,
+            command="/bin/echo",
+        )
+    ]
+    await run_under_contract(
+        runtime=runtime,
+        contract=contract,
+        input=_Input(query="hi"),
+        output_model=_Output,
+        mcp_servers=servers,
+    )
+    assert runtime.received_mcp_servers == servers
+
+
+@pytest.mark.asyncio
+async def test_default_guard_constructed_when_contract_has_governance() -> None:
+    @predicate(name="any", severity=Severity.HARD)
+    def any_pred(action: Any) -> bool:
+        return True
+
+    contract: Contract[_Input, _Output] = Contract(
+        name="tg1",
+        version="0.1.0",
+        governance=[any_pred],
+    )
+    runtime = _StubRuntime(_Output(text="ok"))
+    await run_under_contract(
+        runtime=runtime,
+        contract=contract,
+        input=_Input(query="hi"),
+        output_model=_Output,
+    )
+    assert runtime.received_guard is not None
+
+
+@pytest.mark.asyncio
+async def test_default_guard_constructed_when_approval_required() -> None:
+    contract: Contract[_Input, _Output] = Contract(
+        name="tg2",
+        version="0.1.0",
+        approval_required=["risky"],
+    )
+    runtime = _StubRuntime(_Output(text="ok"))
+    await run_under_contract(
+        runtime=runtime,
+        contract=contract,
+        input=_Input(query="hi"),
+        output_model=_Output,
+    )
+    assert runtime.received_guard is not None
+
+
+@pytest.mark.asyncio
+async def test_no_guard_when_contract_has_no_governance() -> None:
+    contract: Contract[_Input, _Output] = Contract(name="tg3", version="0.1.0")
+    runtime = _StubRuntime(_Output(text="ok"))
+    await run_under_contract(
+        runtime=runtime,
+        contract=contract,
+        input=_Input(query="hi"),
+        output_model=_Output,
+    )
+    assert runtime.received_guard is None

@@ -4,6 +4,7 @@ Public API surface. Workloads import from `harness` only; they should not
 reach into submodules. See CLAUDE.md and docs/adr/ for architecture.
 """
 
+from harness.budgets import ActionBudget, BudgetKind, BudgetTracker
 from harness.contract import (
     Contract,
     FunctionPredicate,
@@ -37,16 +38,31 @@ from harness.events import (
     PreconditionViolated,
     SkillDispatched,
 )
+from harness.guard import (
+    GuardDecision,
+    GuardResponse,
+    HarnessToolGuard,
+    ProposedAction,
+    ToolGuard,
+)
 from harness.interruption import (
     ActionRecord,
     ApprovalInterruption,
     Interruption,
     ResumableState,
 )
+from harness.mcp import (
+    MCPHandle,
+    MCPLifecycle,
+    MCPServerSpec,
+    MCPTransport,
+    ToolSpec,
+)
 from harness.runtime import PydanticAIRuntime, Runtime
 from harness.sinks import EventSink, JsonlSink, MemorySink, MultiSink, NullSink
 
 __all__ = [
+    "ActionBudget",
     "ActionRecord",
     "ApprovalDenied",
     "ApprovalDeniedEvent",
@@ -55,6 +71,8 @@ __all__ = [
     "ApprovalRequested",
     "BudgetExceeded",
     "BudgetExceededEvent",
+    "BudgetKind",
+    "BudgetTracker",
     "Contract",
     "ContractCompleted",
     "ContractStarted",
@@ -62,12 +80,19 @@ __all__ = [
     "FunctionPredicate",
     "GovernanceViolated",
     "GovernanceViolation",
+    "GuardDecision",
+    "GuardResponse",
     "HarnessError",
     "HarnessEvent",
+    "HarnessToolGuard",
     "Interruption",
     "InvariantViolated",
     "InvariantViolation",
     "JsonlSink",
+    "MCPHandle",
+    "MCPLifecycle",
+    "MCPServerSpec",
+    "MCPTransport",
     "MemorySink",
     "MultiSink",
     "NullSink",
@@ -76,11 +101,14 @@ __all__ = [
     "PreconditionViolated",
     "PreconditionViolation",
     "Predicate",
+    "ProposedAction",
     "PydanticAIRuntime",
     "ResumableState",
     "Runtime",
     "Severity",
     "SkillDispatched",
+    "ToolGuard",
+    "ToolSpec",
     "predicate",
     "run_under_contract",
 ]
