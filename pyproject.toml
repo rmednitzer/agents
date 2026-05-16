@@ -23,18 +23,18 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "pydantic-ai>=0.0.20",
-    "pydantic>=2.9",
-    "logfire>=2.0",
+    "pydantic-ai>=1.97.0",
+    "pydantic>=2.13.4",
+    "logfire>=4.33.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.24",
-    "pytest-cov>=5.0",
-    "ruff>=0.7",
-    "mypy>=1.13",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.13",
+    "mypy>=2.1.0",
 ]
 
 [project.urls]
