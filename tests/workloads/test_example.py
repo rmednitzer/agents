@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import io
+import json
+import runpy
+import sys
+from pathlib import Path
+
 import pytest
 
 from harness.errors import PreconditionViolation
+from workloads._example import __main__ as example_main
 from workloads._example.__main__ import MarkdownValidatorRuntime, main
 from workloads._example.contract import (
     ValidationInput,
@@ -113,3 +120,46 @@ async def test_runtime_returns_report_directly() -> None:
     result = await rt.run(prompt=input_data.model_dump_json())
     assert isinstance(result, ValidationReport)
     assert result.passed is True
+
+
+@pytest.mark.asyncio
+async def test_stream_not_supported() -> None:
+    rt = MarkdownValidatorRuntime()
+    with pytest.raises(NotImplementedError, match="does not support streaming"):
+        _ = rt.stream(prompt="{}")
+
+
+def test_cli_reads_file_when_path_provided(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "doc.md"
+    path.write_text("# Title\n\nBody.", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["workloads._example", str(path)])
+    example_main._cli()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["document_name"] == str(path)
+    assert payload["passed"] is True
+
+
+def test_cli_reads_stdin_when_path_omitted(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["workloads._example"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO("# Title\n\nBody."))
+    example_main._cli()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["document_name"] == "<stdin>"
+    assert payload["passed"] is True
+
+
+@pytest.mark.filterwarnings(
+    "ignore:'workloads._example.__main__' found in sys.modules:RuntimeWarning"
+)
+def test_module_entrypoint_runs_cli(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["workloads._example"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO("# Title\n\nBody."))
+    runpy.run_module("workloads._example.__main__", run_name="__main__")
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["passed"] is True
