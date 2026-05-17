@@ -25,7 +25,7 @@ timeout_s=${3:-15}
 
 command -v tmux >/dev/null 2>&1 || { echo "tmux not found" >&2; exit 2; }
 
-marker="__SHELL_READY_${$}_${RANDOM}__"
+marker="__SHELL_READY_$$_${RANDOM}__"
 
 # Clear any half-typed line first (C-u), then ask the shell to echo the
 # marker. The TYPED line will contain `printf ... __MARKER__`; only the

@@ -8,10 +8,20 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# Hard version gate FIRST, in Bash-3-safe syntax only. The logging below
+# uses Bash-4 features (local -A, ${v,,}); on macOS's /bin/bash (3.2) that
+# would fail with a cryptic error before any later check could explain it.
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "this script requires bash >= 4 (have ${BASH_VERSION:-unknown})" >&2
+  exit 1
+fi
+
 #--- constants ----------------------------------------------------------------
 SCRIPT_NAME=$(basename -- "${BASH_SOURCE[0]}")
 readonly SCRIPT_NAME
-readonly LOG_LEVEL="${LOG_LEVEL:-info}"
+# Not readonly: --verbose lowers it at parse time. Default from the
+# environment, else "info".
+LOG_LEVEL="${LOG_LEVEL:-info}"
 
 # Populated in main(); cleaned up by the EXIT trap.
 WORKDIR=""
@@ -73,7 +83,7 @@ Usage: ${SCRIPT_NAME} [options] -- ARG...
 Options:
   -o, --out PATH   output path (default: stdout)
   -n, --dry-run    log actions without executing them
-  -v, --verbose    repeatable; raises log verbosity
+  -v, --verbose    set log level to debug
   -h, --help       show this help and exit
 EOF
 }
@@ -100,12 +110,12 @@ write_atomic() {
 
 #--- main ---------------------------------------------------------------------
 main() {
-  local out="" verbose=0
+  local out=""
   while (( $# )); do
     case $1 in
       -h | --help) usage; exit 0 ;;
       -n | --dry-run) DRY_RUN=1 ;;
-      -v | --verbose) (( ++verbose )) ;;
+      -v | --verbose) LOG_LEVEL=debug ;;
       -o | --out) out=${2:?--out needs a value}; shift ;;
       --) shift; break ;;
       -*) usage; die "unknown option: $1" ;;
@@ -116,10 +126,8 @@ main() {
 
   require date mktemp
 
-  (( BASH_VERSINFO[0] >= 4 )) || die "bash >= 4 required (have $BASH_VERSION)"
-
   WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/${SCRIPT_NAME}.XXXXXXXX")
-  log_debug "workdir: $WORKDIR  verbose=$verbose dry_run=$DRY_RUN out=${out:-<stdout>}"
+  log_debug "workdir: $WORKDIR dry_run=$DRY_RUN out=${out:-<stdout>}"
 
   # --- real work goes here. Example: produce a result on STDOUT only. ---
   local result

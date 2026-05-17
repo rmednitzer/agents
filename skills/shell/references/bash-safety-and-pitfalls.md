@@ -60,7 +60,8 @@ Note `$@`/`$*` are exempt, so `"$@"` is always safe even when empty.
 ### `-o pipefail`: required, with a SIGPIPE caveat
 
 Without it, `false | true` exits 0 and the failure of `false` vanishes.
-With it, the pipeline takes the first non-zero. The caveat: a consumer
+With it, the pipeline's status is that of the last (rightmost) command to
+exit non-zero (`man bash`), or zero if all succeed. The caveat: a consumer
 that legitimately closes the pipe early (`... | head -1`) makes the
 producer die with `SIGPIPE` (exit 141), which `pipefail` now reports as
 failure. Handle the known-good case explicitly, for example:

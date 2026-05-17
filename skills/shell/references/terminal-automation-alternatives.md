@@ -148,13 +148,19 @@ recording, not steering.
 ## 6. SSH without a pseudo-terminal
 
 When the "terminal" is only there because you used `ssh`, drop the
-terminal. `ssh host -- cmd` (no `-t`) runs `cmd` without a PTY and returns
+terminal. `ssh host cmd` (no `-t`) runs `cmd` without a PTY and returns
 its **real exit status** directly: no scraping, no prompt parsing.
 
 ```bash
-ssh -o BatchMode=yes -o ConnectTimeout=10 host -- 'systemctl is-active nginx'
+ssh -o BatchMode=yes -o ConnectTimeout=10 host 'systemctl is-active nginx'
 echo $?    # the remote command's exit code, exactly
 ```
+
+Do not put `--` after the host: `ssh` stops parsing its own options at the
+destination, so everything after it (including `--`) is the **remote**
+command. `ssh host -- cmd` asks the remote shell to run `-- cmd`. To guard
+a hostname that could start with `-`, put the terminator before the host
+(`ssh [opts] -- host cmd`).
 
 Use `-T` to force no PTY, `-t` only when the remote genuinely needs one
 (an interactive tool, `sudo` with a TTY requirement). `BatchMode=yes`

@@ -99,32 +99,39 @@ deadline; an unbounded poll is a hang waiting to happen.
 ## 4. The core pattern: completion plus exit status
 
 `send-keys` throws away the command's result: you get neither "it
-finished" nor "it succeeded". Recover both by appending a `wait-for`
-signal whose channel name carries `$?`. `wait-for -S CH` wakes any waiter
-on channel `CH`; `wait-for CH` blocks until signaled. Packaged with a real
-timeout in `assets/tmux-run-capture.sh`. The mechanism:
+finished" nor "it succeeded". Recover both by appending, to the command, a
+write of `$?` to a file and a signal on a **fixed** `wait-for` channel.
+`wait-for -S CH` wakes any waiter on channel `CH`; `wait-for CH` blocks
+until signaled. Packaged with a real timeout in
+`assets/tmux-run-capture.sh`. The mechanism:
 
 ```bash
 ch="done-$$"
-# Append: on completion, signal a channel whose name encodes the exit code.
+rcfile=$(mktemp)
+# On completion: record the real exit code, then signal a FIXED channel.
 tmux -L "$sock" send-keys -t "$pane" \
-  "mycmd --flag; tmux -L $sock wait-for -S ${ch}-\$?" Enter
+  "mycmd --flag; echo \$? > $rcfile; tmux -L $sock wait-for -S $ch" Enter
 
 # wait-for has NO native timeout; an unsignaled channel blocks forever.
-if timeout 600 tmux -L "$sock" wait-for "${ch}-0"; then
-  status=0
-else
-  status=$?           # 124 = our timeout; otherwise the command's nonzero
-fi
+# No leading '!': with `if ! cmd; then`, $? in the branch is the negated
+# status (0), not timeout's real one. Capture it via `|| st=$?` instead.
+st=0
+timeout 600 tmux -L "$sock" wait-for "$ch" || st=$?
+(( st == 124 )) && echo "wait timed out before completion" >&2
+status=$(< "$rcfile")   # the command's true exit code, any value
 out=$(tmux -L "$sock" capture-pane -p -S - -t "$pane")
 ```
 
 Why each choice:
 
-- **Exit code in the channel name**, not scraped from a prompt. A prompt's
-  `$?` rendering depends on the shell, `PROMPT_COMMAND`, theme, and locale,
-  and races with the next prompt. The channel name is exact. (An equally
-  robust variant: `echo $? > rcfile` and read the file.)
+- **Fixed channel plus `$?` in a file**, not the code encoded in the
+  channel name. `wait-for` can only block on a channel name you already
+  know, so `wait-for -S "$ch-$?"` paired with `wait-for "$ch-0"` wakes only
+  on success; any non-zero exit signals a name nobody is waiting on and the
+  waiter blocks until the timeout, losing the real code. A fixed channel is
+  always signaled; the file carries the exact status. Scraping a prompt for
+  `$?` is also unreliable (shell, `PROMPT_COMMAND`, theme, and locale
+  dependent, and it races the next prompt).
 - **`timeout` around `wait-for`** because tmux provides no timeout for it;
   this is the single most common tmux-automation hang.
 - **`capture-pane -S -`** to include scrollback. Plain `capture-pane`
@@ -257,8 +264,12 @@ for that session. Do not rely on the server having your `PATH`.
   run the program as the pane process.
 - `wait-for` without `timeout`: permanent hang on any failure path. Always
   bound it.
-- Scraped the prompt for the exit code: wrong across shells/themes/locales.
-  Encode `$?` in the channel name or a file.
+- Encoded `$?` in the channel name and waited on `$ch-0`: a non-zero exit
+  signals a name nobody waits on, so it hangs to the timeout. Use a fixed
+  channel and write `$?` to a file. Scraping the prompt for the code is
+  also wrong (shell, theme, and locale dependent).
+- Used `if ! timeout ...; then ... $? ...`: `$?` is the negated status (0),
+  not the real one. Capture with `... || rc=$?` before branching.
 - Plain `capture-pane` for long output: early lines already scrolled past.
   Use `-S -` for a bounded grab or `pipe-pane` for complete output.
 - Sent a string starting with `-` without `-l --`: read as options.

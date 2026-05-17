@@ -184,12 +184,18 @@ Any network call, any wait on another process, any `wait-for`, anything
 that can block forever, gets a `timeout`:
 
 ```bash
-if ! timeout 30s curl -fsS "$url" -o "$out"; then
-  rc=$?
+rc=0
+timeout 30s curl -fsS "$url" -o "$out" || rc=$?
+if (( rc != 0 )); then
   (( rc == 124 )) && die "timed out fetching $url"
   die "fetch failed (rc=$rc): $url"
 fi
 ```
+
+Do not write `if ! timeout ...; then rc=$?`: the `!` makes `$?` in the
+branch the negated status (`0`), so the `124` check can never fire.
+Capture the real status with `... || rc=$?` (the `||` also stops `set -e`
+aborting on the expected non-zero), then branch on `rc`.
 
 `timeout` exits `124` on timeout. Use `timeout -k 5s 30s ...` to send
 `SIGKILL` 5 seconds after the initial `SIGTERM` if the child ignores it.

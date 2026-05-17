@@ -194,22 +194,29 @@ the status. This is the single most important tmux pattern; the packaged,
 timeout-bounded version is `assets/tmux-run-capture.sh`.
 
 ```bash
-ch="done-$$"
+ch="done-$$"; rcfile=$(mktemp)
+# On completion: record the REAL exit code to a file, then signal a FIXED
+# channel. The channel name must be known in advance to wait on it, so it
+# cannot encode $? (you would only wake for the one code you guessed).
 tmux -L "$sock" send-keys -t "$pane" \
-  'mycmd --flag; tmux -L '"$sock"' wait-for -S '"$ch"'-$?' Enter
-# Block until the pane signals. ALWAYS bound it; wait-for has no native timeout.
-timeout 600 tmux -L "$sock" wait-for "$ch-0" \
-  || { echo "command failed or timed out" >&2; }
-out=$(tmux -L "$sock" capture-pane -p -t "$pane")
+  'mycmd --flag; echo $? > '"$rcfile"'; tmux -L '"$sock"' wait-for -S '"$ch" Enter
+# ALWAYS bound it; wait-for has no native timeout. No leading '!': under
+# `if ! cmd`, $? in the branch is the negation, not timeout's real status.
+st=0; timeout 600 tmux -L "$sock" wait-for "$ch" || st=$?
+(( st == 124 )) && echo "timed out before the command finished" >&2
+out=$(tmux -L "$sock" capture-pane -p -S - -t "$pane")
+status=$(< "$rcfile")   # the command's true exit code (any value)
 ```
 
 Notes that matter:
 
 - `wait-for` has no built-in timeout; an unsignaled channel hangs forever.
   Always wrap it in `timeout` and decide what a timeout means.
-- Encode `$?` into the channel name (or write it to a file the poller
-  reads). Screen-scraping a prompt for "the last exit code" is unreliable
-  across shells, prompts, and locales.
+- Use a **fixed** channel and write `$?` to a file. `wait-for` needs the
+  exact channel name in advance, so encoding the code into the name
+  (`$ch-$?`) only ever wakes for the one value you guessed and a failing
+  command then blocks until the timeout. Screen-scraping a prompt for the
+  exit code is just as unreliable (shell, prompt, and locale dependent).
 - `capture-pane` sees only the visible region unless you pass a scrollback
   range (`-S -`); a long command's early output may have scrolled away. For
   unbounded or streaming output, `pipe-pane` to a file and read the file.

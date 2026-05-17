@@ -88,9 +88,12 @@ pane=$(tmux -L "$SOCK" display-message -p -t "$SESS" '#{pane_id}')
 log info "running in $SOCK:$pane (timeout ${TIMEOUT}s)"
 
 # Block until the pane signals completion, but never longer than TIMEOUT.
+# No leading '!': with `if ! cmd; then`, $? in the branch is the negation
+# (0), not timeout's real status. Capture it directly via `|| status=$?`
+# (the `||` also keeps `set -e` from aborting here).
 status=0
-if ! timeout "$TIMEOUT" tmux -L "$SOCK" wait-for "$chan"; then
-  status=$?
+timeout "$TIMEOUT" tmux -L "$SOCK" wait-for "$chan" || status=$?
+if (( status != 0 )); then
   if (( status == 124 )); then
     log error "timed out after ${TIMEOUT}s"
   else

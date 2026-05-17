@@ -116,14 +116,16 @@ Trap `INT`/`TERM`, convert to a clean exit so the `EXIT` trap still runs.
 ## tmux: completion plus exit status (the pattern)
 
 ```bash
-ch="done-$$"
-tmux -L "$S" send-keys -t "$P" "cmd args; tmux -L $S wait-for -S ${ch}-\$?" Enter
-timeout 600 tmux -L "$S" wait-for "${ch}-0"   # 0 ok; nonzero/124 = fail/timeout
-out=$(tmux -L "$S" capture-pane -p -S - -t "$P")
+ch="done-$$"; rc=$(mktemp)
+tmux -L "$S" send-keys -t "$P" "cmd args; echo \$? > $rc; tmux -L $S wait-for -S $ch" Enter
+st=0; timeout 600 tmux -L "$S" wait-for "$ch" || st=$?   # no '!': $? stays real
+out=$(tmux -L "$S" capture-pane -p -S - -t "$P"); status=$(< "$rc")
 ```
 
-Exit code travels in the channel name, not scraped from a prompt.
-`wait-for` has no native timeout, so it is always wrapped in `timeout`.
+Fixed channel plus `$?` in a file: `wait-for` needs the exact channel name
+in advance, so encoding the code into it (`$ch-$?`) only wakes for one
+value and a failing command hangs to the timeout. `wait-for` has no native
+timeout, so it is always wrapped in `timeout`.
 
 ## tmux: useful format variables
 
@@ -142,4 +144,4 @@ command enumerates.
 | Prompt then response | `expect` / `pexpect` |
 | Needs TTY or human attaches | tmux (private socket, the pattern above) |
 | Record for a human | `script -c` / `asciinema` |
-| Remote command, no PTY | `ssh -T -o BatchMode=yes host -- cmd` |
+| Remote command, no PTY | `ssh -T -o BatchMode=yes host cmd` (no `--` after host) |
