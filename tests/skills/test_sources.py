@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import tarfile
 from pathlib import Path
@@ -149,3 +150,90 @@ def test_github_source_not_found_raises(tmp_path: Path, monkeypatch: Any) -> Non
     monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Resp())
     with pytest.raises(SkillLoadError, match="not found"):
         install_skill(GitHubSkillSource(path_prefix="skills"), "nope", tmp_path / "o")
+
+
+class _FakeResp:
+    """Response double that also exposes a Content-Length header."""
+
+    def __init__(self, data: bytes, content_length: str | None = None) -> None:
+        self._data = data
+        self._cl = content_length
+
+    def __enter__(self) -> _FakeResp:
+        return self
+
+    def __exit__(self, *a: object) -> None:
+        return None
+
+    def getheader(self, name: str) -> str | None:
+        return self._cl if name == "Content-Length" else None
+
+    def read(self) -> bytes:
+        return self._data
+
+
+def _patch(monkeypatch: Any, data: bytes, content_length: str | None = None) -> None:
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _FakeResp(data, content_length))
+
+
+def _cool_archive(extra: dict[str, bytes] | None = None) -> bytes:
+    entries = {"skills-main/skills/cool/SKILL.md": _SKILL_MD.format(n="cool").encode()}
+    if extra:
+        entries.update(extra)
+    return _make_tar_gz(entries)
+
+
+def test_github_source_rejects_oversized_download(tmp_path: Path, monkeypatch: Any) -> None:
+    _patch(monkeypatch, _cool_archive())
+    src = GitHubSkillSource(path_prefix="skills", max_download_bytes=5)
+    with pytest.raises(SkillLoadError, match="too large"):
+        install_skill(src, "cool", tmp_path / "o")
+
+
+def test_github_source_rejects_via_content_length(tmp_path: Path, monkeypatch: Any) -> None:
+    _patch(monkeypatch, b"unused", content_length="1000000")
+    src = GitHubSkillSource(path_prefix="skills", max_download_bytes=100)
+    with pytest.raises(SkillLoadError, match="too large"):
+        install_skill(src, "cool", tmp_path / "o")
+
+
+def test_github_source_tolerates_bad_content_length(tmp_path: Path, monkeypatch: Any) -> None:
+    _patch(monkeypatch, _cool_archive(), content_length="not-an-int")
+    skill = install_skill(GitHubSkillSource(path_prefix="skills"), "cool", tmp_path / "o")
+    assert skill.name == "cool"
+
+
+def test_github_source_rejects_too_many_members(tmp_path: Path, monkeypatch: Any) -> None:
+    _patch(monkeypatch, _cool_archive({"skills-main/skills/cool/a.txt": b"a"}))
+    src = GitHubSkillSource(path_prefix="skills", max_members=1)
+    with pytest.raises(SkillLoadError, match="too many archive members"):
+        install_skill(src, "cool", tmp_path / "o")
+
+
+def test_github_source_rejects_member_too_large(tmp_path: Path, monkeypatch: Any) -> None:
+    _patch(monkeypatch, _cool_archive())
+    src = GitHubSkillSource(path_prefix="skills", max_file_bytes=4)
+    with pytest.raises(SkillLoadError, match="member too large"):
+        install_skill(src, "cool", tmp_path / "o")
+
+
+def test_github_source_rejects_total_too_large(tmp_path: Path, monkeypatch: Any) -> None:
+    _patch(monkeypatch, _cool_archive())
+    src = GitHubSkillSource(path_prefix="skills", max_file_bytes=10_000, max_total_bytes=4)
+    with pytest.raises(SkillLoadError, match="total uncompressed size"):
+        install_skill(src, "cool", tmp_path / "o")
+
+
+def test_github_source_checksum_match_succeeds(tmp_path: Path, monkeypatch: Any) -> None:
+    archive = _cool_archive()
+    _patch(monkeypatch, archive)
+    src = GitHubSkillSource(path_prefix="skills", sha256=hashlib.sha256(archive).hexdigest())
+    skill = install_skill(src, "cool", tmp_path / "o")
+    assert skill.name == "cool"
+
+
+def test_github_source_checksum_mismatch_raises(tmp_path: Path, monkeypatch: Any) -> None:
+    _patch(monkeypatch, _cool_archive())
+    src = GitHubSkillSource(path_prefix="skills", sha256="00" * 32)
+    with pytest.raises(SkillLoadError, match="checksum mismatch"):
+        install_skill(src, "cool", tmp_path / "o")

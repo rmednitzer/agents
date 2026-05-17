@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from skills.errors import SkillManifestError
+
 if TYPE_CHECKING:
     from harness.contract import Contract
 
@@ -105,6 +107,7 @@ class Skill:
     scripts: dict[str, Path] = field(default_factory=dict)
     assets: dict[str, Path] = field(default_factory=dict)
     contract_path: Path | None = None
+    _allow_contract: bool = True
     _contract: Contract[Any, Any] | None = None
     _contract_loaded: bool = False
 
@@ -164,8 +167,19 @@ class Skill:
         harness.compose_contracts. Returns None when the skill ships no
         contract. Raises SkillManifestError if contract.py exists but
         does not export a valid Contract.
+
+        Loading a contract executes ``contract.py``. When the skill came
+        from an untrusted source (it was loaded with
+        ``allow_contract=False``, the default for ``install_skill``),
+        a present ``contract.py`` is refused rather than executed.
         """
         if not self._contract_loaded:
+            if not self._allow_contract and self.contract_path is not None:
+                raise SkillManifestError(
+                    str(self.contract_path),
+                    "contract execution disabled for this skill (untrusted source); "
+                    "re-load with allow_contract=True to opt in",
+                )
             from skills.loader import _load_skill_contract
 
             self._contract = _load_skill_contract(self)

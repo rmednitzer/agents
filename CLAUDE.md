@@ -115,6 +115,12 @@ Uses `uv`. Set up: `uv sync --all-extras` (installs every optional backend plus 
 
 The PydanticAI runtime is tested deterministically with `TestModel`/`FunctionModel` (no network or API keys). Optional-backend tests skip cleanly when their driver is absent. Provider selection and credentials are documented in `docs/runtime-providers.md`.
 
+## Status and limitations
+
+Phase and document maturity: `STATUS.md`. Explicit scope boundaries and known gaps: `LIMITATIONS.md`. Material changes by phase: `CHANGELOG.md`. ADR index: `docs/adr/README.md`. The L3 roadmap is tiered in `docs/backlog.md`; cross-cutting decisions are ADR 0007 (L2) and ADR 0008 (L3 entry, security hardening, validated roadmap).
+
+Security conventions: untrusted skill bundles are loaded with `allow_contract=False` (no `contract.py` execution) and bounded extraction; pin an immutable `ref` plus a `sha256` for tamper-evident installs; wrap event sinks in `harness.RedactingSink` when arguments may carry secrets. The gate is defence in depth, not a sandbox (see `LIMITATIONS.md` L3).
+
 ## Contributing
 
 See `CONTRIBUTING.md`. Issues and PRs welcome. Security-relevant findings: see `SECURITY.md`.

@@ -40,15 +40,19 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: true
-      - run: uv python install 3.12
-      - run: uv sync --all-extras
-      - run: uv run pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov-report=term-missing --cov-report=xml --cov-fail-under=94
+      - run: uv python install ${{ matrix.python }}
+      - run: uv sync --all-extras --python ${{ matrix.python }}
+      - run: uv run --python ${{ matrix.python }} pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov-report=term-missing --cov-report=xml --cov-fail-under=94
       - uses: actions/upload-artifact@v4
         with:
-          name: coverage-xml
+          name: coverage-xml-${{ matrix.python }}
           path: coverage.xml
