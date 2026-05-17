@@ -3,6 +3,57 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Code audit: correctness, security, documentation (2026-05-17)
+
+### Fixed
+
+- `skills.embeddings.cosine_similarity`: a non-finite component (NaN or
+  inf, e.g. a buggy provider or adversarial skill text) returned NaN,
+  which `min`/`max` clamping turned into confidence `1.0`, sorting a
+  poison skill to the top of embedding dispatch. Now returns `0.0`.
+  (`BL-159`)
+- `skills.dispatchers._json.first_json_array`: the bracket scanner was
+  O(n^2) on adversarial model output (a megabyte of `[` hung the
+  dispatcher). Rewritten as a single linear pass. (`BL-159`)
+- LLM and skill-based dispatchers: a JSON `confidence: true` was
+  accepted (`isinstance(True, int)`) and coerced to `1.0`; booleans are
+  now rejected. (`BL-159`)
+- `memory.EncryptedStore` / `memory.ACLStore`: validate keys before any
+  keyed operation, per the `MemoryStore` Protocol. For `EncryptedStore`
+  this also prevents a `::` key from colliding AAD across keys.
+  (`BL-159`)
+
+### Changed
+
+- `harness.redaction.Redactor` now scrubs every event field, not only
+  dict-valued ones, so a secret-shaped or over-long value in a
+  top-level string or list field is also redacted. Strict superset of
+  the prior behaviour. (`BL-159`)
+
+### Security
+
+- `SECURITY.md`: added the "Untrusted content and prompt injection"
+  posture (tool results, MCP output, skill bodies, memory values, and
+  model output are untrusted; the authority boundary is the harness,
+  not the prompt) and documented the out-of-tree workload code-execution
+  boundary and the wall-clock-watchdog caveat. (`BL-139` resolved)
+
+### Documentation
+
+- ADR 0009 records the audit's cross-cutting decisions and the ADR
+  0005/0006 factual errata (immutable ADRs noted forward, not edited).
+- `LIMITATIONS.md` L10-L14 (budget non-cumulative across resume;
+  watchdog preempts only at await; decorators do not forward extension
+  Protocols; DynamoDB integer-second TTL; out-of-tree workload code
+  execution). `docs/backlog.md`: `BL-154`-`BL-161` added; provenance
+  date refreshed.
+- Fixed factual drift: README dispatcher count (eight, not "seven");
+  `docs/runtime-providers.md` stale line citations; the `BL-130` ->
+  `BL-134` reference in `harness.redaction`; `workloads.manifest`
+  "Phase 5" tense; the "five reference dispatchers" docstrings; the
+  watchdog "preemptive" wording. `CLAUDE.md`: the markdown `--`/em-dash
+  rule now exempts code spans (it previously contradicted its own docs).
+
 ## [Unreleased] L3 Tier 0: security hardening and roadmap (2026-05-17)
 
 ### Added

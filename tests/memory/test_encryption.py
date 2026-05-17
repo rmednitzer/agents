@@ -76,3 +76,19 @@ async def test_namespace_from_inner() -> None:
     enc, inner = _enc("specific")
     assert enc.namespace is inner.namespace
     assert enc.namespace.name == "specific"
+
+
+@pytest.mark.asyncio
+async def test_invalid_key_rejected_before_crypto() -> None:
+    # The MemoryStore Protocol requires key validation before any keyed
+    # operation; a '::' key would also collide AAD across keys.
+    # (regression: memory audit #2)
+    from memory.errors import NamespaceViolation
+
+    enc, _ = _enc()
+    with pytest.raises(NamespaceViolation):
+        await enc.write("a::b", b"v")
+    with pytest.raises(NamespaceViolation):
+        await enc.read("../escape")
+    with pytest.raises(NamespaceViolation):
+        await enc.delete("")

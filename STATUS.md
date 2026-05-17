@@ -16,7 +16,7 @@ opens or closes. Last reviewed: 2026-05-17.
 | --- | --- | --- | --- |
 | L1 | Contract surface, budgets, memory namespace, workloads, skills, runtime Protocol | stable | ADR 0001-0006 |
 | L2 | Guard and budget wiring, durable backends, observability, composition, skill install | stable | ADR 0007, PR #20 (`af1df9d`) |
-| L3 Tier 0 | Skill-install and event security hardening, CI hardening | in-progress | ADR 0008 |
+| L3 Tier 0 | Skill-install and event security hardening, CI hardening, the full-audit fixes | in-progress | ADR 0008, ADR 0009 |
 | L3 Tier 1-4 | AI-quality, reliability, governance, release and operations | planned | `docs/backlog.md` |
 
 ## Document maturity
@@ -24,7 +24,7 @@ opens or closes. Last reviewed: 2026-05-17.
 | Document | Maturity |
 | --- | --- |
 | `CLAUDE.md`, `README.md`, component `README.md` | stable |
-| `docs/adr/0001`-`0008` | stable (Accepted) |
+| `docs/adr/0001`-`0009` | stable (Accepted) |
 | `docs/backlog.md` | living tracker |
 | `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE` section (in `CONTRIBUTING.md`) | stable |
 | `STATUS.md`, `LIMITATIONS.md`, `CHANGELOG.md` | living |

@@ -11,8 +11,8 @@ reads an API key.
 
 [ADR 0001](./adr/0001-runtime-selection.md) makes this a hard contract:
 
-- A workload depends on the `Runtime` Protocol (`harness/runtime.py`, lines 54
-  to 123), never on `pydantic_ai` or a vendor SDK. A workload that imports
+- A workload depends on the `Runtime` Protocol (`harness/runtime.py`, lines 58
+  to 126), never on `pydantic_ai` or a vendor SDK. A workload that imports
   `pydantic_ai` is a contract violation.
 - The harness owns sandboxing, action budgets, tool authorization, and
   observability. PydanticAI provides typed I/O and the provider abstraction
@@ -23,7 +23,7 @@ reads an API key.
 ## Selecting a provider
 
 A workload declares its runtime in `manifest.yaml`, validated into
-`RuntimeSpec` (`workloads/manifest.py`, lines 25 to 44):
+`RuntimeSpec` (`workloads/manifest.py`, lines 25 to 46):
 
 ```yaml
 runtime:
@@ -43,7 +43,7 @@ selects the API:
 `parameters` (temperature, max tokens, top_p) is a manifest-level field on
 `RuntimeSpec`. The harness does not auto-forward it: the default
 `PydanticAIRuntime` constructor takes only `model`, `output_type`, and
-`instructions` (`harness/runtime.py`, lines 339 to 348), and no harness code
+`instructions` (`harness/runtime.py`, lines 342 to 348), and no harness code
 reads `RuntimeSpec.parameters`. A workload's own wiring code is responsible
 for reading these values from its manifest and applying them when it
 constructs the runtime or model. Declaring `parameters` alone therefore has
@@ -56,9 +56,9 @@ no effect today. For stub or test bundles the convention is
    `RuntimeSpec`.
 2. The runtime is constructed with that model string:
    `PydanticAIRuntime(model="anthropic:claude-opus-4-7")`
-   (`harness/runtime.py`, lines 327 to 348).
+   (`harness/runtime.py`, lines 330 to 348).
 3. `_build_agent()` passes the string straight into PydanticAI's `Agent`
-   (`harness/runtime.py`, line 361 and lines 394 to 400):
+   (`harness/runtime.py`, line 364 and lines 397 to 403):
    `Agent(self.model, output_type=..., instructions=..., tools=..., toolsets=...)`.
 4. PydanticAI parses the provider prefix and instantiates the matching
    provider client. `pydantic-ai` (declared in `pyproject.toml`, line 26) is
@@ -127,7 +127,7 @@ runtime = PydanticAIRuntime(model="anthropic:claude-opus-4-7")
 
 `PydanticAIRuntime.model` accepts a model instance as well as a string, so
 tests pass `TestModel()` or `FunctionModel()` in place of the provider string
-(`harness/runtime.py`, lines 330 to 334). These run deterministically with no
+(`harness/runtime.py`, lines 333 to 335). These run deterministically with no
 network and no API key, which is how the runtime adapter is exercised in CI.
 
 ## Current state

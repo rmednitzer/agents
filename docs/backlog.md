@@ -1,6 +1,6 @@
 # L2 Backlog
 
-Consolidated from ADRs 0002 through 0006. Generated 2026-05-16 after Phase 5 (`7c26543`). Updated 2026-05-16 after PR #20 merged to `main`.
+Consolidated from ADRs 0002 through 0006. Generated 2026-05-16 after Phase 5 (`7c26543`). Updated 2026-05-16 after PR #20 merged to `main`; extended 2026-05-17 (ADR 0008 L3 roadmap, then the ADR 0009 code-audit items `BL-154`-`BL-165`).
 
 ## Implementation status
 
@@ -195,7 +195,7 @@ Practice gaps the analysis found that were not previously tracked.
 - `BL-131` [pending] [L] `SemanticMemoryStore` extension Protocol (vector write plus similarity query) beside `MemoryStore`, with one reference implementation; reuse the `EmbeddingProvider` from `BL-110`. Enables just-in-time retrieval in-tree (S2). (ADR 0004, ADR 0008)
 - `BL-132` [pending] [M] Prompt and response caching on the runtime adapter: cache-breakpoint control for the stable tools/system prefix and surfacing `cache_creation_input_tokens` / `cache_read_input_tokens` (S3). Pairs with cost accounting (`BL-123`). (ADR 0003, ADR 0008)
 - `BL-137` [pending] [M] Structured tool-error result for a soft governance reject, instead of returning the `[blocked: ...]` string as the tool's value, so the model receives a typed rejection rather than apparent tool output (S1: clear agent-computer interface). (ADR 0002, ADR 0008)
-- `BL-139` [pending] [S] Documented prompt-injection posture: tool results, MCP output, and skill bodies are untrusted external content; state the handling and content-isolation expectations in `SECURITY.md` (S1, S2). (ADR 0008)
+- `BL-139` [resolved] [S] Documented prompt-injection posture: tool results, MCP output, and skill bodies are untrusted external content; state the handling and content-isolation expectations in `SECURITY.md` (S1, S2). Delivered in the ADR 0009 audit: `SECURITY.md` "Untrusted content and prompt injection" section. (ADR 0008, ADR 0009)
 
 ## Reliability and observability (Tier 2)
 
@@ -211,6 +211,24 @@ Practice gaps the analysis found that were not previously tracked.
 ## Release and operations (Tier 4)
 
 - `BL-151` [pending] [M] Versioning and release policy plus a release workflow (signed artifacts, SBOM, build provenance) and operational notes (deploy, rollback, backup and restore for memory backends). Pre-1.0 today with no release lifecycle (`STATUS.md`, `LIMITATIONS.md` L1, L4; S5 for provenance). (ADR 0008)
+
+## Code audit (ADR 0009, 2026-05-17)
+
+A full in-depth audit of `harness`, `memory`, `skills`, `workloads`,
+the CLI, and the documentation set. The clear correctness and security
+bugs were fixed additively in the same increment (`BL-159`, `BL-160`);
+the rest are tracked here and documented in `LIMITATIONS.md` (L10-L14).
+ADR 0009 records the cross-cutting decisions. Same conventions and ID
+discipline as above; `BL-1xx` range.
+
+- `BL-154` [pending] [M] Budgets do not accumulate across an approval pause and resume: thread the consumed counters / `completed_actions` into the resumed run so tokens, steps, tool calls, and per-tool quotas are cumulative and already-completed tool calls are not replayed. Pairs with the non-replay resume `BL-114`. (ADR 0003, ADR 0009; `LIMITATIONS.md` L10)
+- `BL-155` [pending] [L] True wall-clock preemption for a fully blocking, non-cooperative tool (thread/process execution so the watchdog can interrupt CPU-bound or sync-I/O tool code, not only await boundaries). (ADR 0003, ADR 0009; `LIMITATIONS.md` L11)
+- `BL-156` [pending] [M] `EncryptedStore` / `ACLStore` forward the extension Protocols (`BatchMemoryStore`, `ScannableStore`, `ContentAddressableStore`, `CASMemoryStore`, `SweepableStore`) of the store they wrap, so decoration does not silently drop CAS / batch / scan / content-addressing / sweep. (ADR 0004, ADR 0009; `LIMITATIONS.md` L12)
+- `BL-157` [pending] [S] DynamoDB float-second expiry (store `exp` as float, like the other adapters) so sub-second TTL holds, removing the read vs `compare_and_set` second-boundary disagreement. Deviation documented now (`memory/README.md`, `LIMITATIONS.md` L13). (ADR 0004, ADR 0009)
+- `BL-158` [resolved] [S] Document the out-of-tree workload trust boundary (loading a path executes its Python, no skill-install-style gate). Delivered: `LIMITATIONS.md` L14, `SECURITY.md` scope and hardening posture, `workloads.load_workload_from_path` docstring. (ADR 0005, ADR 0009)
+- `BL-159` [resolved] [M] Audit correctness/security fixes, additive: non-finite cosine similarity returns 0.0 instead of clamping NaN to 1.0 (`skills.embeddings`); `first_json_array` is single-pass linear, not O(n^2), against adversarial model output (`skills.dispatchers._json`); a JSON `bool` `confidence` is rejected, not coerced to 1.0 (LLM and skill-based dispatchers); `EncryptedStore` / `ACLStore` validate keys before any keyed operation per the `MemoryStore` Protocol (also closes an AAD cross-key collision); `Redactor` walks every event field, not only dict-valued ones. Regression tests added. (ADR 0009)
+- `BL-160` [resolved] [S] Documentation-accuracy fixes: README dispatcher count (eight, not "seven"); `docs/runtime-providers.md` stale line citations; `harness.redaction` BL reference (`BL-134`, was `BL-130`); `workloads.manifest` "Phase 5" present tense; the "five reference dispatchers" docstrings; the wall-clock watchdog "preemptive" wording; ADR 0005/0006 factual errata (the `skills/example/` path, the now-eight dispatchers, the L2-delivered "deferred" items) recorded in ADR 0009 (ADRs are immutable, so noted forward, not edited). (ADR 0009)
+- `BL-161` [pending] [M] Deferred audit hardening, by area. Skill install: use `tarfile` data filter or explicitly reject non-file members (not silently skip); clamp each member read to the remaining total budget; add an `allow_contract` passthrough to `SkillRegistry.from_directory`. Memory: atomic `BEGIN IMMEDIATE` batch for `SQLiteStore.mset` / `mdelete`; push the user `prefix` into `S3Store.list_keys` server-side (avoid O(N) GETs); loop or document `DynamoDBStore.scan` non-terminal empty pages; `name@version` parse via `rsplit("@", 1)`. CLI: `agents run` honours the manifest-declared dispatcher for model-free routers and reports a missing-dependency `ImportError` cleanly like `workloads list` does. (ADR 0002/0004/0005/0006, ADR 0009)
 
 ## Sources consulted
 

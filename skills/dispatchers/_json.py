@@ -17,40 +17,39 @@ __all__ = ["first_json_array"]
 
 
 def _balanced_spans(text: str) -> list[str]:
-    """Every top-level ``[...]`` span, bracket-balanced, string-aware."""
+    """Every top-level ``[...]`` span, bracket-balanced, string-aware.
+
+    Single left-to-right pass: each character is visited once, so the
+    cost is linear in ``len(text)``. The earlier nested-restart scan was
+    quadratic, so adversarial model output (e.g. a megabyte of ``[``)
+    could hang the dispatcher; this cannot. Only depth-zero arrays are
+    returned, matching "top-level array" in this module's contract; a
+    stray unbalanced ``]`` at depth 0 is ignored rather than underflowing.
+    """
     spans: list[str] = []
-    i = 0
-    n = len(text)
-    while i < n:
-        if text[i] != "[":
-            i += 1
-            continue
-        depth = 0
-        in_str = False
-        esc = False
-        j = i
-        while j < n:
-            ch = text[j]
-            if in_str:
-                if esc:
-                    esc = False
-                elif ch == "\\":
-                    esc = True
-                elif ch == '"':
-                    in_str = False
+    depth = 0
+    start = -1
+    in_str = False
+    esc = False
+    for idx, ch in enumerate(text):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
             elif ch == '"':
-                in_str = True
-            elif ch == "[":
-                depth += 1
-            elif ch == "]":
-                depth -= 1
-                if depth == 0:
-                    spans.append(text[i : j + 1])
-                    break
-            j += 1
-        # Continue scanning after this '[' (overlapping starts are fine;
-        # the next real array, if any, will be found independently).
-        i += 1
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "[":
+            if depth == 0:
+                start = idx
+            depth += 1
+        elif ch == "]" and depth > 0:
+            depth -= 1
+            if depth == 0:
+                spans.append(text[start : idx + 1])
     return spans
 
 

@@ -64,11 +64,10 @@ class WorkloadManifest(BaseModel):
         runtime: Which runtime adapter and model to use.
         memory_namespace: Namespace this workload binds to, if any.
         mcp_servers: MCP servers the runtime starts for this workload.
-        skills: Skill names the workload requires (resolved by
-            SkillRegistry in Phase 5).
-        dispatcher: Dispatcher name or skill name (resolved in Phase 5).
-            None means no dispatch, the workload runs without skill
-            routing.
+        skills: Skill names the workload requires, resolved against a
+            SkillRegistry at load time when one is supplied.
+        dispatcher: Dispatcher name or skill name. None means no
+            dispatch: the workload runs without skill routing.
         budget: Action budget for runs of this workload. None means
             unlimited.
         exit_conditions: Workload-specific exit criteria (e.g.

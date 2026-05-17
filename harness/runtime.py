@@ -21,7 +21,10 @@ behaviour into PydanticAIRuntime:
   REQUIRE_APPROVAL.
 - BL-002: REQUIRE_APPROVAL pauses the run and surfaces a ResumableState;
   passing it back via ``resume`` continues from the decision.
-- BL-003: a background watchdog enforces wall-clock preemptively.
+- BL-003: an asyncio.wait_for watchdog enforces wall-clock without
+  needing explicit checkpoints. It preempts at the next await/IO
+  boundary; a fully blocking, non-cooperative tool that never yields
+  is still not killed (ADR 0003; LIMITATIONS L11).
 - BL-004: streaming accumulates token usage and raises BudgetExceeded
   as soon as a limit is crossed.
 - BL-073: per-tool call quotas via the BudgetTracker.
@@ -455,10 +458,18 @@ class PydanticAIRuntime:
         return result.output
 
     async def _with_watchdog(self, coro: Any, budget: BudgetTracker | None) -> Any:
-        """Run ``coro`` under a preemptive wall-clock watchdog (BL-003).
+        """Run ``coro`` under an asyncio.wait_for wall-clock watchdog
+        (BL-003).
 
-        asyncio.wait_for cancels the run task the moment the deadline
-        passes, instead of waiting for the next cooperative checkpoint.
+        wait_for cancels the run task when the deadline passes without
+        the adapter needing explicit check_wall_clock calls, so a
+        well-behaved agent (which awaits on every model/tool round trip)
+        is effectively preempted. The cancellation is still delivered at
+        the next await: a fully blocking, CPU-bound or sync-I/O tool
+        that never yields control to the event loop is not killed (ADR
+        0003's "a pathological tool call that never returns will not be
+        killed" still holds for that case; LIMITATIONS L11).
+
         On timeout, ``budget.check_wall_clock`` is the authoritative
         raise (it emits BudgetExceededEvent with the tracker's own
         elapsed accounting). The fallback only fires in the rare case

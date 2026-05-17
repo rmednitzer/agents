@@ -43,9 +43,10 @@ See [CLAUDE.md](./CLAUDE.md) for repository structure and conventions.
   content-addressing, and CAS; `TTLSweeper`; transparent `EncryptedStore`
   (AES-256-GCM) and per-key `ACLStore`; optional audit events.
 - **Skills.** Agent Skills spec-compliant loader/registry, skill
-  versioning (`name@version`), seven dispatchers (keyword, LLM, lane,
-  routing-chain, skill-based, multi-ensemble, embedding) plus an
-  instrumented wrapper, skill-level contracts, and pluggable install
+  versioning (`name@version`), eight dispatchers (the five core routers
+  keyword, LLM, lane, routing-chain, skill-based, plus the L2
+  multi-ensemble and embedding) and an instrumented telemetry wrapper,
+  skill-level contracts, and pluggable install
   sources (local, GitHub) with bounded extraction, optional checksum
   pinning, and gated contract execution for untrusted bundles.
 - **CLI.** `python -m agents workloads list | skills list | run <wl> <q>`.

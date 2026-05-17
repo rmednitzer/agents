@@ -115,3 +115,15 @@ async def test_limit_respected() -> None:
     matches = await d.dispatch("q", limit=1)
     assert len(matches) == 1
     assert matches[0].skill_name == "a"
+
+
+@pytest.mark.asyncio
+async def test_boolean_confidence_is_rejected() -> None:
+    # isinstance(True, int) is True and float(True) == 1.0, so a model
+    # emitting `"confidence": true` must be skipped, not treated as a
+    # maximally confident match. (regression: skills audit C1)
+    r = SkillRegistry()
+    r.add(_skill("foo"))
+    response = json.dumps([{"skill_name": "foo", "confidence": True, "rationale": ""}])
+    d = LLMDispatcher(r, _StubRuntime(response))
+    assert await d.dispatch("anything") == []

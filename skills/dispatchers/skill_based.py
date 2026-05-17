@@ -112,7 +112,11 @@ class SkillBasedDispatcher:
             skill_name = entry.get("skill_name")
             confidence = entry.get("confidence")
             rationale = entry.get("rationale", "")
-            if not isinstance(skill_name, str) or not isinstance(confidence, int | float):
+            if (
+                not isinstance(skill_name, str)
+                or isinstance(confidence, bool)
+                or not isinstance(confidence, int | float)
+            ):
                 continue
             if skill_name not in valid_names:
                 continue

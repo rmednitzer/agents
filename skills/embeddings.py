@@ -28,12 +28,21 @@ class EmbeddingProvider(Protocol):
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Cosine similarity in [-1, 1]; 0.0 if either vector is zero-norm."""
+    """Cosine similarity in [-1, 1].
+
+    Returns 0.0 if either vector is zero-norm or carries a non-finite
+    component (NaN or +/-inf, e.g. a buggy provider or adversarial skill
+    text the provider maps to NaN). A non-finite score must never
+    survive: ``min``/``max`` clamping treats NaN as the other operand,
+    so an unguarded NaN would clamp to 1.0 and sort to the top of the
+    dispatch ranking.
+    """
     if len(a) != len(b):
         raise ValueError(f"dimension mismatch: {len(a)} != {len(b)}")
     dot = math.fsum(x * y for x, y in zip(a, b, strict=True))
     na = math.sqrt(math.fsum(x * x for x in a))
     nb = math.sqrt(math.fsum(y * y for y in b))
-    if na == 0.0 or nb == 0.0:
+    if na == 0.0 or nb == 0.0 or not math.isfinite(na) or not math.isfinite(nb):
         return 0.0
-    return dot / (na * nb)
+    score = dot / (na * nb)
+    return score if math.isfinite(score) else 0.0

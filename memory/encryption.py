@@ -28,6 +28,7 @@ from typing import Protocol, runtime_checkable
 
 from memory.store import MemoryStore
 from memory.types import Namespace
+from memory.validators import validate_key
 
 __all__ = ["EncryptedStore", "KeyProvider", "StaticKeyProvider"]
 
@@ -87,6 +88,11 @@ class EncryptedStore:
         return f"{self._inner.namespace.name}::{key}".encode()
 
     async def read(self, key: str) -> bytes | None:
+        # Validate before deriving AAD: the MemoryStore Protocol requires
+        # key validation before any keyed operation, and a key carrying
+        # the '::' separator would otherwise let AAD collide across keys
+        # (the inner store also validates, but the AAD is built here).
+        validate_key(key)
         sealed = await self._inner.read(key)
         if sealed is None:
             return None
@@ -94,11 +100,13 @@ class EncryptedStore:
         return bytes(self._aes.decrypt(nonce, ct, self._aad(key)))
 
     async def write(self, key: str, value: bytes, *, ttl_seconds: float | None = None) -> None:
+        validate_key(key)
         nonce = os.urandom(_NONCE_BYTES)
         sealed = nonce + self._aes.encrypt(nonce, value, self._aad(key))
         await self._inner.write(key, sealed, ttl_seconds=ttl_seconds)
 
     async def delete(self, key: str) -> None:
+        validate_key(key)
         await self._inner.delete(key)
 
     async def list_keys(self, prefix: str = "") -> list[str]:

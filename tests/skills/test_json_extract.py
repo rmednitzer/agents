@@ -44,3 +44,23 @@ def test_greedy_regex_failure_case_now_parses() -> None:
     span = first_json_array(text)
     assert span is not None
     assert json.loads(span) == [{"skill_name": "a"}]
+
+
+def test_adversarial_unbalanced_input_is_linear_not_quadratic() -> None:
+    # A megabyte of '[' is the decompression-bomb analogue for the
+    # extractor. The old nested-restart scan was O(n^2) and hung the
+    # dispatcher; the single pass must finish well under a second.
+    # (regression: skills audit S2)
+    import time
+
+    payload = "[" * 1_000_000
+    start = time.monotonic()
+    assert first_json_array(payload) is None
+    assert time.monotonic() - start < 1.0
+
+
+def test_stray_closing_bracket_does_not_underflow() -> None:
+    # Leading unbalanced ']' at depth 0 must be ignored, not drive depth
+    # negative and corrupt a later valid array.
+    text = ']]] then [{"skill_name": "z"}]'
+    assert json.loads(first_json_array(text) or "") == [{"skill_name": "z"}]

@@ -50,7 +50,7 @@ Formatting: ruff (lint + format) and mypy (strict) are configured in pyproject.t
 
 Additive-to-L1 rule (ADR 0007): L2 and later changes are additive to the L1 Protocols. Use new optional keyword parameters (defaults preserving L1 behaviour), new modules, or new Protocols beside the existing ones. Do not remove or change an L1 import path or signature. Surface configuration errors at load time, not mid-run.
 
-Documentation style: no em-dashes and no `--` outside HTML comments (the repo's own markdown rule, dogfooded by `workloads/_example`). Use commas, colons, or parentheses instead.
+Documentation style: no em-dashes and no `--` as prose punctuation, that is, outside HTML comments and inline or fenced code spans (a backticked flag like `--all-extras` or a value like `cov-fail-under=94` is fine; the rule targets the punctuation dash, not literal code). The repo's own markdown rule, dogfooded by `workloads/_example`. Use commas, colons, or parentheses instead.
 
 Naming:
 - Workloads: `workloads/<purpose>/` (snake_case, describes mission, not technology).
