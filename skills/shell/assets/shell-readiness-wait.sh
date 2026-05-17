@@ -13,7 +13,9 @@
 #
 # Usage:  shell-readiness-wait.sh SOCKET PANE_ID [TIMEOUT_SECONDS]
 # Then:   tmux -L SOCKET send-keys -t PANE_ID 'real command' Enter
-# Exit:   0 when ready; 1 on timeout; 2 on bad usage.
+# Exit:   0 ready; 1 real timeout; 2 bad usage; 3 tmux target/socket
+#         error (so a stale socket or wrong pane id is NOT misreported
+#         as a readiness timeout).
 # Verify with: shellcheck -x this-file.sh
 
 set -Eeuo pipefail
@@ -37,14 +39,23 @@ timeout_s=${3:-15}
 
 command -v tmux >/dev/null 2>&1 || { echo "tmux not found" >&2; exit 2; }
 
+# Resolve the target up front. A bad socket or pane id is a configuration
+# error (exit 3), categorically different from "the shell was slow to be
+# ready" (exit 1). Without this, set -e would abort the first send-keys
+# with status 1 and the caller would misread it as a timeout.
+tmux -L "$sock" display-message -p -t "$pane" '#{pane_id}' >/dev/null 2>&1 \
+  || { echo "tmux target not found: $sock:$pane" >&2; exit 3; }
+
 marker="__SHELL_READY_$$_${RANDOM}__"
 
 # Clear any half-typed line first (C-u), then ask the shell to echo the
 # marker. The TYPED line will contain `printf ... __MARKER__`; only the
 # EXECUTED output is the marker alone on its own line, so a whole-line
 # match (grep -x) cannot be fooled by the command echo.
-tmux -L "$sock" send-keys -t "$pane" C-u
-tmux -L "$sock" send-keys -t "$pane" "printf '%s\\n' '$marker'" Enter
+tmux -L "$sock" send-keys -t "$pane" C-u 2>/dev/null \
+  || { echo "tmux send-keys failed: $sock:$pane" >&2; exit 3; }
+tmux -L "$sock" send-keys -t "$pane" "printf '%s\\n' '$marker'" Enter 2>/dev/null \
+  || { echo "tmux send-keys failed: $sock:$pane" >&2; exit 3; }
 
 deadline=$(( SECONDS + timeout_s ))
 until tmux -L "$sock" capture-pane -p -t "$pane" 2>/dev/null \
@@ -56,7 +67,8 @@ until tmux -L "$sock" capture-pane -p -t "$pane" 2>/dev/null \
   sleep 0.1
 done
 
-# Optional: scrub the marker lines from the pane so later capture-pane
-# calls do not see them. Harmless to skip.
-tmux -L "$sock" send-keys -t "$pane" C-l
+# Optional, cosmetic: scrub the marker lines from the pane. Best-effort:
+# readiness is already proven, so a failure here must not change the
+# success exit.
+tmux -L "$sock" send-keys -t "$pane" C-l 2>/dev/null || true
 exit 0

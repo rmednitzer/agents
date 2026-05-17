@@ -57,7 +57,15 @@ while (( $# )); do
 done
 (( $# )) || die "no command given (use: ... -- CMD [ARG...])"
 command -v tmux >/dev/null 2>&1 || die "tmux not found"
-command -v timeout >/dev/null 2>&1 || die "timeout not found"
+# GNU coreutils `timeout` is `gtimeout` on macOS (brew install coreutils).
+# Honour the documented macOS support instead of hard-requiring `timeout`.
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_BIN=timeout
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_BIN=gtimeout
+else
+  die "neither 'timeout' nor 'gtimeout' found (macOS: brew install coreutils)"
+fi
 
 # The pane command is built with single-quoted path interpolations and
 # then re-parsed by tmux's `sh -c`. A single quote in the workdir path
@@ -103,7 +111,7 @@ log info "running in $SOCK:$pane (timeout ${TIMEOUT}s)"
 # (0), not timeout's real status. Capture it directly via `|| status=$?`
 # (the `||` also keeps `set -e` from aborting here).
 status=0
-timeout "$TIMEOUT" tmux -L "$SOCK" wait-for "$chan" || status=$?
+"$TIMEOUT_BIN" "$TIMEOUT" tmux -L "$SOCK" wait-for "$chan" || status=$?
 if (( status != 0 )); then
   if (( status == 124 )); then
     log error "timed out after ${TIMEOUT}s"
