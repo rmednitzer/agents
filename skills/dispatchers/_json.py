@@ -17,30 +17,34 @@ __all__ = ["first_json_array"]
 
 
 def _balanced_spans(text: str) -> list[str]:
-    """Every top-level ``[...]`` span, bracket-balanced, string-aware.
+    """Every bracket-balanced ``[...]`` span, by opening-bracket order.
 
-    Single left-to-right pass: each character is visited once, so the
-    cost is linear in ``len(text)``. The earlier nested-restart scan was
-    quadratic, so adversarial model output (e.g. a megabyte of ``[``)
-    could hang the dispatcher; this cannot. Only depth-zero arrays are
-    returned, matching "top-level array" in this module's contract; a
-    stray unbalanced ``]`` at depth 0 is ignored rather than underflowing.
+    Single linear pass with an explicit stack of open-``[`` indices:
+    each character is visited once, so adversarial output (e.g. a
+    megabyte of ``[``) cannot make extraction quadratic, while an
+    unmatched ``[`` or ``]`` in prose no longer suppresses a later valid
+    array: the stack still matches the real array's own brackets, and a
+    stray ``]`` outside any span is ignored, not underflowed. Spans are
+    returned ordered by their opening bracket, matching the pre-rewrite
+    per-candidate scan, so ``first_json_array`` still prefers the
+    earliest/outermost array. String state is tracked only inside a
+    span (stack non-empty), so an unmatched ``"`` in leading prose
+    cannot desync parsing. A rarer compound fault (an unmatched ``[``
+    *and* an unmatched ``"`` both in prose before the array) degrades to
+    the documented None / parse-error fallback rather than reintroducing
+    the O(n^2) per-``[`` restart.
     """
-    spans: list[str] = []
-    depth = 0
-    start = -1
+    spans: list[tuple[int, str]] = []
+    stack: list[int] = []
     in_str = False
     esc = False
     for idx, ch in enumerate(text):
-        if depth == 0:
-            # Outside any array, only an opening bracket matters. Quote
-            # state is deliberately NOT tracked here: an unbalanced '"'
-            # in leading prose must not desync parsing of a later array
-            # (the pre-rewrite per-candidate scan reset quote state at
-            # each '[', so it tolerated this; preserve that).
+        if not stack:
+            # Outside any array: only an opening bracket matters. Quote
+            # state is deliberately not tracked at depth 0 so an
+            # unbalanced '"' in prose cannot desync a later array.
             if ch == "[":
-                start = idx
-                depth = 1
+                stack.append(idx)
             continue
         if in_str:
             if esc:
@@ -53,14 +57,15 @@ def _balanced_spans(text: str) -> list[str]:
         if ch == '"':
             in_str = True
         elif ch == "[":
-            depth += 1
+            stack.append(idx)
         elif ch == "]":
-            depth -= 1
-            if depth == 0:
-                spans.append(text[start : idx + 1])
+            opened = stack.pop()
+            spans.append((opened, text[opened : idx + 1]))
+            if not stack:
                 in_str = False
                 esc = False
-    return spans
+    spans.sort(key=lambda s: s[0])
+    return [span for _, span in spans]
 
 
 def first_json_array(text: str) -> str | None:
