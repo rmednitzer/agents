@@ -46,7 +46,8 @@ See [CLAUDE.md](./CLAUDE.md) for repository structure and conventions.
   versioning (`name@version`), seven dispatchers (keyword, LLM, lane,
   routing-chain, skill-based, multi-ensemble, embedding) plus an
   instrumented wrapper, skill-level contracts, and pluggable install
-  sources (local, GitHub).
+  sources (local, GitHub) with bounded extraction, optional checksum
+  pinning, and gated contract execution for untrusted bundles.
 - **CLI.** `python -m agents workloads list | skills list | run <wl> <q>`.
 
 ## Install
@@ -70,6 +71,15 @@ pip install 'agents[otel]'    # OTelSink (OTLP/HTTP)
 make check     # ruff + mypy + pytest
 make schema    # regenerate docs/schema/*.json from the models
 ```
+
+## Project status and security
+
+Pre-1.0 infrastructure. See [STATUS.md](./STATUS.md) for phase and
+document maturity, [LIMITATIONS.md](./LIMITATIONS.md) for explicit scope
+boundaries and known gaps, [CHANGELOG.md](./CHANGELOG.md) for material
+changes, and [SECURITY.md](./SECURITY.md) for the hardening posture and
+disclosure process. Roadmap: [docs/backlog.md](./docs/backlog.md);
+decisions: [docs/adr/](./docs/adr/README.md).
 
 ## License
 

@@ -88,7 +88,7 @@ L1 shipped only `InMemoryStore`. The L2 wave added the durable backends below.
 - `BL-051` [resolved] [M] Embedding-based dispatcher. Vector similarity between query and skill descriptions. Requires an embedding adapter or a Runtime that exposes embeddings. (ADR 0006)
 - `BL-052` [resolved] [M] Skill-level contracts (`skills/<name>/contract.py`) that compose with the workload contract. Composition rule: intersection of predicate sets. (ADR 0006)
 - `BL-053` [resolved] [M] Skill versioning and rollback. Track multiple versions of the same skill; load by `name@version`. (ADR 0006)
-- `BL-054` [resolved] [L] Skill installation from registries: `anthropics/skills` on GitHub, Vercel `skills.sh` marketplace. (ADR 0006)
+- `BL-054` [resolved] [L] Skill installation: the `SkillSource` Protocol plus `LocalSkillSource` and `GitHubSkillSource`. Scope clarification: this delivered the Protocol surface and the two stdlib sources. The Vercel `skills.sh` marketplace source and checksum/signature verification were not part of BL-054; they are tracked as `BL-112`. (ADR 0006)
 
 ## Composition (Bhardwaj agent-contract tuple)
 
@@ -112,19 +112,39 @@ L1 shipped only `InMemoryStore`. The L2 wave added the durable backends below.
 
 ## Workload convenience
 
-- `BL-090` [resolved] [M] Out-of-tree workloads. Load from arbitrary filesystem paths or installed packages, not just the `workloads/` package tree. (ADR 0005)
+- `BL-090` [resolved] [M] Out-of-tree workloads: load from an arbitrary filesystem path, not just the `workloads/` package tree. Scope clarification: filesystem-path loading shipped here; loading from an installed package via `[project.entry-points]` was not part of BL-090 and is tracked as `BL-121`. (ADR 0005)
 
 # L3 backlog
 
 Added 2026-05-16. Consolidated from ADR 0007's revisit triggers and the
-deferrals recorded in L2 code/docstrings. Status: all `pending` (not
-started). Same conventions as above; IDs use the `BL-1xx` range so they
-do not collide with L2 (`BL-0xx`).
+deferrals recorded in L2 code/docstrings. Extended 2026-05-17 (ADR 0008)
+with `BL-130`-`BL-153` from a deep analysis against current
+agent-engineering practice, each cross-checked against a primary source
+(see "Sources consulted"). Same conventions as above; IDs use the
+`BL-1xx` range so they do not collide with L2 (`BL-0xx`).
 
-L3 is not "more breadth": L2 shipped the primitives, L3 mostly wires
-them into the default execution path and supplies real implementations
-behind the pluggable Protocols. The highest-leverage cluster is
-"default-path wiring + one real workload".
+L3 is not "more breadth": L2 shipped the primitives, L3 wires them into
+the default execution path, supplies real implementations behind the
+pluggable Protocols, and closes the practice gaps the analysis found.
+
+### Priority tiers
+
+The original L3 clusters (default-path wiring, real implementations,
+reference workload) keep their IDs and text below. ADR 0008 groups all
+open L3 work into delivery tiers:
+
+- Tier 0, security: `BL-112`, `BL-133`, `BL-134`, `BL-150`. The
+  first increment landed (`BL-134` resolved; `BL-112`, `BL-133`
+  in-progress; see "Security hardening").
+- Tier 1, AI quality and safety: `BL-130`, `BL-131`, `BL-132`,
+  `BL-137`, `BL-139`, plus `BL-110`, `BL-120`.
+- Tier 2, reliability and observability: `BL-135`, `BL-136`, `BL-138`,
+  plus `BL-100`-`BL-104`, `BL-113`, `BL-123`.
+- Tier 3, governance: `BL-152`, `BL-153` (`BL-153` resolved).
+- Tier 4, release and operations: `BL-151`.
+
+Highest leverage remains "default-path wiring plus one real workload"
+(`BL-100`, `BL-120`), now preceded by Tier 0 security.
 
 ## Default-path wiring
 
@@ -156,6 +176,54 @@ production implementations.
 - `BL-123` [pending] [M] Cost and per-tool wall-clock / token budgets; today the per-tool cap (BL-073) is call-count only. (ADR 0003 revisit trigger)
 - `BL-124` [pending] [L] MVCC / version tokens beyond compare-and-set, and multi-key transactions where the backend supports them. Extends BL-072. (ADR 0004)
 - `BL-125` [pending] [S] `agents run` accepts typed input models + `--json` / streaming output, and an `agents skills install <source>` subcommand. Extends BL-021, BL-054. (ADR 0006)
+
+## Security hardening (Tier 0)
+
+First increment delivered 2026-05-17 (ADR 0008). The gate is defence in
+depth, not a sandbox (`LIMITATIONS.md` L3).
+
+- `BL-112` [in-progress] [M] Marketplace `SkillSource` (Vercel `skills.sh`) and integrity verification on install. Delivered: bounded download / member-count / per-member / total-size caps and an optional `sha256` on `GitHubSkillSource` (closes the decompression-bomb and unbounded-read exposure; cross-checked against S6). Remaining: a marketplace source and signature (not just checksum) verification. Extends `BL-054`. (ADR 0006, ADR 0008)
+- `BL-133` [in-progress] [M] Skill execution isolation. Delivered: `discover_skill(allow_contract=...)` and an `install_skill` default of `allow_contract=False` so an untrusted bundle's `contract.py` is not executed. Remaining: true isolation (subprocess or container, capability scoping) for opted-in contracts. (ADR 0008)
+- `BL-134` [resolved] [S] Secret and PII redaction for event content: `harness.Redactor` and `harness.RedactingSink`, scrubbing sensitive argument names, secret-shaped values, and over-long scalars before a sink. Closes plaintext leakage of tool arguments into sinks. (ADR 0008)
+- `BL-150` [pending] [S] Pin GitHub Actions to commit SHAs and add a blocking dependency-audit gate (Dependabot proposes updates but is not a gate). Targets SLSA Build L1 provenance as a follow-on (S5). (ADR 0008)
+
+## AI quality and safety (Tier 1)
+
+Practice gaps the analysis found that were not previously tracked.
+
+- `BL-130` [pending] [L] Agent evaluation harness plus a CI regression gate: golden `(query, expected skill)` sets with P@1 / MRR for dispatch, and a contract-outcome trajectory fixture. CI gates lint/types/coverage but not behaviour; routing quality can regress silently (S1: measure against clear success criteria). (ADR 0008)
+- `BL-131` [pending] [L] `SemanticMemoryStore` extension Protocol (vector write plus similarity query) beside `MemoryStore`, with one reference implementation; reuse the `EmbeddingProvider` from `BL-110`. Enables just-in-time retrieval in-tree (S2). (ADR 0004, ADR 0008)
+- `BL-132` [pending] [M] Prompt and response caching on the runtime adapter: cache-breakpoint control for the stable tools/system prefix and surfacing `cache_creation_input_tokens` / `cache_read_input_tokens` (S3). Pairs with cost accounting (`BL-123`). (ADR 0003, ADR 0008)
+- `BL-137` [pending] [M] Structured tool-error result for a soft governance reject, instead of returning the `[blocked: ...]` string as the tool's value, so the model receives a typed rejection rather than apparent tool output (S1: clear agent-computer interface). (ADR 0002, ADR 0008)
+- `BL-139` [pending] [S] Documented prompt-injection posture: tool results, MCP output, and skill bodies are untrusted external content; state the handling and content-isolation expectations in `SECURITY.md` (S1, S2). (ADR 0008)
+
+## Reliability and observability (Tier 2)
+
+- `BL-135` [pending] [L] Memory compaction, summarisation, and tiering (hot to cold), and a size or LRU bound on the sweeper, not age only. Long-horizon workloads grow unbounded (S2: context compaction). (ADR 0004, ADR 0008)
+- `BL-136` [pending] [M] Retry, backoff, and circuit-breaker policy at the guard/runtime and memory-adapter boundary; today the model must re-issue a failed call. (ADR 0003, ADR 0008)
+- `BL-138` [pending] [M] OTel GenAI semantic conventions on the spans from `BL-113`: `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.usage.input_tokens` / `output_tokens` / `cache_read.input_tokens`, and `execute_tool` spans (S4). Refines `BL-113`. (ADR 0002, ADR 0008)
+
+## Governance (Tier 3)
+
+- `BL-152` [pending] [M] Full REUSE / SPDX conversion: per-file `SPDX-License-Identifier` headers and a `REUSE.toml`, with a CI check. (ADR 0008)
+- `BL-153` [resolved] [S] Governance documents: `STATUS.md`, `LIMITATIONS.md`, `CHANGELOG.md`, the ADR index (`docs/adr/README.md`), and an expanded `CONTRIBUTING.md` (DCO sign-off, SPDX baseline, security-review checkpoint, governance section). (ADR 0008)
+
+## Release and operations (Tier 4)
+
+- `BL-151` [pending] [M] Versioning and release policy plus a release workflow (signed artifacts, SBOM, build provenance) and operational notes (deploy, rollback, backup and restore for memory backends). Pre-1.0 today with no release lifecycle (`STATUS.md`, `LIMITATIONS.md` L1, L4; S5 for provenance). (ADR 0008)
+
+## Sources consulted
+
+Primary sources cross-checked before the `BL-130`-`BL-153` edits.
+Accessed 2026-05-17.
+
+- S1 Anthropic, "Building effective agents". https://www.anthropic.com/engineering/building-effective-agents
+- S2 Anthropic, "Effective context engineering for AI agents". https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents
+- S3 Anthropic, "Prompt caching". https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+- S4 OpenTelemetry, "Semantic conventions for generative AI spans". https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/
+- S5 SLSA v1.0, "Build levels". https://slsa.dev/spec/v1.0/levels
+- S6 Python documentation, "tarfile extraction filters" (PEP 706). https://docs.python.org/3/library/tarfile.html
+- S7 Agent Skills specification (the existing compliance baseline, referenced in `skills/types.py`). https://agentskills.io/specification
 
 ## Resolved by later phases
 

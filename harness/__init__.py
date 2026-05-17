@@ -67,6 +67,7 @@ from harness.mcp import (
 )
 from harness.otel import OTelSink
 from harness.recovery import RecoveryHandler, RecoveryOutcome
+from harness.redaction import RedactingSink, Redactor
 from harness.runtime import PydanticAIRuntime, Runtime
 from harness.sinks import EventSink, JsonlSink, MemorySink, MultiSink, NullSink
 from harness.tools import ToolCatalog
@@ -122,6 +123,8 @@ __all__ = [
     "RecoveryApplied",
     "RecoveryHandler",
     "RecoveryOutcome",
+    "RedactingSink",
+    "Redactor",
     "ResumableState",
     "Runtime",
     "Severity",

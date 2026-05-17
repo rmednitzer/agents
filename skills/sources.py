@@ -17,6 +17,8 @@ install time, not at dispatch.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import io
 import shutil
 import tarfile
@@ -34,6 +36,9 @@ __all__ = [
     "SkillSource",
     "install_skill",
 ]
+
+# Streaming read size for the bounded archive download.
+_DOWNLOAD_CHUNK = 64 * 1024
 
 
 def _safe_name(name: str) -> str:
@@ -107,55 +112,134 @@ class GitHubSkillSource:
     directory within the repo (e.g. "" for repo-root skills, "skills"
     for a nested layout). The skill lives at
     ``<path_prefix>/<name>/SKILL.md`` inside the archive.
+
+    Supply-chain note: ``ref`` may be a branch (the default, ``main``,
+    which is mutable: the same ``ref`` can return different bytes over
+    time via force-push or account takeover), a release tag, or a commit
+    SHA. The generic ``codeload`` archive path resolves all three. For
+    reproducible, tamper-evident installs pass an immutable ``ref`` (a
+    commit SHA or release tag) and a ``sha256`` digest of the expected
+    tarball; a mismatch fails the install. The extraction caps
+    (``max_download_bytes``, ``max_members``, ``max_file_bytes``,
+    ``max_total_bytes``) bound a hostile or corrupt archive
+    (decompression bomb, member flood) since stdlib ``tarfile`` does
+    not. Member paths are still validated against traversal/escape.
     """
 
-    _CODELOAD = "https://codeload.github.com/{repo}/tar.gz/refs/heads/{ref}"
+    _CODELOAD = "https://codeload.github.com/{repo}/tar.gz/{ref}"
 
     def __init__(
-        self, repo: str = "anthropics/skills", ref: str = "main", path_prefix: str = ""
+        self,
+        repo: str = "anthropics/skills",
+        ref: str = "main",
+        path_prefix: str = "",
+        *,
+        sha256: str | None = None,
+        max_download_bytes: int = 64 * 1024 * 1024,
+        max_members: int = 10_000,
+        max_file_bytes: int = 16 * 1024 * 1024,
+        max_total_bytes: int = 128 * 1024 * 1024,
     ) -> None:
         self._repo = repo
         self._ref = ref
         self._prefix = path_prefix.strip("/")
+        self._sha256 = sha256.lower() if sha256 is not None else None
+        self._max_download_bytes = max_download_bytes
+        self._max_members = max_members
+        self._max_file_bytes = max_file_bytes
+        self._max_total_bytes = max_total_bytes
 
     def fetch(self, name: str, dest: Path) -> Path:
         _safe_name(name)
         url = self._CODELOAD.format(repo=self._repo, ref=self._ref)
-        with urllib.request.urlopen(url, timeout=30) as resp:
-            data = resp.read()
+        data = self._download(url)
+        if self._sha256 is not None:
+            digest = hashlib.sha256(data).hexdigest()
+            if not hmac.compare_digest(digest, self._sha256):
+                raise SkillLoadError(url, "archive checksum mismatch (expected sha256 differs)")
         target = (dest / name).resolve()
         if target.exists():
             shutil.rmtree(target)
         wanted = f"{self._prefix}/{name}/".lstrip("/")
+        extracted = False
+        total = 0
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-            members = tar.getmembers()
             # Archive root is "<repo>-<ref>/"; strip it, then match the
             # "<prefix>/<name>/" subtree. Every member path is validated
-            # against the install dir before any write (tar traversal).
-            extracted = False
-            for m in members:
+            # against the install dir before any write (tar traversal),
+            # and size/count caps bound a decompression bomb.
+            for index, m in enumerate(tar):
+                if index >= self._max_members:
+                    raise SkillLoadError(url, f"too many archive members (> {self._max_members})")
                 rel = m.name.split("/", 1)[1] if "/" in m.name else ""
                 if not rel.startswith(wanted) or not m.isfile():
                     continue
+                if m.size > self._max_file_bytes:
+                    raise SkillLoadError(url, f"archive member too large: {m.name}")
                 inner = rel[len(wanted) :]
                 out = _safe_target(target, inner)
                 out.parent.mkdir(parents=True, exist_ok=True)
                 src = tar.extractfile(m)
                 if src is not None:
-                    out.write_bytes(src.read())
+                    payload = src.read(self._max_file_bytes + 1)
+                    if len(payload) > self._max_file_bytes:
+                        raise SkillLoadError(url, f"archive member too large: {m.name}")
+                    total += len(payload)
+                    if total > self._max_total_bytes:
+                        raise SkillLoadError(url, "archive exceeds total uncompressed size budget")
+                    out.write_bytes(payload)
                     extracted = True
         if not extracted:
             raise SkillLoadError(url, f"skill {name!r} not found in archive")
         return target
 
+    def _download(self, url: str) -> bytes:
+        """Fetch ``url`` with a hard cap on bytes pulled into memory.
 
-def install_skill(source: SkillSource, name: str, dest: Path) -> Skill:
+        ``Content-Length`` is rejected up front when present and over
+        the cap. The body is then read in bounded chunks and the read
+        stops the moment the cap is exceeded, so a missing or lying
+        header cannot make the installer buffer an unbounded response.
+        """
+        cap = self._max_download_bytes
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            getheader = getattr(resp, "getheader", None)
+            if callable(getheader):
+                raw = getheader("Content-Length")
+                if raw is not None:
+                    try:
+                        declared = int(raw)
+                    except (TypeError, ValueError):
+                        declared = -1
+                    if declared > cap:
+                        raise SkillLoadError(url, f"archive too large ({declared} bytes > {cap})")
+            buf = bytearray()
+            while True:
+                chunk = resp.read(_DOWNLOAD_CHUNK)
+                if not chunk:
+                    break
+                buf += chunk
+                if len(buf) > cap:
+                    raise SkillLoadError(url, f"archive too large (> {cap} bytes)")
+        return bytes(buf)
+
+
+def install_skill(
+    source: SkillSource, name: str, dest: Path, *, allow_contract: bool = False
+) -> Skill:
     """Fetch ``name`` via ``source`` into ``dest`` and validate it.
 
     Returns the discovered Skill. Raises SkillLoadError /
     SkillManifestError if the fetched bundle is missing or invalid, so a
     broken install fails here rather than at dispatch.
+
+    ``allow_contract`` defaults to False: an installed bundle is from an
+    untrusted source, so its ``contract.py`` (if any) is not executed by
+    ``Skill.contract()``. Pass ``allow_contract=True`` only for a source
+    you trust (e.g. a checksum-verified ``GitHubSkillSource`` pinned to
+    an immutable ref). This is a deliberate secure default for the
+    network boundary; the L1 ``discover_skill`` default is unchanged.
     """
     dest.mkdir(parents=True, exist_ok=True)
     bundle = source.fetch(name, dest)
-    return discover_skill(bundle)
+    return discover_skill(bundle, allow_contract=allow_contract)
