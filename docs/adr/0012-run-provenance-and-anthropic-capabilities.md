@@ -75,7 +75,15 @@ mechanism).
 
 `harness/anthropic_api.py` adds two capabilities behind a new optional
 `anthropic` extra, following the ADR 0007 backend convention (lazy
-import; the module imports and type-checks with the SDK absent):
+import behind a Protocol; the module imports and type-checks whether or
+not the SDK is installed, via an `anthropic.*` mypy override). Note the
+SDK is in practice already present in a default install because the
+base `pydantic-ai` dependency pulls it transitively; the extra is the
+explicit, slim-base-friendly declaration and the lazy import decouples
+the code from the SDK's API, not a claim the SDK is otherwise absent.
+Switching the base dependency to `pydantic-ai-slim` to make Anthropic
+truly optional is a larger, provider-surface-wide decision deferred to
+its own change:
 
 - `AnthropicBatchProcessor` wraps the Message Batches API
   (asynchronous bulk processing at 50% token price). It takes the

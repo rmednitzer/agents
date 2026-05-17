@@ -50,14 +50,24 @@ __all__ = [
 RUN_RECORD_SCHEMA_VERSION = "1.0.0"
 """Schema version stamped on freshly produced records.
 
-Bump on any change to the ``RunRecord`` shape and add the prior value
-to ``SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS`` so historical records keep
-validating against the version they were written under (the
-version-dispatch lesson from ``sentinel``'s ``validate_artifacts.py``).
+There is one shape today, so the offline gate validates every
+supported record against the current ``RunRecord`` model. This set is
+the *extension point*, not yet a dispatcher: when the shape changes,
+bump this constant, keep the prior value in
+``SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS``, and have the gate select a
+per-version validator (the structure ``sentinel``'s
+``validate_artifacts.py`` reaches once it has more than one schema).
+Until a v2 exists, building that dispatch would be speculative.
 """
 
 SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS: frozenset[str] = frozenset({"1.0.0"})
-"""Every schema version a record may legitimately declare."""
+"""Every schema version a record may legitimately declare.
+
+``schema_version`` has a default so producers (the enforcement loop)
+need not pass it; an omitted field is therefore the current version,
+both for the model and for the offline gate, which validates the model
+before checking this set so the two agree.
+"""
 
 RunOutcome = Literal[
     "completed",
@@ -68,14 +78,17 @@ RunOutcome = Literal[
     "governance",
     "budget",
     "approval_denied",
+    "output_invalid",
 ]
 """Terminal outcome of a run.
 
 ``completed`` is a clean return; ``paused`` is an approval interruption
-(a ``ResumableState``, not a terminal success); the rest name the hard
-violation / budget exception that ended the run. The vocabulary matches
-``evaluation.dataset.TrajectoryOutcome`` plus ``paused`` so a recorded
-corpus and the trajectory gate speak the same terms.
+(a ``ResumableState``, not a terminal success); ``output_invalid`` is a
+runtime result that fails to parse into the workload's output model;
+the rest name the hard violation / budget exception that ended the run.
+The vocabulary matches ``evaluation.dataset.TrajectoryOutcome`` plus
+``paused`` and ``output_invalid`` so a recorded corpus and the
+trajectory gate speak the same terms.
 """
 
 
@@ -133,8 +146,10 @@ class RunRecord(BaseModel):
     workload: str
     contract_name: str
     contract_version: str
-    contract_digest: str
-    """SHA-256 of the enforcing contract's surface at enforcement time."""
+    contract_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    """SHA-256 (64 lowercase hex chars) of the enforcing contract's
+    surface at enforcement time. The shape is enforced by the model, so
+    a non-digest value fails validation independent of any registry."""
     outcome: RunOutcome
     started_at: str
     """ISO 8601 UTC; matches ``ContractStarted.timestamp``."""
@@ -162,6 +177,8 @@ def verify_run_record(record: RunRecord, contract: Contract[Any, Any]) -> list[s
             f"schema_version {record.schema_version!r} not in supported set "
             f"{sorted(SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS)}"
         )
+    if record.workload != contract.name:
+        errors.append(f"workload {record.workload!r} does not match contract {contract.name!r}")
     if record.contract_name != contract.name:
         errors.append(
             f"contract_name {record.contract_name!r} does not match contract {contract.name!r}"

@@ -412,7 +412,11 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
             if isinstance(result, output_model):
                 output: OutputT = result
             else:
-                output = output_model.model_validate(result)
+                try:
+                    output = output_model.model_validate(result)
+                except ValidationError:
+                    _emit_record("output_invalid")
+                    raise
 
             retry_requested = False
             post_records.clear()

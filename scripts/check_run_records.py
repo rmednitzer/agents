@@ -56,37 +56,48 @@ from harness.provenance import (  # noqa: E402
 def _check_record(path: Path, registry: dict[str, str] | None) -> list[str]:
     """Return the list of hard violations for one record file."""
     errors: list[str] = []
+    # ValueError covers JSONDecodeError and UnicodeDecodeError (a bad
+    # byte sequence in a persisted artifact must be a per-file
+    # violation, not a process-level traceback).
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         return [f"{path}: unreadable / invalid JSON: {exc}"]
 
     if not isinstance(raw, dict):
         return [f"{path}: top-level JSON is {type(raw).__name__}, expected a RunRecord object"]
 
-    version = raw.get("schema_version")
-    if version not in SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS:
-        errors.append(
-            f"{path}: schema_version {version!r} not in supported set "
-            f"{sorted(SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS)}"
-        )
-        return errors
-
+    # Validate the model first, then check the (post-default) version.
+    # Doing it in this order means a record that omits schema_version
+    # is the current version for both the model and this gate (they
+    # agree), and a non-scalar schema_version fails model validation
+    # rather than raising on the set-membership test.
     try:
         record = RunRecord.model_validate(raw)
     except ValidationError as exc:
         return [f"{path}: does not validate against RunRecord: {exc}"]
 
+    if record.schema_version not in SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS:
+        return [
+            f"{path}: schema_version {record.schema_version!r} not in supported set "
+            f"{sorted(SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS)}"
+        ]
+
     if not record.run_id:
         errors.append(f"{path}: run_id is empty")
 
+    # TypeError: datetime.fromisoformat yields a naive datetime for an
+    # offset-less timestamp and an aware one for an offset; comparing a
+    # naive and an aware datetime raises TypeError, which must be a
+    # per-file violation, not a crash.
     try:
         start = datetime.fromisoformat(record.started_at)
         end = datetime.fromisoformat(record.completed_at)
-    except ValueError as exc:
-        errors.append(f"{path}: unparseable timestamp: {exc}")
+        non_monotonic = end < start
+    except (ValueError, TypeError) as exc:
+        errors.append(f"{path}: unparseable / mixed-offset timestamp: {exc}")
     else:
-        if end < start:
+        if non_monotonic:
             errors.append(
                 f"{path}: completed_at {record.completed_at} is before "
                 f"started_at {record.started_at} (non-monotonic run)"
