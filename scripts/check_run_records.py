@@ -61,6 +61,9 @@ def _check_record(path: Path, registry: dict[str, str] | None) -> list[str]:
     except (OSError, json.JSONDecodeError) as exc:
         return [f"{path}: unreadable / invalid JSON: {exc}"]
 
+    if not isinstance(raw, dict):
+        return [f"{path}: top-level JSON is {type(raw).__name__}, expected a RunRecord object"]
+
     version = raw.get("schema_version")
     if version not in SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS:
         errors.append(
@@ -125,6 +128,13 @@ def main() -> int:
             registry = json.loads(Path(args.registry).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             print(f"error: cannot read registry {args.registry}: {exc}", file=sys.stderr)
+            return 2
+        if not isinstance(registry, dict):
+            print(
+                f"error: registry {args.registry} is not a JSON object "
+                f"(expected 'name@version' -> digest mapping)",
+                file=sys.stderr,
+            )
             return 2
 
     files = sorted(root.rglob("*.run.json"))
