@@ -3,6 +3,18 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Skill bundles: shell and routing (2026-05-17)
+
+### Added
+
+- `skills/shell/`: a skill for authoring robust, safe Bash and running
+  commands reliably on local and remote machines (SSH-first; tmux as the
+  rung-4 fallback). Ships references and ShellCheck-clean assets.
+- `skills/dispatcher-skill/`: the versioned routing skill whose body is
+  the dispatch prompt for `SkillBasedDispatcher`. Makes the recommended
+  default dispatcher composition in ADR 0006 runnable as written
+  (previously the composition referenced a skill that did not ship).
+
 ## [Unreleased] Code audit: correctness, security, documentation (2026-05-17)
 
 ### Fixed
