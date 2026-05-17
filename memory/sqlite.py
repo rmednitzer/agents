@@ -155,10 +155,20 @@ class SQLiteStore:
         expires_at = time.time() + ttl if ttl is not None else None
 
         def _bulk() -> None:
-            self._conn.executemany(
-                f'INSERT OR REPLACE INTO "{self._table}" (key, value, expires_at) VALUES (?, ?, ?)',
-                [(k, v, expires_at) for k, v in items.items()],
-            )
+            # One BEGIN IMMEDIATE transaction so a multi-key set is
+            # atomic (all rows or none), matching the BatchMemoryStore
+            # all-or-nothing contract and the CAS path (BL-161).
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.executemany(
+                    f'INSERT OR REPLACE INTO "{self._table}" '
+                    "(key, value, expires_at) VALUES (?, ?, ?)",
+                    [(k, v, expires_at) for k, v in items.items()],
+                )
+                self._conn.execute("COMMIT")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
 
         async with self._lock:
             await asyncio.to_thread(_bulk)
@@ -168,15 +178,23 @@ class SQLiteStore:
     async def mdelete(self, keys: Sequence[str]) -> None:
         for k in keys:
             validate_key(k)
+
+        def _bulk_delete() -> dict[str, bool]:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                existed = {k: self._db_get(k) is not None for k in keys}
+                self._conn.executemany(
+                    f'DELETE FROM "{self._table}" WHERE key=?',
+                    [(k,) for k in keys],
+                )
+                self._conn.execute("COMMIT")
+                return existed
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
+
         async with self._lock:
-            existed: dict[str, bool] = {}
-            for k in keys:
-                existed[k] = await asyncio.to_thread(self._db_get, k) is not None
-            await asyncio.to_thread(
-                self._conn.executemany,
-                f'DELETE FROM "{self._table}" WHERE key=?',
-                [(k,) for k in keys],
-            )
+            existed = await asyncio.to_thread(_bulk_delete)
         for k, did in existed.items():
             self._audit.delete(k, existed=did)
 
@@ -267,8 +285,12 @@ class SQLiteStore:
 
     async def sweep_expired(self) -> int:
         def _sweep() -> int:
+            # Strict ``<`` matches read()/list_keys()/scan() which treat
+            # an entry live until ``now > expires_at``. ``<=`` here swept
+            # an entry the readers still considered live at the exact
+            # expiry instant (audit A6: read vs sweep boundary).
             cur = self._conn.execute(
-                f'DELETE FROM "{self._table}" WHERE expires_at IS NOT NULL AND expires_at <= ?',
+                f'DELETE FROM "{self._table}" WHERE expires_at IS NOT NULL AND expires_at < ?',
                 (time.time(),),
             )
             return cur.rowcount

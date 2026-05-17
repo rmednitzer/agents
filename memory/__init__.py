@@ -10,9 +10,14 @@ construction of additional stores.
 Workloads serialize their own data; the store handles raw bytes.
 """
 
-from memory.acl import AccessPolicy, ACLStore, Operation, RoleACL
+from memory.acl import AccessPolicy, ACLStore, Operation, RoleACL, wrap_acl
 from memory.dynamodb import DynamoDBStore
-from memory.encryption import EncryptedStore, KeyProvider, StaticKeyProvider
+from memory.encryption import (
+    EncryptedStore,
+    KeyProvider,
+    StaticKeyProvider,
+    wrap_encrypted,
+)
 from memory.errors import AccessDenied, MemoryError, NamespaceViolation
 from memory.inmemory import InMemoryStore
 from memory.redis import RedisStore
@@ -63,4 +68,6 @@ __all__ = [
     "TTLSweeper",
     "validate_key",
     "validate_namespace_name",
+    "wrap_acl",
+    "wrap_encrypted",
 ]

@@ -156,3 +156,85 @@ def test_tracker_properties() -> None:
     assert tracker.tokens == 500
     assert tracker.tool_calls == 2
     assert tracker.budget.max_steps == 100
+
+
+# --- BL-123: cost + per-tool token/wall-clock budgets ----------------
+
+
+def test_consume_cost_enforces_max_cost() -> None:
+    tracker = BudgetTracker(ActionBudget(max_cost_usd=1.0))
+    tracker.consume_cost(0.6)
+    assert tracker.cost_usd == pytest.approx(0.6)
+    with pytest.raises(BudgetExceeded) as exc:
+        tracker.consume_cost(0.5)
+    assert exc.value.budget_kind == "cost"
+
+
+def test_consume_cost_zero_is_noop() -> None:
+    tracker = BudgetTracker(ActionBudget(max_cost_usd=0.0))
+    tracker.consume_cost(0.0)  # no spend signal -> dimension stays 0
+    assert tracker.cost_usd == 0.0
+
+
+def test_per_tool_token_cap() -> None:
+    tracker = BudgetTracker(ActionBudget(max_tokens_per_tool={"search": 100}))
+    tracker.consume_tool_call(tool="search", tokens=60)
+    with pytest.raises(BudgetExceeded) as exc:
+        tracker.consume_tool_call(tool="search", tokens=50)
+    assert exc.value.budget_kind == "tokens:search"
+
+
+def test_per_tool_wall_clock_cap() -> None:
+    tracker = BudgetTracker(ActionBudget(max_wall_clock_seconds_per_tool={"slow": 1.0}))
+    tracker.consume_tool_call(tool="slow", wall_clock_seconds=0.7)
+    with pytest.raises(BudgetExceeded) as exc:
+        tracker.consume_tool_call(tool="slow", wall_clock_seconds=0.5)
+    assert exc.value.budget_kind == "wall_clock:slow"
+
+
+def test_per_tool_resource_attribution_is_opt_in() -> None:
+    # No tokens/seconds passed -> exact BL-073 call-count behaviour.
+    tracker = BudgetTracker(ActionBudget(max_tokens_per_tool={"x": 1}))
+    tracker.consume_tool_call(tool="x")
+    tracker.consume_tool_call(tool="x")  # no token cap tripped
+
+
+# --- BL-154: tracker seeding + snapshot ------------------------------
+
+
+def test_tracker_seeds_from_initial_counters() -> None:
+    tracker = BudgetTracker(
+        ActionBudget(max_tokens=100),
+        initial_tokens=80,
+        initial_steps=2,
+        initial_tool_calls=1,
+        initial_per_tool={"search": 1},
+        initial_cost_usd=0.25,
+    )
+    assert tracker.tokens == 80
+    assert tracker.steps == 2
+    assert tracker.tool_calls == 1
+    assert tracker.cost_usd == pytest.approx(0.25)
+    with pytest.raises(BudgetExceeded):
+        tracker.consume_tokens(30)  # 80 + 30 > 100
+
+
+def test_snapshot_round_trips_into_seed() -> None:
+    t1 = BudgetTracker(ActionBudget())
+    t1.consume_tokens(10)
+    t1.consume_step(2)
+    t1.consume_tool_call(tool="search")
+    t1.consume_cost(0.5)
+    snap = t1.snapshot()
+    assert snap["consumed_tokens"] == 10
+    assert snap["consumed_per_tool"] == {"search": 1}
+    t2 = BudgetTracker(
+        ActionBudget(),
+        initial_tokens=snap["consumed_tokens"],
+        initial_steps=snap["consumed_steps"],
+        initial_tool_calls=snap["consumed_tool_calls"],
+        initial_per_tool=snap["consumed_per_tool"],
+        initial_cost_usd=snap["consumed_cost_usd"],
+    )
+    assert t2.tokens == 10
+    assert t2.cost_usd == pytest.approx(0.5)

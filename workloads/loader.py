@@ -19,6 +19,7 @@ Two L2 validators (ADR 0007) run after the manifest parses:
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 import importlib.util
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -44,8 +45,14 @@ if TYPE_CHECKING:
 __all__ = [
     "LoadedWorkload",
     "load_workload",
+    "load_workload_from_entry_point",
     "load_workload_from_path",
 ]
+
+# Entry-point group an installed package declares a workload under, e.g.
+#   [project.entry-points."agents.workloads"]
+#   my-workload = "my_pkg.workload"
+_ENTRY_POINT_GROUP = "agents.workloads"
 
 
 @dataclass(frozen=True)
@@ -189,6 +196,70 @@ def load_workload_from_path(
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
+
+    return _build_loaded_workload(name, package_path, _import, registry)
+
+
+def load_workload_from_entry_point(
+    name: str,
+    *,
+    group: str = _ENTRY_POINT_GROUP,
+    registry: SkillRegistry | None = None,
+) -> LoadedWorkload:
+    """Load a workload from an installed package's entry point (BL-121).
+
+    Extends out-of-tree loading beyond a filesystem path: a third-party
+    package can ship a workload by declaring
+    ``[project.entry-points."agents.workloads"]`` with
+    ``<name> = "<importable.package>"``. The entry point resolves to a
+    package whose directory holds ``manifest.yaml`` / ``contract.py`` /
+    optional ``__main__.py``; the same BL-010 / BL-011 validators apply.
+
+    Security: like ``load_workload_from_path`` (and unlike skill
+    install), this imports and executes the target package's Python. A
+    workload is trusted code by contract; only enable workload packages
+    you trust. See ``SECURITY.md`` and ``LIMITATIONS.md`` L14.
+
+    Args:
+        name: The entry-point name to resolve.
+        group: The entry-point group (default ``agents.workloads``).
+        registry: Optional SkillRegistry for the BL-011 skills check.
+
+    Returns:
+        LoadedWorkload with manifest, contract, package_path, optional main.
+
+    Raises:
+        WorkloadNotFound: No entry point with that name in the group, or
+            its target module has no resolvable file location.
+        ManifestNotFound / ContractNotFound / WorkloadValidationError:
+            As for the other loaders.
+        ImportError: The entry-point target failed to import (the
+            original error propagates, not masked as "not found").
+    """
+    eps = importlib.metadata.entry_points(group=group)
+    match = next((ep for ep in eps if ep.name == name), None)
+    if match is None:
+        raise WorkloadNotFound(name, f"no entry point {name!r} in group {group!r}")
+    try:
+        module = importlib.import_module(match.value)
+    except ModuleNotFoundError as exc:
+        if exc.name in (match.value, None):
+            raise WorkloadNotFound(name, f"entry-point target {match.value!r}: {exc}") from exc
+        raise
+
+    mod_file = getattr(module, "__file__", None)
+    if mod_file is None:
+        raise WorkloadNotFound(name, f"entry-point target {match.value!r} has no __file__")
+    package_path = Path(mod_file).parent
+
+    def _import(submodule: str) -> ModuleType | None:
+        target = f"{match.value}.{submodule}"
+        try:
+            return importlib.import_module(target)
+        except ModuleNotFoundError as exc:
+            if exc.name == target:
+                return None
+            raise
 
     return _build_loaded_workload(name, package_path, _import, registry)
 

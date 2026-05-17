@@ -23,14 +23,22 @@ provider's concern.
 
 from __future__ import annotations
 
+import hashlib
 import os
+from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol, runtime_checkable
 
-from memory.store import MemoryStore
+from memory.store import (
+    BatchMemoryStore,
+    ContentAddressableStore,
+    MemoryStore,
+    ScannableStore,
+    SweepableStore,
+)
 from memory.types import Namespace
 from memory.validators import validate_key
 
-__all__ = ["EncryptedStore", "KeyProvider", "StaticKeyProvider"]
+__all__ = ["EncryptedStore", "KeyProvider", "StaticKeyProvider", "wrap_encrypted"]
 
 _NONCE_BYTES = 12
 
@@ -93,17 +101,11 @@ class EncryptedStore:
         # the '::' separator would otherwise let AAD collide across keys
         # (the inner store also validates, but the AAD is built here).
         validate_key(key)
-        sealed = await self._inner.read(key)
-        if sealed is None:
-            return None
-        nonce, ct = sealed[:_NONCE_BYTES], sealed[_NONCE_BYTES:]
-        return bytes(self._aes.decrypt(nonce, ct, self._aad(key)))
+        return self._unseal(key, await self._inner.read(key))
 
     async def write(self, key: str, value: bytes, *, ttl_seconds: float | None = None) -> None:
         validate_key(key)
-        nonce = os.urandom(_NONCE_BYTES)
-        sealed = nonce + self._aes.encrypt(nonce, value, self._aad(key))
-        await self._inner.write(key, sealed, ttl_seconds=ttl_seconds)
+        await self._inner.write(key, self._seal(key, value), ttl_seconds=ttl_seconds)
 
     async def delete(self, key: str) -> None:
         validate_key(key)
@@ -111,3 +113,115 @@ class EncryptedStore:
 
     async def list_keys(self, prefix: str = "") -> list[str]:
         return await self._inner.list_keys(prefix)
+
+    def _seal(self, key: str, value: bytes) -> bytes:
+        nonce = os.urandom(_NONCE_BYTES)
+        return nonce + self._aes.encrypt(nonce, value, self._aad(key))
+
+    def _unseal(self, key: str, sealed: bytes | None) -> bytes | None:
+        if sealed is None:
+            return None
+        nonce, ct = sealed[:_NONCE_BYTES], sealed[_NONCE_BYTES:]
+        return bytes(self._aes.decrypt(nonce, ct, self._aad(key)))
+
+
+# --- Extension-Protocol forwarding (BL-156) ---------------------------
+#
+# Like ACLStore, a bare EncryptedStore exposes only the core surface.
+# Forwarding is conditional (``wrap_encrypted``) so isinstance stays
+# truthful (ADR 0004 "don't fake it"). EncryptedStore transforms
+# values, so each forwarded method seals/unseals; the AAD binds the
+# namespace + key exactly as the core path.
+#
+# CASMemoryStore is deliberately NOT forwarded even when the inner
+# store supports it: AES-GCM uses a fresh random nonce per write, so
+# sealing ``expected`` yields different ciphertext every call and a
+# value-equality compare-and-set against the stored ciphertext can
+# never match; a read-modify-write emulation would not be atomic.
+# Encryption over a CAS backend therefore drops CAS by design (a
+# documented deviation, memory/README.md), rather than faking it.
+
+
+class _EncBatchMixin:
+    # _seal / _unseal are provided by EncryptedStore at composition;
+    # declared as attributes (not empty-body methods) so the mixin
+    # type-checks standalone and resolves to the real ones at runtime.
+    _inner: BatchMemoryStore
+    _seal: Callable[[str, bytes], bytes]
+    _unseal: Callable[[str, bytes | None], bytes | None]
+
+    async def mget(self, keys: Sequence[str]) -> list[bytes | None]:
+        for k in keys:
+            validate_key(k)
+        sealed = await self._inner.mget(keys)
+        return [self._unseal(k, s) for k, s in zip(keys, sealed, strict=True)]
+
+    async def mset(self, items: Mapping[str, bytes], *, ttl_seconds: float | None = None) -> None:
+        for k in items:
+            validate_key(k)
+        await self._inner.mset(
+            {k: self._seal(k, v) for k, v in items.items()}, ttl_seconds=ttl_seconds
+        )
+
+    async def mdelete(self, keys: Sequence[str]) -> None:
+        for k in keys:
+            validate_key(k)
+        await self._inner.mdelete(keys)
+
+
+class _EncScanMixin:
+    _inner: ScannableStore
+
+    async def scan(
+        self, *, cursor: str = "", prefix: str = "", count: int = 100
+    ) -> tuple[str, list[str]]:
+        # Keys are not encrypted (documented), so scan passes through.
+        return await self._inner.scan(cursor=cursor, prefix=prefix, count=count)
+
+
+class _EncContentMixin:
+    _inner: MemoryStore
+    _seal: Callable[[str, bytes], bytes]
+
+    async def write_content(self, value: bytes, *, ttl_seconds: float | None = None) -> str:
+        # The content key must hash the PLAINTEXT so identical content
+        # dedupes; the inner store's own write_content would hash the
+        # (nonce-randomised) ciphertext and never dedupe. Hash here,
+        # then write the sealed value under that key.
+        key = hashlib.sha256(value).hexdigest()
+        sealed = self._seal(key, value)
+        await self._inner.write(key, sealed, ttl_seconds=ttl_seconds)
+        return key
+
+
+class _EncSweepMixin:
+    _inner: SweepableStore
+
+    async def sweep_expired(self) -> int:
+        return await self._inner.sweep_expired()
+
+
+def wrap_encrypted(inner: MemoryStore, key_provider: KeyProvider) -> EncryptedStore:
+    """EncryptedStore that also forwards the value-safe extension
+    Protocols ``inner`` supports (BL-156).
+
+    Forwards Batch / Scan / ContentAddressable / Sweepable conditionally
+    (so ``isinstance`` is truthful). CASMemoryStore is intentionally not
+    forwarded: GCM nonce randomisation makes ciphertext-equality CAS
+    unrepresentable (see the module note and memory/README.md). Use
+    this instead of constructing ``EncryptedStore`` directly over a
+    capability-rich backend.
+    """
+    mixins: list[type] = []
+    if isinstance(inner, BatchMemoryStore):
+        mixins.append(_EncBatchMixin)
+    if isinstance(inner, ScannableStore):
+        mixins.append(_EncScanMixin)
+    if isinstance(inner, ContentAddressableStore):
+        mixins.append(_EncContentMixin)
+    if isinstance(inner, SweepableStore):
+        mixins.append(_EncSweepMixin)
+    if not mixins:
+        return EncryptedStore(inner, key_provider)
+    cls = type("EncryptedStore", (EncryptedStore, *mixins), {})
+    return cls(inner, key_provider)  # type: ignore[no-any-return]

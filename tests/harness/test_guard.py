@@ -52,7 +52,16 @@ async def test_hard_governance_failure_rejects_and_emits() -> None:
 
 
 @pytest.mark.asyncio
-async def test_soft_governance_failure_logs_and_continues() -> None:
+async def test_soft_governance_failure_rejects_softly() -> None:
+    """A soft governance failure is a SOFT REJECT, not APPROVE.
+
+    The runtime logs-and-continues on a SOFT reject (it surfaces a
+    structured rejection to the model rather than executing the tool).
+    Returning APPROVE here, the pre-audit behaviour, made a soft
+    governance predicate a silent no-op and left the runtime's
+    documented soft-reject path dead (audit A1).
+    """
+
     @predicate(name="prefer_dry_run", severity=Severity.SOFT)
     def prefer_dry_run(action: ProposedAction) -> bool:
         return action.arguments.get("dry_run", False)
@@ -64,10 +73,36 @@ async def test_soft_governance_failure_logs_and_continues() -> None:
     guard = HarnessToolGuard(contract, sink=sink, base_event_fields=_base())
 
     response = await guard.check("apply_change", {"dry_run": False})
-    assert response.decision == GuardDecision.APPROVE
+    assert response.decision == GuardDecision.REJECT
+    assert response.severity == Severity.SOFT
+    assert response.reason is not None
+    assert "prefer_dry_run" in response.reason
     assert len(sink.events) == 1
     assert isinstance(sink.events[0], GovernanceViolated)
     assert sink.events[0].severity == Severity.SOFT
+
+
+@pytest.mark.asyncio
+async def test_soft_then_hard_governance_still_hard_rejects() -> None:
+    """A HARD failure short-circuits even if a SOFT one preceded it."""
+
+    @predicate(name="soft_pred", severity=Severity.SOFT)
+    def soft_pred(action: ProposedAction) -> bool:
+        return False
+
+    @predicate(name="hard_pred", severity=Severity.HARD)
+    def hard_pred(action: ProposedAction) -> bool:
+        return False
+
+    contract: Contract[None, None] = Contract(
+        name="c", version="0.1.0", governance=[soft_pred, hard_pred]
+    )
+    guard = HarnessToolGuard(contract)
+    response = await guard.check("t", {})
+    assert response.decision == GuardDecision.REJECT
+    assert response.severity == Severity.HARD
+    assert response.reason is not None
+    assert "hard_pred" in response.reason
 
 
 @pytest.mark.asyncio

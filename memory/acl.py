@@ -15,15 +15,22 @@ PDP) are just other AccessPolicy implementations.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Literal, Protocol, runtime_checkable
 
 from memory.errors import AccessDenied
-from memory.store import MemoryStore
+from memory.store import (
+    BatchMemoryStore,
+    CASMemoryStore,
+    ContentAddressableStore,
+    MemoryStore,
+    ScannableStore,
+    SweepableStore,
+)
 from memory.types import Namespace
 from memory.validators import validate_key
 
-__all__ = ["ACLStore", "AccessPolicy", "Operation", "RoleACL"]
+__all__ = ["ACLStore", "AccessPolicy", "Operation", "RoleACL", "wrap_acl"]
 
 Operation = Literal["read", "write", "delete", "list"]
 
@@ -118,3 +125,124 @@ class ACLStore:
     async def list_keys(self, prefix: str = "") -> list[str]:
         self._guard("list", prefix)
         return await self._inner.list_keys(prefix)
+
+
+# --- Extension-Protocol forwarding (BL-156) ---------------------------
+#
+# A bare ACLStore implements only the core MemoryStore surface, so
+# wrapping a CAS/batch/scan/content-addressing/sweepable backend hid
+# those capabilities. Forwarding them unconditionally would be worse:
+# isinstance(store, CASMemoryStore) would be True even over a backend
+# that has no CAS, faking a capability the "don't fake it" contract
+# (ADR 0004) forbids. So the methods live in mixins and ``wrap_acl``
+# composes a class with exactly the mixins the wrapped store supports,
+# preserving a truthful isinstance. The guard is applied to every
+# forwarded operation, same as the core methods.
+
+
+class _ACLBatchMixin:
+    # _guard is ACLStore._guard, bound at composition; declared as an
+    # attribute so the mixin type-checks standalone.
+    _inner: BatchMemoryStore
+    _guard: Callable[[Operation, str], None]
+
+    async def mget(self, keys: Sequence[str]) -> list[bytes | None]:
+        for k in keys:
+            validate_key(k)
+            self._guard("read", k)
+        return await self._inner.mget(keys)
+
+    async def mset(self, items: Mapping[str, bytes], *, ttl_seconds: float | None = None) -> None:
+        for k in items:
+            validate_key(k)
+            self._guard("write", k)
+        await self._inner.mset(items, ttl_seconds=ttl_seconds)
+
+    async def mdelete(self, keys: Sequence[str]) -> None:
+        for k in keys:
+            validate_key(k)
+            self._guard("delete", k)
+        await self._inner.mdelete(keys)
+
+
+class _ACLScanMixin:
+    _inner: ScannableStore
+    _guard: Callable[[Operation, str], None]
+
+    async def scan(
+        self, *, cursor: str = "", prefix: str = "", count: int = 100
+    ) -> tuple[str, list[str]]:
+        self._guard("list", prefix)
+        return await self._inner.scan(cursor=cursor, prefix=prefix, count=count)
+
+
+class _ACLContentMixin:
+    _inner: ContentAddressableStore
+    _guard: Callable[[Operation, str], None]
+
+    async def write_content(self, value: bytes, *, ttl_seconds: float | None = None) -> str:
+        import hashlib
+
+        # The content key is public (sha256 of the value); the write
+        # must still be authorized for that key.
+        self._guard("write", hashlib.sha256(value).hexdigest())
+        return await self._inner.write_content(value, ttl_seconds=ttl_seconds)
+
+
+class _ACLCASMixin:
+    _inner: CASMemoryStore
+    _guard: Callable[[Operation, str], None]
+
+    async def compare_and_set(
+        self,
+        key: str,
+        expected: bytes | None,
+        new: bytes,
+        *,
+        ttl_seconds: float | None = None,
+    ) -> bool:
+        validate_key(key)
+        self._guard("write", key)
+        return await self._inner.compare_and_set(key, expected, new, ttl_seconds=ttl_seconds)
+
+    async def compare_and_delete(self, key: str, expected: bytes) -> bool:
+        validate_key(key)
+        self._guard("delete", key)
+        return await self._inner.compare_and_delete(key, expected)
+
+
+class _ACLSweepMixin:
+    _inner: SweepableStore
+
+    async def sweep_expired(self) -> int:
+        # Sweep is a store-maintenance operation, not a per-key access;
+        # it removes only already-expired entries. No ACL check (there
+        # is no principal-scoped key), matching list's coarse gate.
+        return await self._inner.sweep_expired()
+
+
+def wrap_acl(inner: MemoryStore, policy: AccessPolicy, principal: str) -> ACLStore:
+    """ACLStore that also forwards whatever extension Protocols ``inner``
+    supports (BL-156).
+
+    Returns a plain ``ACLStore`` when ``inner`` is core-only, or an
+    ``ACLStore`` subclass mixing in batch / scan / content-addressing /
+    CAS / sweep forwarding for exactly the Protocols ``inner`` satisfies,
+    so ``isinstance`` stays truthful. Use this instead of constructing
+    ``ACLStore`` directly when the backend is capability-rich.
+    """
+    mixins: list[type] = []
+    if isinstance(inner, BatchMemoryStore):
+        mixins.append(_ACLBatchMixin)
+    if isinstance(inner, ScannableStore):
+        mixins.append(_ACLScanMixin)
+    if isinstance(inner, ContentAddressableStore):
+        mixins.append(_ACLContentMixin)
+    if isinstance(inner, CASMemoryStore):
+        mixins.append(_ACLCASMixin)
+    if isinstance(inner, SweepableStore):
+        mixins.append(_ACLSweepMixin)
+    if not mixins:
+        return ACLStore(inner, policy, principal)
+    cls = type("ACLStore", (ACLStore, *mixins), {})
+    return cls(inner, policy, principal)  # type: ignore[no-any-return]

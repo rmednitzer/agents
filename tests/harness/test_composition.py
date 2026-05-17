@@ -80,3 +80,44 @@ def test_governance_union_dedups_by_name() -> None:
     b: Contract[object, object] = Contract(name="b", version="1", governance=[_gov_a])
     composed = compose_contracts("ab", "1", a, b)
     assert len(composed.governance) == 1
+
+
+# --- A4: strictest severity wins on a name collision -----------------
+
+
+@predicate(name="shared", severity=Severity.SOFT)
+def _shared_soft(s: object) -> bool:
+    return True
+
+
+def test_name_collision_keeps_hard_over_soft() -> None:
+    # Workload declares "shared" SOFT; a skill declares it HARD. The
+    # composed contract must keep HARD: composition cannot silently
+    # downgrade a reviewed obligation (audit A4).
+    workload: Contract[object, object] = Contract(
+        name="w", version="1", preconditions=[_shared_soft]
+    )
+    skill: Contract[object, object] = Contract(
+        name="s",
+        version="1",
+        preconditions=[_shared],  # HARD
+    )
+    composed = compose_contracts("c", "1", workload, skill)
+    shared = next(p for p in composed.preconditions if p.name == "shared")
+    assert shared.severity == Severity.HARD
+
+
+def test_name_collision_hard_first_stays_hard() -> None:
+    workload: Contract[object, object] = Contract(
+        name="w",
+        version="1",
+        preconditions=[_shared],  # HARD
+    )
+    skill: Contract[object, object] = Contract(
+        name="s",
+        version="1",
+        preconditions=[_shared_soft],  # SOFT
+    )
+    composed = compose_contracts("c", "1", workload, skill)
+    shared = next(p for p in composed.preconditions if p.name == "shared")
+    assert shared.severity == Severity.HARD

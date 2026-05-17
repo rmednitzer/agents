@@ -74,6 +74,16 @@ class ResumableState(BaseModel):
     pending_approvals: list[ApprovalInterruption] = Field(default_factory=list)
     completed_actions: list[ActionRecord] = Field(default_factory=list)
     trace_id: str
+    # Consumed budget at the pause (BL-154). The harness seeds the
+    # resumed run's BudgetTracker from these so tokens, steps, tool
+    # calls, and per-tool quotas accumulate across an approval pause
+    # instead of restarting at zero. Defaults keep a hand-built or
+    # pre-BL-154 ResumableState behaving exactly as before.
+    consumed_steps: int = 0
+    consumed_tokens: int = 0
+    consumed_tool_calls: int = 0
+    consumed_per_tool: dict[str, int] = Field(default_factory=dict)
+    consumed_cost_usd: float = 0.0
 
     def approve(self, interruption_id: str) -> ResumableState:
         """Return a new state with the given interruption marked approved."""

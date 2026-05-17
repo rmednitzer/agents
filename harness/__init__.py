@@ -34,6 +34,7 @@ from harness.events import (
     ContractCompleted,
     ContractStarted,
     DispatchObserved,
+    DriftThresholdCrossed,
     GovernanceViolated,
     HarnessEvent,
     InvariantViolated,
@@ -66,9 +67,9 @@ from harness.mcp import (
     ToolSpec,
 )
 from harness.otel import OTelSink
-from harness.recovery import RecoveryHandler, RecoveryOutcome
+from harness.recovery import RecoveryDirective, RecoveryHandler, RecoveryOutcome
 from harness.redaction import RedactingSink, Redactor
-from harness.runtime import PydanticAIRuntime, Runtime
+from harness.runtime import PydanticAIRuntime, RetryPolicy, Runtime
 from harness.sinks import EventSink, JsonlSink, MemorySink, MultiSink, NullSink
 from harness.tools import ToolCatalog
 
@@ -89,6 +90,7 @@ __all__ = [
     "ContractStarted",
     "DispatchObserved",
     "DriftMonitor",
+    "DriftThresholdCrossed",
     "EventSink",
     "FunctionPredicate",
     "GovernanceViolated",
@@ -121,11 +123,13 @@ __all__ = [
     "ProposedAction",
     "PydanticAIRuntime",
     "RecoveryApplied",
+    "RecoveryDirective",
     "RecoveryHandler",
     "RecoveryOutcome",
     "RedactingSink",
     "Redactor",
     "ResumableState",
+    "RetryPolicy",
     "Runtime",
     "Severity",
     "SkillDispatched",

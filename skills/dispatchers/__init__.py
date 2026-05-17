@@ -1,7 +1,9 @@
 """Reference Dispatcher implementations.
 
-Five core dispatchers shipped at L1; the L2 wave added two more plus an
-instrumentation wrapper (ADR 0006, ADR 0007). Eight dispatchers ship:
+Seven router dispatchers ship (five core at L1; the L2 wave added
+MultiDispatcher and EmbeddingDispatcher), plus an InstrumentedDispatcher
+telemetry wrapper and the ``default_dispatcher`` composition factory
+(ADR 0006, ADR 0007, ADR 0010):
 
 - KeywordDispatcher: deterministic, scores by metadata triggers and
   description token overlap. Zero LLM cost.
@@ -19,10 +21,13 @@ instrumentation wrapper (ADR 0006, ADR 0007). Eight dispatchers ship:
   skill descriptions via a pluggable EmbeddingProvider.
 
 InstrumentedDispatcher (BL-042) is a wrapper, not a router: it adds
-latency, fallback-rate, and token telemetry around any of the above.
+latency, fallback-rate, and telemetry around any of the above.
+``default_dispatcher`` (BL-103) composes the recommended instrumented,
+cheap-first chain in one call.
 """
 
 from skills.dispatchers.chain import RoutingChainDispatcher
+from skills.dispatchers.compose import default_dispatcher
 from skills.dispatchers.embedding import EmbeddingDispatcher
 from skills.dispatchers.instrumented import DispatchStats, InstrumentedDispatcher
 from skills.dispatchers.keyword import KeywordDispatcher
@@ -42,4 +47,5 @@ __all__ = [
     "MultiMode",
     "RoutingChainDispatcher",
     "SkillBasedDispatcher",
+    "default_dispatcher",
 ]

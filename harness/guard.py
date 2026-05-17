@@ -100,7 +100,15 @@ class HarnessToolGuard:
     async def check(self, tool: str, arguments: dict[str, Any]) -> GuardResponse:
         action = ProposedAction(tool=tool, arguments=arguments)
 
-        # 1. Governance predicates fire in declaration order
+        # 1. Governance predicates fire in declaration order. A HARD
+        # failure short-circuits to REJECT. SOFT failures are collected:
+        # the run continues, but the model must still be told the call
+        # was governed away, so the first soft failure becomes a
+        # REJECT/SOFT response (the runtime logs-and-continues and
+        # surfaces a structured rejection rather than the tool output).
+        # Without this a soft governance predicate executed the tool
+        # anyway and the runtime's documented soft-reject path was dead.
+        soft_failures: list[str] = []
         for pred in self._contract.governance:
             if not pred(action):
                 if self._base:
@@ -120,7 +128,14 @@ class HarnessToolGuard:
                         reason=f"governance predicate '{pred.name}' failed",
                         severity=Severity.HARD,
                     )
-                # SOFT: log and continue to next predicate
+                soft_failures.append(pred.name)
+
+        if soft_failures:
+            return GuardResponse(
+                decision=GuardDecision.REJECT,
+                reason=f"governance predicate '{soft_failures[0]}' failed (soft)",
+                severity=Severity.SOFT,
+            )
 
         # 2. Approval requirement
         if tool in self._contract.approval_required:

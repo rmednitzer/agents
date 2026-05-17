@@ -38,9 +38,10 @@ agents/
   scripts/     operational and developer scripts
 ```
 
-The L1 framework plus the full L2 wave are implemented and merged to `main`; see
-`docs/backlog.md` (line-item tracker) and `docs/adr/0007-l2-implementation-wave.md`
-(cross-cutting decisions).
+The L1 framework, the full L2 wave, and the L3 default-path-wiring + audit
+wave are implemented on `main`; see `docs/backlog.md` (line-item tracker)
+and the cross-cutting ADRs `0007` (L2), `0008`/`0009` (L3 entry + first
+audit), and `0010` (default-path wiring, second audit, governance maturity).
 
 ## Conventions
 
@@ -112,12 +113,15 @@ Uses `uv`. Set up: `uv sync --all-extras` (installs every optional backend plus 
 - `make type-check` runs `mypy agents harness memory workloads skills`.
 - `make check` runs lint + type-check + test (run before pushing).
 - `make schema` regenerates `docs/schema/*.json` from the Pydantic models.
+- CI also runs `uvx reuse lint` (REUSE 3.x compliance via `REUSE.toml`)
+  and a blocking `dependency-audit` job (`pip-audit` over the exported
+  lockfile), both in the `ci-success` aggregate gate.
 
 The PydanticAI runtime is tested deterministically with `TestModel`/`FunctionModel` (no network or API keys). Optional-backend tests skip cleanly when their driver is absent. Provider selection and credentials are documented in `docs/runtime-providers.md`.
 
 ## Status and limitations
 
-Phase and document maturity: `STATUS.md`. Explicit scope boundaries and known gaps: `LIMITATIONS.md`. Material changes by phase: `CHANGELOG.md`. ADR index: `docs/adr/README.md`. The L3 roadmap is tiered in `docs/backlog.md`; cross-cutting decisions are ADR 0007 (L2) and ADR 0008 (L3 entry, security hardening, validated roadmap).
+Phase and document maturity: `STATUS.md`. Explicit scope boundaries and known gaps: `LIMITATIONS.md`. Material changes by phase: `CHANGELOG.md`. Versioning, release, and operations policy: `docs/releasing.md`. ADR index: `docs/adr/README.md`. The L3 roadmap is tiered in `docs/backlog.md`; cross-cutting decisions are ADR 0007 (L2), ADR 0008/0009 (L3 entry + first audit), and ADR 0010 (default-path wiring, second audit, governance and release maturity).
 
 Security conventions: untrusted skill bundles are loaded with `allow_contract=False` (no `contract.py` execution) and bounded extraction; pin an immutable `ref` plus a `sha256` for tamper-evident installs; wrap event sinks in `harness.RedactingSink` when arguments may carry secrets. The gate is defence in depth, not a sandbox (see `LIMITATIONS.md` L3).
 

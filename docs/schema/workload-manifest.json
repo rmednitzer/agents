@@ -1,8 +1,20 @@
 {
   "$defs": {
     "ActionBudget": {
-      "description": "Immutable action budget spec.\n\nAll fields are optional; None means unlimited for that dimension.\n\n``max_tool_calls`` is the aggregate cap across every tool.\n``max_tool_calls_per_tool`` (BL-073) caps individual tools, e.g.\n``{\"search\": 3, \"delete\": 1}``; a tool absent from the map is\nbounded only by the aggregate cap. Both are enforced.",
+      "description": "Immutable action budget spec.\n\nAll fields are optional; None means unlimited for that dimension.\n\n``max_tool_calls`` is the aggregate cap across every tool.\n``max_tool_calls_per_tool`` (BL-073) caps individual tools, e.g.\n``{\"search\": 3, \"delete\": 1}``; a tool absent from the map is\nbounded only by the aggregate cap. Both are enforced.\n\nL3 cost and per-tool resource caps (BL-123), all optional and\ndefaulting to None so an existing ActionBudget is unchanged:\n\n- ``max_cost_usd``: aggregate spend ceiling; the adapter reports\n  cost via ``consume_cost`` (a model-priced run) or it stays 0.\n- ``max_tokens_per_tool`` / ``max_wall_clock_seconds_per_tool``:\n  per-tool token and wall-clock ceilings, the resource analogues of\n  ``max_tool_calls_per_tool``. A tool absent from a map is bounded\n  only by the aggregate cap for that dimension.",
       "properties": {
+        "max_cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Cost Usd"
+        },
         "max_steps": {
           "anyOf": [
             {
@@ -26,6 +38,21 @@
           ],
           "default": null,
           "title": "Max Tokens"
+        },
+        "max_tokens_per_tool": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Tokens Per Tool"
         },
         "max_tool_calls": {
           "anyOf": [
@@ -65,6 +92,21 @@
           ],
           "default": null,
           "title": "Max Wall Clock Seconds"
+        },
+        "max_wall_clock_seconds_per_tool": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Wall Clock Seconds Per Tool"
         }
       },
       "title": "ActionBudget",

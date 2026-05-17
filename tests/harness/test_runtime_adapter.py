@@ -323,3 +323,94 @@ async def test_bl002_denied_approval_raises() -> None:
     denied = paused.deny(paused.pending_approvals[0].id, reason="nope")
     with pytest.raises(ApprovalDenied):
         await rt.run("go", tools=[risky], guard=guard, resume=denied)
+
+
+# --- BL-137: structured soft-reject -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gate_soft_reject_as_error_raises_model_retry() -> None:
+    from pydantic_ai import ModelRetry
+
+    g = _Guard(GuardResponse(decision=GuardDecision.REJECT, reason="nope", severity=Severity.SOFT))
+    state = _GuardState(soft_reject_as_error=True)
+    with pytest.raises(ModelRetry, match="blocked by governance: nope"):
+        await _run_gate(g, None, state=state)
+
+
+@pytest.mark.asyncio
+async def test_gate_soft_reject_default_still_returns_string() -> None:
+    g = _Guard(GuardResponse(decision=GuardDecision.REJECT, reason="nope", severity=Severity.SOFT))
+    assert (await _run_gate(g, None, state=_GuardState())) == "[blocked: nope]"
+
+
+# --- BL-136: retry policy ---------------------------------------------
+
+
+class _Transient(Exception):
+    pass
+
+
+def test_retry_policy_backoff_is_exponential_and_capped() -> None:
+    from harness.runtime import RetryPolicy
+
+    p = RetryPolicy(max_retries=5, backoff_base_seconds=1.0, backoff_max_seconds=4.0)
+    assert p.delay_for(1) == 1.0
+    assert p.delay_for(2) == 2.0
+    assert p.delay_for(3) == 4.0
+    assert p.delay_for(4) == 4.0  # capped
+
+
+@pytest.mark.asyncio
+async def test_retry_policy_retries_transient_then_succeeds() -> None:
+    from harness.runtime import RetryPolicy
+
+    attempts = {"n": 0}
+
+    def model_fn(messages: Any, info: AgentInfo) -> ModelResponse:
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise _Transient("flaky provider")
+        return ModelResponse(parts=[TextPart("ok")])
+
+    rt = PydanticAIRuntime(
+        FunctionModel(model_fn),
+        retry_policy=RetryPolicy(max_retries=3, backoff_base_seconds=0.0, retry_on=(_Transient,)),
+    )
+    out = await rt.run("go")
+    assert out == "ok"
+    assert attempts["n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_retry_policy_exhausts_and_raises() -> None:
+    from harness.runtime import RetryPolicy
+
+    def model_fn(messages: Any, info: AgentInfo) -> ModelResponse:
+        raise _Transient("always down")
+
+    rt = PydanticAIRuntime(
+        FunctionModel(model_fn),
+        retry_policy=RetryPolicy(max_retries=2, backoff_base_seconds=0.0, retry_on=(_Transient,)),
+    )
+    with pytest.raises(_Transient):
+        await rt.run("go")
+
+
+@pytest.mark.asyncio
+async def test_retry_policy_does_not_retry_unlisted_error() -> None:
+    from harness.runtime import RetryPolicy
+
+    calls = {"n": 0}
+
+    def model_fn(messages: Any, info: AgentInfo) -> ModelResponse:
+        calls["n"] += 1
+        raise ValueError("not transient")
+
+    rt = PydanticAIRuntime(
+        FunctionModel(model_fn),
+        retry_policy=RetryPolicy(max_retries=5, backoff_base_seconds=0.0, retry_on=(_Transient,)),
+    )
+    with pytest.raises(ValueError, match="not transient"):
+        await rt.run("go")
+    assert calls["n"] == 1  # not retried

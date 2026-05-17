@@ -30,12 +30,17 @@ class SkillRegistry:
         self._versions: dict[str, dict[str, Skill]] = {}
 
     @classmethod
-    def from_directory(cls, root: Path) -> SkillRegistry:
+    def from_directory(cls, root: Path, *, allow_contract: bool = True) -> SkillRegistry:
         """Discover every directory under `root` containing a SKILL.md.
 
         Args:
             root: Directory to scan. Each immediate subdirectory with a
                 SKILL.md becomes a skill.
+            allow_contract: Forwarded to ``discover_skill`` (BL-161).
+                Defaults to True (the L1 default: in-tree skills are
+                trusted). Pass False when scanning a directory of
+                bundles from an untrusted source so a present
+                ``contract.py`` is not executed by ``Skill.contract()``.
 
         Returns:
             A populated SkillRegistry. Directories without SKILL.md are
@@ -49,7 +54,7 @@ class SkillRegistry:
                 continue
             if not (entry / "SKILL.md").is_file():
                 continue
-            registry.add(discover_skill(entry))
+            registry.add(discover_skill(entry, allow_contract=allow_contract))
         return registry
 
     def add(self, skill: Skill) -> None:
@@ -86,7 +91,11 @@ class SkillRegistry:
         ``name@version`` returns that exact version, or None.
         """
         if "@" in name:
-            base, _, version = name.partition("@")
+            # rsplit on the LAST '@' so a skill whose name contains '@'
+            # resolves correctly; the version is the final segment
+            # (BL-161). ``partition`` split on the first '@', misparsing
+            # such names.
+            base, _, version = name.rpartition("@")
             return self._versions.get(base, {}).get(version)
         return self._skills.get(name)
 

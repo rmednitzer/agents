@@ -1,0 +1,68 @@
+name: release
+
+# BL-151: tag-triggered release. Pre-1.0 there are no published
+# releases yet; this workflow is the lifecycle that a 0.0.x -> 0.1.0
+# tag will exercise. It builds reproducible sdist/wheel artifacts,
+# emits a CycloneDX SBOM, and attests build provenance (SLSA-style)
+# via GitHub's artifact attestation. Publishing to an index is
+# intentionally NOT automated yet (see docs/releasing.md): the gate to
+# a first published release is human.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the GitHub Release + upload assets
+      id-token: write # provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+
+      # Quality gate before anything is published: a release must be
+      # green (the same gate as CI), so a bad commit cannot be tagged
+      # into a release.
+      - run: uv sync --all-extras
+      - run: uv run ruff check .
+      - run: uv run mypy agents harness memory workloads skills
+      - run: uv run pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov-fail-under=94
+      - run: uvx reuse lint
+
+      - name: Build sdist and wheel
+        run: uv build --out-dir dist
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          uv export --frozen --all-extras --no-emit-project --format requirements-txt -o sbom-requirements.txt
+          uvx cyclonedx-py requirements sbom-requirements.txt --output-format JSON --outfile dist/sbom.cdx.json
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: "dist/*"
+
+      - name: Create GitHub release with artifacts + SBOM
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.whl
+            dist/sbom.cdx.json
+          fail_on_unmatched_files: true
+          generate_release_notes: true

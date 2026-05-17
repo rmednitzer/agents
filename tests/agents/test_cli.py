@@ -112,3 +112,89 @@ def test_run_does_not_mask_genuine_typeerror_in_body(
     monkeypatch.setattr(cli, "load_workload", lambda name, *, registry: _LW())
     with pytest.raises(TypeError, match="genuine bug in workload body"):
         main(["run", "x", "q"])
+
+
+# --- BL-161 / BL-125 CLI additions ------------------------------------
+
+
+def test_run_json_flag_emits_compact(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["run", "_example", "# T\n\nok\n", "--json"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "\n  " not in out  # compact: no 2-space indentation
+    assert json.loads(out)["workload"] == "_example"
+
+
+def test_run_honours_model_free_manifest_dispatcher(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A manifest 'embedding' dispatcher is honoured model-free (BL-161)."""
+    from skills.types import Skill, SkillManifest
+
+    reg = cli.SkillRegistry()
+    reg.add(
+        Skill(
+            manifest=SkillManifest(name="weather", description="rain sun forecast wind"),
+            path=cli.Path("."),
+        )
+    )
+
+    async def _main(q: str) -> str:
+        return q
+
+    class _LW:
+        manifest = type("M", (), {"dispatcher": "embedding", "skills": ["weather"], "name": "wl"})()
+        main = staticmethod(_main)
+
+    monkeypatch.setattr(cli, "load_workload", lambda name, *, registry: _LW())
+    monkeypatch.setattr(cli, "_skill_registry", lambda: reg)
+    rc = main(["run", "wl", "will it rain"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    payload = json.loads(out)
+    assert payload["dispatch"]["dispatcher"] == "embedding"
+
+
+def test_run_clean_import_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A workload import failure is reported cleanly, not as a traceback."""
+
+    def _boom(name: str, *, registry: Any) -> Any:
+        raise ImportError("No module named 'missing_dep'")
+
+    monkeypatch.setattr(cli, "load_workload", _boom)
+    rc = main(["run", "wl", "q"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "failed to import" in err
+    assert "missing_dep" in err
+
+
+def test_skills_install_from_local(tmp_path: Any, capsys: pytest.CaptureFixture[str]) -> None:
+    root = tmp_path / "src"
+    d = root / "myskill"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: myskill\ndescription: A CLI-installed skill.\n---\nbody\n"
+    )
+    rc = main(
+        [
+            "skills",
+            "install",
+            "myskill",
+            "--from",
+            f"local:{root}",
+            "--dest",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert rc == 0
+    assert "installed myskill" in capsys.readouterr().out
+    assert (tmp_path / "out" / "myskill" / "SKILL.md").is_file()
+
+
+def test_skills_install_bad_source_spec(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["skills", "install", "x", "--from", "weird:thing"])
+    assert rc == 1
+    assert "must be" in capsys.readouterr().err

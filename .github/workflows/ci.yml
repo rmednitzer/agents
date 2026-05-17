@@ -25,6 +25,8 @@ jobs:
       - run: uv sync --all-extras
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+      # BL-152: REUSE 3.x compliance gate (REUSE.toml + LICENSES/).
+      - run: uvx reuse lint
 
   type-check:
     runs-on: ubuntu-latest
@@ -57,6 +59,25 @@ jobs:
           name: coverage-xml-${{ matrix.python }}
           path: coverage.xml
 
+  # BL-150: a BLOCKING dependency-audit gate. Dependabot proposes
+  # updates but is not a gate; this fails CI when a locked dependency
+  # has a known advisory. The lockfile (uv.lock) is exported to a pinned
+  # requirements set and audited with pip-audit, so the gate matches
+  # exactly what is installed, not floating ranges.
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - name: Export the locked dependency set
+        run: uv export --frozen --all-extras --no-emit-project --format requirements-txt -o audit-requirements.txt
+      - name: Audit locked dependencies for known advisories
+        run: uvx pip-audit --strict --progress-spinner=off -r audit-requirements.txt
+
   # Stable aggregate gate. Its name never changes with the test matrix,
   # so branch protection can require this one context instead of the
   # matrix-expanded "test (3.x)" names (whose context names change when
@@ -64,12 +85,13 @@ jobs:
   ci-success:
     name: ci-success
     if: always()
-    needs: [lint, type-check, test]
+    needs: [lint, type-check, test, dependency-audit]
     runs-on: ubuntu-latest
     steps:
       - name: Require all CI jobs to have succeeded
         run: |
-          echo "lint=${{ needs.lint.result }} type-check=${{ needs.type-check.result }} test=${{ needs.test.result }}"
+          echo "lint=${{ needs.lint.result }} type-check=${{ needs.type-check.result }} test=${{ needs.test.result }} dependency-audit=${{ needs.dependency-audit.result }}"
           [ "${{ needs.lint.result }}" = "success" ] \
             && [ "${{ needs.type-check.result }}" = "success" ] \
-            && [ "${{ needs.test.result }}" = "success" ]
+            && [ "${{ needs.test.result }}" = "success" ] \
+            && [ "${{ needs.dependency-audit.result }}" = "success" ]

@@ -16,7 +16,7 @@ Targets:
 In scope:
 - Harness contract violations (sandbox escape, action budget bypass, tool-use authorization bypass, including governance/budget bypass via MCP-exposed tools).
 - Memory isolation failures (cross-namespace read or write, lineage tampering), per-key ACL bypass, and encryption-at-rest weaknesses in `EncryptedStore`.
-- Skill loading vulnerabilities (path traversal via skill name or archive member, code execution via crafted SKILL.md or bundled assets) and out-of-tree workload loading.
+- Skill loading vulnerabilities (path traversal via skill name or archive member, symlink dereference via a crafted local mirror or a non-file archive member, code execution via crafted SKILL.md or bundled assets) and out-of-tree workload loading (filesystem path or installed-package entry point).
 
 Out of scope:
 - Issues in upstream dependencies (report upstream first; reference here once a fix lands). Dependencies are lockfile-pinned (`uv.lock`); Dependabot proposes `pip` and `github-actions` updates.
@@ -24,10 +24,12 @@ Out of scope:
 
 ## Hardening posture
 
-- Skill install (`skills.sources.GitHubSkillSource`): archive download, member count, per-member size, and total uncompressed size are bounded; an optional `sha256` verifies the tarball. A branch `ref` is mutable; pin an immutable ref (commit SHA or release tag) plus a checksum for tamper-evident installs.
+- Skill install (`GitHubSkillSource`, `MarketplaceSkillSource`): one hardened path bounds the archive download, member count, per-member size, and total uncompressed size; a non-file member inside the wanted subtree is rejected (not silently skipped); each member read is clamped to the remaining budget. An optional `sha256` and a `SignatureVerifier` hook (`signature` / `verify_signature`) verify the tarball. A branch `ref` is mutable; pin an immutable ref (commit SHA or release tag) plus a checksum (or a signature) for tamper-evident installs. `LocalSkillSource` copies regular files only and refuses a symlink anywhere in the subtree (a crafted mirror cannot exfiltrate a host secret into the bundle).
+- Governance enforcement: a SOFT governance predicate now produces a SOFT reject the runtime acts on (logs-and-continues, or with `soft_reject_as_error` surfaces a typed rejection), not a silent APPROVE; a HARD predicate still hard-rejects. Composition keeps the strictest severity on a predicate-name collision, so a reviewed obligation cannot be silently weakened.
+- Supply chain: a blocking dependency-audit gate (`pip-audit` over the exported lockfile) and a REUSE-compliance gate (`reuse lint`) run in CI; the `release` workflow emits a CycloneDX SBOM and attests build provenance. GitHub Actions are tag-pinned (commit-SHA pinning is the tracked remainder, `BL-150`).
 - Skill contracts: `install_skill` does not execute a bundled `contract.py` by default (`allow_contract=False`). This gate is defence in depth, not a sandbox; an opted-in contract still runs arbitrary Python. See [LIMITATIONS.md](./LIMITATIONS.md) L3 and ADR 0008.
 - Event content: wrap a sink in `harness.RedactingSink` to scrub secrets and PII before events reach a sink. `Redactor` walks every event field (not only dict-valued ones); it is a structural heuristic, not a guarantee, so a secret hidden in an unrecognised shape can still pass.
-- Out-of-tree workloads: `load_workload_from_path` (and `agents run` on a path) executes the bundle's `contract.py` and `__main__.py`. A workload is trusted code by contract; there is no skill-install-style gate. Only load directories you trust. See [LIMITATIONS.md](./LIMITATIONS.md) L14.
+- Out-of-tree workloads: `load_workload_from_path`, `load_workload_from_entry_point`, and `agents run` execute the bundle's `contract.py` and `__main__.py`. A workload is trusted code by contract; there is no skill-install-style gate. Only load directories / installed-package entry points you trust. See [LIMITATIONS.md](./LIMITATIONS.md) L14.
 - Wall-clock budget: enforced at await boundaries; a fully blocking, non-cooperative tool is not preempted (`LIMITATIONS.md` L11). Do not rely on `max_wall_clock_seconds` to bound untrusted synchronous tool code.
 - Static analysis: CodeQL runs on push, pull request, and weekly.
 

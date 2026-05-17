@@ -25,6 +25,7 @@ __all__ = [
     "ContractCompleted",
     "ContractStarted",
     "DispatchObserved",
+    "DriftThresholdCrossed",
     "GovernanceViolated",
     "HarnessEvent",
     "InvariantViolated",
@@ -184,3 +185,19 @@ class DispatchObserved(HarnessEvent):
     matched: int
     top_confidence: float
     fell_back: bool
+
+
+class DriftThresholdCrossed(HarnessEvent):
+    """A predicate's distributional drift crossed the alert threshold (BL-101).
+
+    Emitted from the enforcement loop when a caller supplied a
+    DriftMonitor with a snapshotted reference and the live
+    Jensen-Shannon divergence for ``predicate`` exceeds ``threshold``.
+    ``stage`` is which obligation the predicate belonged to.
+    """
+
+    kind: Literal["drift_threshold_crossed"] = "drift_threshold_crossed"
+    predicate: str
+    stage: str
+    divergence: float
+    threshold: float

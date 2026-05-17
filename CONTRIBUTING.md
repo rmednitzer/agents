@@ -24,9 +24,21 @@ you may submit the work under the project license.
 ## Licensing
 
 Contributions are licensed under Apache-2.0 (see [LICENSE](./LICENSE)
-and [NOTICE](./NOTICE)). New files should carry an
-`SPDX-License-Identifier: Apache-2.0` header where the file type
-supports comments. A full REUSE conversion is tracked as `BL-152`.
+and [NOTICE](./NOTICE)). The repository is REUSE 3.x compliant: a
+top-level `REUSE.toml` declares copyright and license for the whole
+tree (and `LICENSES/Apache-2.0.txt` holds the license text), so a new
+file is covered automatically and needs no per-file header. CI gates
+this with `reuse lint` (`BL-152`).
+
+<!-- REUSE-IgnoreStart -->
+A per-file `SPDX-License-Identifier: Apache-2.0` header is still
+welcome where the file type supports comments (the `REUSE.toml`
+`precedence = "aggregate"` lets an inline header coexist with the
+tree-wide default), but it is no longer required.
+<!-- REUSE-IgnoreEnd -->
+
+Per-commit DCO sign-off is required; see "Commit messages and
+sign-off".
 
 ## PR description
 

@@ -40,6 +40,7 @@ import time
 import uuid
 import warnings
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
@@ -51,7 +52,39 @@ from harness.guard import GuardDecision, ToolGuard
 from harness.interruption import ApprovalInterruption, ResumableState
 from harness.mcp import MCPServerSpec, MCPTransport
 
-__all__ = ["PydanticAIRuntime", "Runtime"]
+__all__ = ["PydanticAIRuntime", "RetryPolicy", "Runtime"]
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    """Bounded retry with exponential backoff for the runtime call (BL-136).
+
+    Opt-in: the default ``PydanticAIRuntime`` has no policy and behaves
+    exactly as before (one attempt). A policy only retries an exception
+    whose type is in ``retry_on`` (a transient framework/provider error
+    the caller classifies). Contract-terminal outcomes are never
+    retried: GovernanceViolation, ApprovalDenied, BudgetExceeded, the
+    internal approval pause, and cancellation propagate on the first
+    occurrence regardless of ``retry_on``. Budget counters are shared
+    across attempts (the tracker is constructed once by the harness), so
+    retries cannot be used to evade a budget.
+
+    ``circuit_breaker_threshold`` trips a per-instance breaker after that
+    many consecutive fully-failed calls (a call that exhausted its
+    retries or failed with retries disabled): while tripped a call makes
+    a single attempt with no backoff loop, and the breaker resets on the
+    first success.
+    """
+
+    max_retries: int = 0
+    backoff_base_seconds: float = 0.5
+    backoff_max_seconds: float = 30.0
+    retry_on: tuple[type[BaseException], ...] = ()
+    circuit_breaker_threshold: int | None = None
+
+    def delay_for(self, attempt: int) -> float:
+        """Backoff before retry ``attempt`` (1-based): base * 2**(n-1)."""
+        return min(self.backoff_base_seconds * (2.0 ** (attempt - 1)), self.backoff_max_seconds)
 
 
 @runtime_checkable
@@ -142,10 +175,14 @@ class _GuardState:
     it back deterministically after the run unwinds.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, soft_reject_as_error: bool = False) -> None:
         self.pause: ApprovalInterruption | None = None
         self.governance: GovernanceViolation | None = None
         self.denied: ApprovalDeniedError | None = None
+        # BL-137: when set, a soft governance reject is raised as a
+        # framework tool-retry error (a typed rejection the model sees
+        # as an error) instead of returned as the tool's string value.
+        self.soft_reject_as_error = soft_reject_as_error
 
 
 def _usage(result: Any) -> Any:
@@ -209,7 +246,18 @@ async def _gate(
             if response.severity == Severity.HARD:
                 state.governance = GovernanceViolation(response.reason or "governance", name)
                 raise state.governance
-            return f"[blocked: {response.reason or 'governance predicate failed'}]"
+            reason = response.reason or "governance predicate failed"
+            if state.soft_reject_as_error:
+                # BL-137: surface a typed rejection the model handles as
+                # a tool error, not apparent tool output. ModelRetry is
+                # PydanticAI's structured tool-error channel; fall back
+                # to the L1 string if the symbol is unavailable.
+                try:
+                    from pydantic_ai import ModelRetry
+                except ImportError:  # pragma: no cover - env dependent
+                    return f"[blocked: {reason}]"
+                raise ModelRetry(f"blocked by governance: {reason}")
+            return f"[blocked: {reason}]"
         if response.decision == GuardDecision.REQUIRE_APPROVAL:
             decided = _resolved_decision(resume, name, used_approvals)
             if decided is None:
@@ -345,10 +393,15 @@ class PydanticAIRuntime:
         *,
         output_type: Any = str,
         instructions: str | None = None,
+        retry_policy: RetryPolicy | None = None,
+        soft_reject_as_error: bool = False,
     ) -> None:
         self.model = model
         self._output_type = output_type
         self._instructions = instructions
+        self._retry_policy = retry_policy
+        self._soft_reject_as_error = soft_reject_as_error
+        self._consecutive_failures = 0
 
     def _build_agent(
         self,
@@ -413,37 +466,67 @@ class PydanticAIRuntime:
         guard: ToolGuard | None = None,
         resume: ResumableState | None = None,
     ) -> Any:
-        state = _GuardState()
-        used_approvals: set[str] = set()
-        agent = self._build_agent(
-            tools,
-            mcp_servers,
-            guard=guard,
-            budget=budget,
-            resume=resume,
-            state=state,
-            used_approvals=used_approvals,
+        state = _GuardState(soft_reject_as_error=self._soft_reject_as_error)
+        policy = self._retry_policy
+        tripped = (
+            policy is not None
+            and policy.circuit_breaker_threshold is not None
+            and self._consecutive_failures >= policy.circuit_breaker_threshold
         )
+        attempt = 0
+        while True:
+            used_approvals: set[str] = set()
+            agent = self._build_agent(
+                tools,
+                mcp_servers,
+                guard=guard,
+                budget=budget,
+                resume=resume,
+                state=state,
+                used_approvals=used_approvals,
+            )
 
-        async def _invoke() -> Any:
-            async with agent:
-                return await agent.run(prompt, deps=deps)
+            async def _invoke(agent: Any = agent) -> Any:
+                async with agent:
+                    return await agent.run(prompt, deps=deps)
 
-        try:
-            result = await self._with_watchdog(_invoke(), budget)
-        except _ApprovalPause:
-            return self._resumable(state, prompt)
-        except (GovernanceViolation, ApprovalDeniedError):
-            raise
-        except BaseException:
-            # PydanticAI may have reshaped the in-tool exception.
-            if state.pause is not None:
+            try:
+                result = await self._with_watchdog(_invoke(), budget)
+            except _ApprovalPause:
                 return self._resumable(state, prompt)
-            if state.governance is not None:
-                raise state.governance from None
-            if state.denied is not None:
-                raise state.denied from None
-            raise
+            except (GovernanceViolation, ApprovalDeniedError):
+                raise
+            except (asyncio.CancelledError, BudgetExceeded):
+                # A wall-clock cancellation or a budget overflow is
+                # authoritative and must not be reinterpreted as an
+                # approval pause / governance reject just because guard
+                # state was also set when the watchdog fired mid-tool.
+                # Never retried (a budget is not transient).
+                raise
+            except BaseException as exc:
+                # PydanticAI may have reshaped the in-tool exception.
+                if state.pause is not None:
+                    return self._resumable(state, prompt)
+                if state.governance is not None:
+                    raise state.governance from None
+                if state.denied is not None:
+                    raise state.denied from None
+                if (
+                    policy is not None
+                    and not tripped
+                    and policy.retry_on
+                    and isinstance(exc, policy.retry_on)
+                    and attempt < policy.max_retries
+                ):
+                    attempt += 1
+                    await asyncio.sleep(policy.delay_for(attempt))
+                    continue
+                if policy is not None and policy.circuit_breaker_threshold is not None:
+                    self._consecutive_failures += 1
+                raise
+            if policy is not None and policy.circuit_breaker_threshold is not None:
+                self._consecutive_failures = 0
+            break
 
         if state.pause is not None:
             return self._resumable(state, prompt)
@@ -510,7 +593,7 @@ class PydanticAIRuntime:
         guard: ToolGuard | None = None,
         resume: ResumableState | None = None,
     ) -> AsyncIterator[Any]:
-        state = _GuardState()
+        state = _GuardState(soft_reject_as_error=self._soft_reject_as_error)
         agent = self._build_agent(
             tools,
             mcp_servers,

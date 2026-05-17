@@ -24,6 +24,17 @@ _REQUIRED_BASE_FIELDS = frozenset(
     {"workload", "contract", "contract_version", "trace_id", "span_id"}
 )
 
+# Per-event fields this module sets itself. If base_event_fields also
+# carried one of these, the ``**self._base`` spread at emit time would
+# raise "got multiple values for keyword argument" mid-run -- the exact
+# failure the constructor-time validation exists to prevent. ``namespace``
+# is the realistic collision (a natural correlation key a caller might
+# put in base fields), so reject these up front, like the missing-key
+# check.
+_RESERVED_BASE_FIELDS = frozenset(
+    {"namespace", "key", "kind", "timestamp", "hit", "value_bytes", "existed", "ttl_seconds"}
+)
+
 
 class MemoryAudit:
     """Holds the sink + base fields and emits memory operation events."""
@@ -44,6 +55,13 @@ class MemoryAudit:
                     "base_event_fields missing required keys: "
                     f"{sorted(missing)} (a partial dict would fail mid-run "
                     "on the first emitted event)"
+                )
+            reserved = _RESERVED_BASE_FIELDS & base.keys()
+            if reserved:
+                raise ValueError(
+                    "base_event_fields must not carry per-event keys "
+                    f"{sorted(reserved)} (they are set per emit; passing "
+                    "them would fail mid-run on the first emitted event)"
                 )
         self._namespace = namespace
         self._sink: EventSink = sink if sink is not None else NullSink()
