@@ -40,7 +40,8 @@ def _balanced_spans(text: str) -> list[tuple[int, int]]:
     slices, so a nested ``[[[...]]]`` model blob was O(n^2) in time and
     memory (a decompression-bomb analogue on untrusted dispatcher
     input); index pairs are O(1) each, and ``first_json_array`` slices
-    at most ``_MAX_CANDIDATES`` of them lazily.
+    only spans within ``_MAX_CANDIDATE_BYTES`` / a cumulative
+    ``_MAX_TOTAL_PARSE_BYTES`` budget, lazily.
 
     The stack (not a flat depth counter) is what lets an array nested
     inside an *unmatched* prose ``[`` still be recovered: the inner

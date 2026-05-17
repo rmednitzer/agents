@@ -123,6 +123,25 @@ def test_marketplace_source_preexisting_symlink_does_not_escape(
     assert not (dest / "tool").is_symlink()
 
 
+def test_preexisting_regular_file_is_cleared(tmp_path: Path, monkeypatch: Any) -> None:
+    """A regular file at dest/<name> must be cleared (rmtree would
+    raise NotADirectoryError and break the 'clear' contract)."""
+    dest = tmp_path / "installed"
+    dest.mkdir()
+    (dest / "cool").write_text("stale file, not a dir")
+
+    archive = _make_tar_gz(
+        {"skills-main/skills/cool/SKILL.md": _SKILL_MD.format(n="cool").encode()}
+    )
+    _patch(monkeypatch, archive)
+    src = GitHubSkillSource(repo="anthropics/skills", ref="main", path_prefix="skills")
+    skill = install_skill(src, "cool", dest)
+
+    assert skill.name == "cool"
+    assert (dest / "cool").is_dir()
+    assert (dest / "cool" / "SKILL.md").is_file()
+
+
 # --- BL-173: nested-array linearity + RecursionError safety ------------
 
 

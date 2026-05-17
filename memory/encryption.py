@@ -113,12 +113,20 @@ def _validate_key_bytes(key: bytes) -> bytes:
 
 
 def _decode_key(raw: bytes, encoding: _KeyEncoding) -> bytes:
+    # A key from an env var / file is config at a trust boundary:
+    # surface a clear ValueError naming the expected encoding rather
+    # than a low-level binascii/UnicodeDecodeError, matching the
+    # controlled errors EnvKeyProvider/FileKeyProvider already raise.
     if encoding == "raw":
         return _validate_key_bytes(raw)
-    text = raw.decode().strip()
-    if encoding == "hex":
-        return _validate_key_bytes(bytes.fromhex(text))
-    return _validate_key_bytes(base64.b64decode(text))
+    try:
+        text = raw.decode().strip()
+        decoded = (
+            bytes.fromhex(text) if encoding == "hex" else base64.b64decode(text, validate=True)
+        )
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ValueError(f"key is not valid {encoding}: {exc}") from exc
+    return _validate_key_bytes(decoded)
 
 
 class StaticKeyProvider:

@@ -84,6 +84,10 @@ modules / side-by-side Protocols; defaults reproduce prior behaviour).
   and `approval_denied` outcomes instead of mis-scoring/aborting;
   `wrap_acl` forwards `VersionedMemoryStore`; `InMemorySemanticStore`
   query is safe under concurrent vector removal.
+- `BL-184`: review-polish trio: `_balanced_spans` docstring matches the
+  current byte-budget constants; `_prepare_install_dir` clears a
+  pre-existing regular file (not only a directory); `_decode_key`
+  surfaces a clear `ValueError` for a malformed base64/hex/utf-8 key.
 
 ### Documentation
 

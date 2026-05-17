@@ -202,9 +202,14 @@ def _prepare_install_dir(dest: Path, name: str) -> Path:
     """
     raw = dest / name
     if raw.is_symlink():
+        # Unlink the link itself; never traverse it (the escape hole).
         raw.unlink()
-    elif raw.exists():
+    elif raw.is_dir():
         shutil.rmtree(raw)
+    elif raw.exists():
+        # A regular (or other non-dir) file: unlink it. rmtree would
+        # raise NotADirectoryError and break the "clear" contract.
+        raw.unlink()
     target = raw.resolve()
     dest_resolved = dest.resolve()
     if target != dest_resolved / name or dest_resolved not in target.parents:

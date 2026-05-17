@@ -62,6 +62,21 @@ def test_env_key_provider_rejects_wrong_length(
         EnvKeyProvider().key_for("ns")
 
 
+def test_env_key_provider_bad_base64_is_clear_value_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTS_MEMORY_KEY", "not!valid!base64!!!")
+    with pytest.raises(ValueError, match="not valid base64"):
+        EnvKeyProvider().key_for("ns")
+
+
+def test_file_key_provider_bad_hex_is_clear_value_error(tmp_path: Path) -> None:
+    f = tmp_path / "k.hex"
+    f.write_text("zzzz-not-hex")
+    with pytest.raises(ValueError, match="not valid hex"):
+        FileKeyProvider(f, encoding="hex").key_for("ns")
+
+
 # --- FileKeyProvider --------------------------------------------------
 
 
