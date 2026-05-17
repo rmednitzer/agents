@@ -130,3 +130,16 @@ async def test_boolean_confidence_is_rejected(tmp_path: Path) -> None:
     response = json.dumps([{"skill_name": "real", "confidence": True, "rationale": ""}])
     d = SkillBasedDispatcher(r, "router", _StubRuntime(response))
     assert await d.dispatch("q") == []
+
+
+@pytest.mark.asyncio
+async def test_non_finite_confidence_is_rejected(tmp_path: Path) -> None:
+    # NaN/Infinity confidence must not clamp to a 1.0 match.
+    # (regression: Copilot review on PR #25)
+    _write_skill(tmp_path, "router", "I route.")
+    _write_skill(tmp_path, "real")
+    r = SkillRegistry.from_directory(tmp_path)
+    for token in ("NaN", "Infinity", "-Infinity"):
+        response = f'[{{"skill_name": "real", "confidence": {token}, "rationale": ""}}]'
+        d = SkillBasedDispatcher(r, "router", _StubRuntime(response))
+        assert await d.dispatch("q") == []

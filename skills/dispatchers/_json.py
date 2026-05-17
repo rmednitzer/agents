@@ -32,6 +32,16 @@ def _balanced_spans(text: str) -> list[str]:
     in_str = False
     esc = False
     for idx, ch in enumerate(text):
+        if depth == 0:
+            # Outside any array, only an opening bracket matters. Quote
+            # state is deliberately NOT tracked here: an unbalanced '"'
+            # in leading prose must not desync parsing of a later array
+            # (the pre-rewrite per-candidate scan reset quote state at
+            # each '[', so it tolerated this; preserve that).
+            if ch == "[":
+                start = idx
+                depth = 1
+            continue
         if in_str:
             if esc:
                 esc = False
@@ -43,13 +53,13 @@ def _balanced_spans(text: str) -> list[str]:
         if ch == '"':
             in_str = True
         elif ch == "[":
-            if depth == 0:
-                start = idx
             depth += 1
-        elif ch == "]" and depth > 0:
+        elif ch == "]":
             depth -= 1
             if depth == 0:
                 spans.append(text[start : idx + 1])
+                in_str = False
+                esc = False
     return spans
 
 

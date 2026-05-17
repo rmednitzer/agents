@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from harness.runtime import Runtime
@@ -93,7 +94,11 @@ class LLMDispatcher:
                 not isinstance(skill_name, str)
                 or isinstance(confidence, bool)
                 or not isinstance(confidence, int | float)
+                or not math.isfinite(confidence)
             ):
+                # json.loads accepts NaN/Infinity; an unguarded NaN
+                # survives max(0.0, min(1.0, nan)) as 1.0, the same
+                # clamp trap as the cosine guard. Reject non-finite.
                 continue
             if self._registry.get(skill_name) is None:
                 continue

@@ -127,3 +127,16 @@ async def test_boolean_confidence_is_rejected() -> None:
     response = json.dumps([{"skill_name": "foo", "confidence": True, "rationale": ""}])
     d = LLMDispatcher(r, _StubRuntime(response))
     assert await d.dispatch("anything") == []
+
+
+@pytest.mark.asyncio
+async def test_non_finite_confidence_is_rejected() -> None:
+    # json.loads accepts NaN/Infinity; max(0.0, min(1.0, nan)) is 1.0,
+    # so a non-finite confidence must be skipped, not become a top
+    # match. (regression: Copilot review on PR #25)
+    r = SkillRegistry()
+    r.add(_skill("foo"))
+    for token in ("NaN", "Infinity", "-Infinity"):
+        response = f'[{{"skill_name": "foo", "confidence": {token}, "rationale": ""}}]'
+        d = LLMDispatcher(r, _StubRuntime(response))
+        assert await d.dispatch("anything") == []
