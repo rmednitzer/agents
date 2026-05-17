@@ -21,6 +21,7 @@ from evaluation.metrics import hit_rank, mean_reciprocal_rank, precision_at_1
 from harness.contract import Contract
 from harness.enforcement import run_under_contract
 from harness.errors import (
+    ApprovalDenied,
     BudgetExceeded,
     GovernanceViolation,
     InvariantViolation,
@@ -130,6 +131,10 @@ _EXC_LABEL: tuple[tuple[type[Exception], TrajectoryOutcome], ...] = (
     (PostconditionViolation, "postcondition"),
     (GovernanceViolation, "governance"),
     (BudgetExceeded, "budget"),
+    # run_under_contract also raises ApprovalDenied when a required
+    # approval is rejected; without this it fell through and re-raised,
+    # aborting the whole evaluation instead of scoring the case.
+    (ApprovalDenied, "approval_denied"),
 )
 
 

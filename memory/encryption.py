@@ -26,6 +26,18 @@ few lines satisfying that Protocol with its SDK imported lazily, kept
 out-of-tree by the same no-vendor-binding stance as ADR 0001 (mirrors
 ``HashingEmbeddingProvider``, BL-110). ``RotatingKeyProvider`` is the
 in-tree reference implementation.
+
+Migration (BL-181): a store sealed by a plain ``KeyProvider`` holds
+bare ``nonce+ct`` with no envelope to distinguish it from a versioned
+value. When a ``VersionedKeyProvider`` is adopted on an existing store,
+a value that does not decrypt as the envelope is retried as legacy
+``nonce+ct`` with the provider's CURRENT key. AES-GCM authentication
+makes a wrong key or format fail (it never returns a wrong plaintext);
+if both interpretations fail the original, more informative error is
+raised. The migration contract: seed the ring with the existing key as
+the current version (rotate later, once values have been rewritten);
+data still under a key the provider has rotated away from is not
+reachable for legacy reads (``LIMITATIONS.md`` L16).
 """
 
 from __future__ import annotations
@@ -296,16 +308,14 @@ class EncryptedStore:
         ct = bytes(aes.encrypt(nonce, value, aad))
         return bytes([len(kid)]) + kid + nonce + ct
 
-    def _unseal(self, key: str, sealed: bytes | None) -> bytes | None:
-        if sealed is None:
-            return None
-        aad = self._aad(key)
-        if not self._versioned:
-            nonce, ct = sealed[:_NONCE_BYTES], sealed[_NONCE_BYTES:]
-            return bytes(self._aes.decrypt(nonce, ct, aad))
-        # A stored value is data from a backend (a trust boundary): a
-        # truncated/corrupt envelope must raise a controlled ValueError,
-        # not an uncontrolled IndexError/UnicodeDecodeError.
+    def _decrypt_envelope(self, sealed: bytes, aad: bytes) -> bytes:
+        """Decrypt the versioned [len][key-id][nonce][ct] envelope.
+
+        Raises ValueError (malformed/truncated/bad-id), KeyError (the
+        envelope's key version is not in the provider), or InvalidTag
+        (authentication failure) so the caller can decide whether to
+        try the legacy fallback.
+        """
         if not sealed:
             raise ValueError("malformed encrypted envelope: empty value")
         n = sealed[0]
@@ -317,8 +327,40 @@ class EncryptedStore:
             raise ValueError("malformed encrypted envelope: bad key id") from exc
         body = sealed[1 + n :]
         nonce, ct = body[:_NONCE_BYTES], body[_NONCE_BYTES:]
-        aes = self._aes_for(key_id)
-        return bytes(aes.decrypt(nonce, ct, aad))
+        return bytes(self._aes_for(key_id).decrypt(nonce, ct, aad))
+
+    def _unseal(self, key: str, sealed: bytes | None) -> bytes | None:
+        if sealed is None:
+            return None
+        aad = self._aad(key)
+        if not self._versioned:
+            nonce, ct = sealed[:_NONCE_BYTES], sealed[_NONCE_BYTES:]
+            return bytes(self._aes.decrypt(nonce, ct, aad))
+        from cryptography.exceptions import InvalidTag
+
+        try:
+            return self._decrypt_envelope(sealed, aad)
+        except (ValueError, KeyError, InvalidTag) as env_err:
+            # Authenticated legacy fallback (BL-181): a store previously
+            # sealed by a plain KeyProvider holds bare nonce+ct, with no
+            # envelope to distinguish it. Retry as legacy with the
+            # versioned provider's CURRENT key. AES-GCM authentication
+            # makes a wrong key/format fail (InvalidTag), so this never
+            # returns a wrong plaintext; if both interpretations fail
+            # the original (more informative, e.g. unknown-key-version)
+            # error is raised. Migration contract: seed the ring with
+            # the existing key as the current version, rotate later
+            # (memory/README.md, LIMITATIONS.md L16).
+            cur_id, cur_bytes = self._vkp.current_key(self._ns)
+            try:
+                nonce, ct = sealed[:_NONCE_BYTES], sealed[_NONCE_BYTES:]
+                return bytes(self._aes_cached(cur_id, cur_bytes).decrypt(nonce, ct, aad))
+            except (InvalidTag, ValueError):
+                # InvalidTag: wrong key/not legacy. ValueError: the
+                # bytes are too short for even a nonce (a truly
+                # malformed value). Either way the original, more
+                # informative envelope error is the right one to raise.
+                raise env_err from None
 
 
 # --- Extension-Protocol forwarding (BL-156) ---------------------------

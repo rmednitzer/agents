@@ -114,10 +114,11 @@ def first_json_array(text: str) -> str | None:
     budget = _MAX_TOTAL_PARSE_BYTES
     for opened, end in spans:
         size = end - opened
-        if size > _MAX_CANDIDATE_BYTES:
+        if size > _MAX_CANDIDATE_BYTES or budget < size:
+            # Skip (do not abort): spans are in opening order, not size
+            # order, so a later smaller span can still fit the remaining
+            # budget and hold the valid array. Both checks are O(1).
             continue
-        if budget < size:
-            break
         budget -= size
         candidate = text[opened:end]
         try:

@@ -172,3 +172,31 @@ async def test_evaluate_trajectory_classifies_paused_run() -> None:
     assert by_name["want-complete"].actual == "paused"
     assert not by_name["want-complete"].passed
     assert report.accuracy == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_trajectory_classifies_approval_denied() -> None:
+    """run_under_contract raises ApprovalDenied; the harness must score
+    it, not fall through and abort the whole evaluation (Codex P2)."""
+    from harness.errors import ApprovalDenied
+
+    class _DenyStub:
+        name = "deny"
+
+        async def run(self, prompt: str, **kw: Any) -> Any:
+            raise ApprovalDenied("dangerous_tool", "rejected by reviewer")
+
+        def stream(self, prompt: str, **kw: Any) -> AsyncIterator[Any]:
+            raise NotImplementedError
+
+    contract: Contract[_In, _Out] = Contract(name="c", version="1")
+    cases = [
+        TrajectoryCase(name="denied", input_payload={"ok": True}, expected="approval_denied"),
+        TrajectoryCase(name="want-complete", input_payload={"ok": True}, expected="completed"),
+    ]
+    report = await evaluate_trajectory(_DenyStub(), contract, _In, _Out, cases)
+    by_name = {r.name: r for r in report.results}
+    assert by_name["denied"].actual == "approval_denied"
+    assert by_name["denied"].passed
+    assert not by_name["want-complete"].passed
+    assert report.accuracy == pytest.approx(0.5)

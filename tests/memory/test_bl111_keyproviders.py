@@ -207,3 +207,52 @@ async def test_seal_does_not_double_lookup_current_key() -> None:
     # A read of a current-key value hits the _seal-populated cache too.
     assert await store.read("k") == b"payload"
     assert kp.key_calls == 0
+
+
+# --- BL-181: authenticated legacy fallback ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_legacy_plain_data_readable_via_versioned_current_key() -> None:
+    """A store sealed by a plain KeyProvider is readable after adopting
+    a VersionedKeyProvider whose current version is the existing key
+    (the documented migration contract)."""
+    ns = _inner()
+    legacy_backend = ns  # same InMemoryStore instance carries the bytes
+    legacy = EncryptedStore(legacy_backend, StaticKeyProvider(_K1))
+    await legacy.write("k", b"pre-rotation-secret")
+
+    # Adopt rotation: ring seeded with the existing key as current.
+    versioned = EncryptedStore(legacy_backend, RotatingKeyProvider({"v1": _K1}, "v1"))
+    assert await versioned.read("k") == b"pre-rotation-secret"
+    # New writes use the envelope; old value stays readable.
+    await versioned.write("k2", b"post")
+    assert await versioned.read("k2") == b"post"
+    assert await versioned.read("k") == b"pre-rotation-secret"
+
+
+@pytest.mark.asyncio
+async def test_legacy_fallback_is_authenticated_no_silent_wrong_value() -> None:
+    """A wrong current key cannot silently mis-read legacy data: AES-GCM
+    authentication fails and the controlled error is raised."""
+    backend = _inner()
+    await EncryptedStore(backend, StaticKeyProvider(_K1)).write("k", b"secret")
+    wrong = EncryptedStore(backend, RotatingKeyProvider({"v1": _K2}, "v1"))
+    # The wrong key fails GCM auth; the controlled envelope error
+    # (ValueError/KeyError) is re-raised, never a wrong plaintext.
+    with pytest.raises((ValueError, KeyError)) as exc:
+        await wrong.read("k")
+    assert b"secret" not in str(exc.value).encode()
+
+
+@pytest.mark.asyncio
+async def test_versioned_envelope_still_preferred_over_legacy() -> None:
+    """A genuine versioned envelope decrypts via the envelope path; the
+    legacy fallback only triggers when the envelope path fails."""
+    backend = _inner()
+    store = EncryptedStore(backend, RotatingKeyProvider({"v1": _K1}, "v1"))
+    await store.write("k", b"enveloped")
+    raw = await backend.read("k")
+    assert raw is not None
+    assert raw[1 : 1 + raw[0]] == b"v1"  # it is an envelope
+    assert await store.read("k") == b"enveloped"

@@ -71,6 +71,20 @@ modules / side-by-side Protocols; defaults reproduce prior behaviour).
   the final attempt only (PydanticAI raises without partial usage on a
   failed run); the gap is tracked. (`BL-179`, `LIMITATIONS.md` L15)
 
+### PR #28 review follow-ups
+
+- `BL-181`: authenticated legacy-ciphertext fallback so adopting a
+  `VersionedKeyProvider` on a plain-provider store stays readable
+  (AES-GCM authenticated; migration contract in `LIMITATIONS.md` L16).
+- `BL-182`: `first_json_array` bounds parse *work* (oversized-span
+  skip + cumulative byte budget, `continue` not `break`), not candidate
+  count, so a valid array after many leading bracket fragments is found
+  while the BL-173 DoS bound holds.
+- `BL-183`: `evaluate_trajectory` classifies `paused` (ResumableState)
+  and `approval_denied` outcomes instead of mis-scoring/aborting;
+  `wrap_acl` forwards `VersionedMemoryStore`; `InMemorySemanticStore`
+  query is safe under concurrent vector removal.
+
 ### Documentation
 
 - ADR 0011; `docs/adr/README.md`; backlog statuses (`BL-111`, `BL-122`,

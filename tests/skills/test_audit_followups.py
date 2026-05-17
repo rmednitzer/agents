@@ -165,6 +165,22 @@ def test_valid_array_after_many_small_fragments_is_found() -> None:
     assert json.loads(result) == [{"skill_name": "deep"}]
 
 
+def test_budget_skips_oversized_then_finds_later_small_array(
+    monkeypatch: Any,
+) -> None:
+    """A candidate too big for the remaining budget is skipped, not a
+    hard loop break: a later smaller valid array (opening-order, not
+    size-order) is still found (Codex P2 on the budget logic)."""
+    import skills.dispatchers._json as J
+
+    monkeypatch.setattr(J, "_MAX_TOTAL_PARSE_BYTES", 100)
+    big_non_json = "[" + "z" * 300 + "]"  # 302 bytes, not valid JSON
+    payload = big_non_json + ' [{"skill_name": "late"}]'
+    result = J.first_json_array(payload)
+    assert result is not None
+    assert json.loads(result) == [{"skill_name": "late"}]
+
+
 def test_first_json_array_never_raises_recursion_error() -> None:
     """A pathologically deep array degrades to the documented fallback,
     it does not let RecursionError escape the extractor."""
@@ -189,7 +205,13 @@ def test_deep_nesting_surfaces_dispatch_error() -> None:
         name = "deep"
 
         async def run(self, prompt: str, **kwargs: Any) -> Any:
-            return "[" * 40_000 + "1" + "]" * 40_000
+            # No parseable inner array (``x`` is invalid JSON at every
+            # depth): the small inner spans fail json.loads, the huge
+            # ones are size-skipped, so first_json_array returns the
+            # deep fallback span and the caller's json.loads hits
+            # RecursionError, which must surface as DispatchError, not
+            # escape.
+            return "[" * 40_000 + "x" + "]" * 40_000
 
         def stream(self, prompt: str, **kwargs: Any) -> AsyncIterator[Any]:
             raise NotImplementedError

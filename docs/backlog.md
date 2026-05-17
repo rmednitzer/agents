@@ -290,6 +290,17 @@ discipline; `BL-1xx` range. Resolution reference: ADR 0011 and branch
 - `BL-178` [resolved] [XS] `SQLiteStore.mset` / `mdelete` of an empty batch still ran `BEGIN IMMEDIATE` ... `COMMIT`, taking the database write lock to do nothing; an empty batch is now an early no-op (no behaviour change: an empty batch already produced no rows and no audit). (ADR 0004, ADR 0011)
 - `BL-179` [pending] [M] `RetryPolicy` charges token / step usage from the final attempt's `result.usage` only: PydanticAI raises without exposing partial usage on a failed `agent.run()`, so a retried run can exceed `max_tokens` / `max_steps` by the failed legs' usage (wall-clock is bounded end to end and tool-calls are fed live, so those dimensions still hold). The docstring is corrected; closing the gap needs upstream partial-usage on the exception path, the same upstream-dependent shape as `BL-114` / `BL-132`, so it is tracked, not faked. (ADR 0003, ADR 0011; `LIMITATIONS.md` L15)
 
+## PR #28 review follow-ups (ADR 0011)
+
+Findings from the Copilot / Codex automated reviews of the ADR 0011
+branch, fixed additively on the same branch with regression tests.
+Same conventions and ID discipline; resolution reference ADR 0011 and
+branch `claude/audit-and-docs-update-8ObHK`.
+
+- `BL-181` [resolved] [M] Adopting a `VersionedKeyProvider` on a store sealed by a plain `KeyProvider` made prior data unreadable (the versioned `_unseal` only parsed the envelope; the formats have no distinguishing marker). Delivered: an authenticated legacy fallback retries a non-envelope value as legacy `nonce+ct` with the current key; AES-GCM authentication guarantees no silent wrong value, and the original error surfaces if both interpretations fail. Migration contract documented (`LIMITATIONS.md` L16). (ADR 0004, ADR 0011)
+- `BL-182` [resolved] [S] `first_json_array` (BL-173) capped candidate *count* (64) and `break` on the first over-budget span, so a valid array after many small leading bracket fragments, or after a larger one, was wrongly rejected. The bound is now on parse *work*: an O(1) length skip of an oversized span plus a cumulative parsed-byte budget, `continue` (not `break`) so every small span in opening order is still tried. Keeps the DoS bound (the O(n^2) was per-candidate parse, now bounded). (ADR 0006, ADR 0011)
+- `BL-183` [resolved] [S] `evaluate_trajectory` (BL-130) scored an approval pause (a `ResumableState` return, no exception) as `completed`, inflating accuracy, and re-raised `ApprovalDenied` (aborting the whole run) because it was not in the outcome map. `TrajectoryOutcome` now includes `paused` and `approval_denied`, and both paths are classified. `wrap_acl` also now forwards `VersionedMemoryStore` (BL-156 truthful isinstance), and `InMemorySemanticStore.query_semantic` reads its vector via `.get()` so a concurrent write/delete cannot raise `KeyError`. (ADR 0002, ADR 0004, ADR 0006, ADR 0011)
+
 ## Sources consulted
 
 Primary sources cross-checked before the `BL-130`-`BL-153` edits.
