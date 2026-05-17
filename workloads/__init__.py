@@ -23,7 +23,12 @@ from workloads.errors import (
     WorkloadNotFound,
     WorkloadValidationError,
 )
-from workloads.loader import LoadedWorkload, load_workload, load_workload_from_path
+from workloads.loader import (
+    LoadedWorkload,
+    load_workload,
+    load_workload_from_entry_point,
+    load_workload_from_path,
+)
 from workloads.manifest import RuntimeSpec, WorkloadManifest
 
 __all__ = [
@@ -36,5 +41,6 @@ __all__ = [
     "WorkloadNotFound",
     "WorkloadValidationError",
     "load_workload",
+    "load_workload_from_entry_point",
     "load_workload_from_path",
 ]

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from harness.contract import Contract, Predicate
+from harness.contract import Contract, Predicate, Severity
 
 __all__ = ["compose_contracts"]
 
@@ -31,19 +31,36 @@ __all__ = ["compose_contracts"]
 def _intersect_by_name(
     groups: list[list[Predicate[Any]]],
 ) -> list[Predicate[Any]]:
-    """Predicates whose name appears in every group; first occurrence wins."""
+    """Predicates whose name appears in every group, strictest kept.
+
+    A name must appear in *every* group to survive (intersection: a
+    guarantee only holds if every party asserts it). When parties
+    declare the same name at different severities, the HARD instance is
+    kept: composition must not silently downgrade a reviewed HARD
+    obligation to SOFT because another party happened to declare it
+    soft. Declaration order (first group) is preserved for the output.
+    """
     if not groups:
         return []
     common: set[str] = set()
     for i, group in enumerate(groups):
         names = {p.name for p in group}
         common = names if i == 0 else (common & names)
+    # Strictest instance per shared name across all groups.
+    strictest: dict[str, Predicate[Any]] = {}
+    for group in groups:
+        for p in group:
+            if p.name not in common:
+                continue
+            chosen = strictest.get(p.name)
+            if chosen is None or (chosen.severity != Severity.HARD and p.severity == Severity.HARD):
+                strictest[p.name] = p
     out: list[Predicate[Any]] = []
     seen: set[str] = set()
     for p in groups[0]:
         if p.name in common and p.name not in seen:
             seen.add(p.name)
-            out.append(p)
+            out.append(strictest[p.name])
     return out
 
 

@@ -105,7 +105,13 @@ class DynamoDBStore:
     def _item(self, key: str, value: bytes, ttl: float | None) -> dict[str, Any]:
         item: dict[str, Any] = {"pk": {"S": self._pk(key)}, "v": {"B": value}}
         if ttl is not None:
-            item["exp"] = {"N": str(int(time.time() + ttl))}
+            # Float seconds (BL-157): matches InMemory/SQLite/S3 and the
+            # ``float(exp)`` read path, so a sub-second TTL is honoured
+            # rather than truncated to the next integer second.
+            # DynamoDB's own native TTL sweep reads the integer part and
+            # is best-effort/lagging anyway (documented), so the
+            # fractional part only sharpens the lazy-expiry boundary.
+            item["exp"] = {"N": str(time.time() + ttl)}
         return item
 
     async def write(self, key: str, value: bytes, *, ttl_seconds: float | None = None) -> None:
@@ -225,17 +231,27 @@ class DynamoDBStore:
 
     def _scan_sync(self, cursor: str, prefix: str, count: int) -> tuple[str, list[str]]:
         start = json.loads(base64.b64decode(cursor).decode()) if cursor else None
-        resp = self._scan_page(start, count)
-        now = time.time()
-        keys = sorted(
-            item["pk"]["S"][len(self._pfx) :]
-            for item in resp.get("Items", [])
-            if item["pk"]["S"][len(self._pfx) :].startswith(prefix)
-            and not (item.get("exp", {}).get("N") is not None and now > float(item["exp"]["N"]))
-        )
-        lek = resp.get("LastEvaluatedKey")
-        next_cursor = base64.b64encode(json.dumps(lek).encode()).decode() if lek else ""
-        return next_cursor, keys
+        keys: list[str] = []
+        next_cursor = ""
+        while True:
+            resp = self._scan_page(start, count)
+            now = time.time()
+            keys.extend(
+                item["pk"]["S"][len(self._pfx) :]
+                for item in resp.get("Items", [])
+                if item["pk"]["S"][len(self._pfx) :].startswith(prefix)
+                and not (item.get("exp", {}).get("N") is not None and now > float(item["exp"]["N"]))
+            )
+            lek = resp.get("LastEvaluatedKey")
+            next_cursor = base64.b64encode(json.dumps(lek).encode()).decode() if lek else ""
+            # DynamoDB Scan with a FilterExpression returns non-terminal
+            # empty (or short) pages; ("", []) with keys still behind a
+            # LastEvaluatedKey would falsely signal exhaustion (BL-161).
+            # Page on until a live key is found or the scan truly ends.
+            if keys or not next_cursor:
+                break
+            start = lek
+        return next_cursor, sorted(keys)
 
     async def scan(
         self, *, cursor: str = "", prefix: str = "", count: int = 100
@@ -261,7 +277,10 @@ class DynamoDBStore:
         ttl = self._ttl(ttl_seconds)
         from botocore.exceptions import ClientError
 
-        now = {"N": str(int(time.time()))}
+        # Float ``:now`` (BL-157 / audit B6): the read path compares
+        # ``time.time() > float(exp)``; an integer-truncated ``:now``
+        # here disagreed with it for up to a second at the boundary.
+        now = {"N": str(time.time())}
         kw: dict[str, Any] = {
             "TableName": self._table,
             "Item": self._item(key, new, ttl),
@@ -301,7 +320,7 @@ class DynamoDBStore:
                     ConditionExpression=("v = :e AND (attribute_not_exists(exp) OR exp > :now)"),
                     ExpressionAttributeValues={
                         ":e": {"B": expected},
-                        ":now": {"N": str(int(time.time()))},
+                        ":now": {"N": str(time.time())},
                     },
                 )
             )

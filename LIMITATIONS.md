@@ -30,17 +30,24 @@ checksum). Tracking: `BL-133` (true isolation).
 ## L4. Supply-chain attestation incomplete
 
 State: dependencies are lockfile-pinned (`uv.lock`); Dependabot covers
-`pip` and `github-actions`; a CodeQL gate is added in ADR 0008. No
-SBOM, no build provenance, no signed release, GitHub Actions are
-tag-pinned not commit-SHA-pinned, no blocking dependency-audit gate.
-Implication: not SLSA Build L2. Tracking: `BL-150`, `BL-152`.
+`pip` and `github-actions`; CodeQL (ADR 0008) and a blocking
+dependency-audit gate (`pip-audit` over the exported lockfile, wired
+into `ci-success`; ADR 0010) run in CI; the repo is REUSE 3.x compliant
+(`reuse lint` gated); the `release` workflow emits a CycloneDX SBOM and
+attests build provenance. Remaining: GitHub Actions are tag-pinned not
+commit-SHA-pinned (the run environment cannot resolve third-party
+action SHAs; deferred, not faked) and there is no signed
+publish-to-index. Implication: not yet SLSA Build L2. Tracking:
+`BL-150` (SHA pinning remainder), `BL-151`.
 
 ## L5. No semantic memory or context compaction
 
 State: `MemoryStore` is scalar key-value; there is no vector retrieval
-and no summarisation or tiering. Implication: retrieval-augmented and
-long-horizon workloads need an external store. Tracking: `BL-131`,
-`BL-135`.
+and no summarisation or tiering. (`HashingEmbeddingProvider`, BL-110,
+makes `EmbeddingDispatcher` usable without a vendor, but it is a
+deterministic lexical baseline, not a semantic model, and does not add
+memory retrieval.) Implication: retrieval-augmented and long-horizon
+workloads need an external store. Tracking: `BL-131`, `BL-135`.
 
 ## L6. No evaluation harness
 
@@ -63,24 +70,33 @@ lockfile-resolved, isolated behind the `Runtime` Protocol. Implication:
 a breaking upstream change may require an adapter update. Tracking:
 ADR 0001 and ADR 0003 revisit triggers.
 
-## L9. No prompt caching or cost accounting
+## L9. No prompt caching
 
-State: the adapter exposes no prompt-cache control and `ActionBudget`
-has no cost dimension. Implication: repeated stable prefixes pay full
-token cost and per-run spend is not bounded. Tracking: `BL-132`,
-`BL-123`.
+State: `ActionBudget` now has a cost dimension and per-tool token /
+wall-clock caps (`BL-123`, ADR 0010: `max_cost_usd`,
+`max_tokens_per_tool`, `max_wall_clock_seconds_per_tool`,
+`consume_cost`), so per-run spend can be bounded once an adapter
+reports cost. The adapter still exposes no prompt-cache control:
+prompt caching needs a verified PydanticAI provider-cache API and a
+live model, so it is deferred (a no-op flag would breach the
+no-half-implementation bar). Implication: a repeated stable
+tools/system prefix still pays full token cost. Tracking: `BL-132` /
+`BL-171`.
 
-## L10. Budgets do not accumulate across an approval pause and resume
+## L10. Approval-pause resume is a replay (budgets now accumulate)
 
-State: `run_under_contract` constructs a fresh `BudgetTracker` on every
-call, including a `resume`, and the PydanticAI resume is a replay
-(`BL-114`). Tokens, steps, tool calls, and per-tool quotas restart at
-zero after each human-in-the-loop pause, and non-approval tool calls
-re-execute on the replayed run. `ActionRecord` / `completed_actions`
-are reserved scaffolding for a non-replay resume and are not yet
-populated. Implication: a workload that pauses for approval can exceed
-its declared budget by a factor of (pauses + 1), and re-executed tool
-calls must be idempotent. Tracking: `BL-154`, `BL-114`.
+State: budgets now accumulate across a pause (`BL-154`, ADR 0010):
+`ResumableState` carries the consumed totals and the resumed
+`BudgetTracker` is seeded from them, so tokens, steps, tool calls,
+per-tool quotas, and cost no longer reset to zero per pause. The
+PydanticAI resume is still a replay (`BL-114`): non-approval tool calls
+re-execute on the replayed run (and now re-charge the cumulative
+budget, so a non-idempotent tool runs again and the total is the sum
+of all legs, not a deduplicated total). Implication: an approval-gated
+workload's tool calls must be idempotent, and the cumulative budget
+must allow for the replayed legs; `completed_actions` /
+`ActionRecord` remain reserved for the non-replay resume. Tracking:
+`BL-114` (eliminate the replay).
 
 ## L11. Wall-clock watchdog preempts only at an await boundary
 
@@ -92,33 +108,43 @@ still holds for that case). Implication: a pathological non-cooperative
 tool can overrun the wall-clock budget until it yields or returns.
 Tracking: `BL-155`.
 
-## L12. Store decorators do not forward the extension Protocols
+## L12. Use `wrap_*` to forward extension Protocols through a decorator
 
-State: `EncryptedStore` and `ACLStore` implement the core `MemoryStore`
-surface only. Wrapping a backend that also satisfies `BatchMemoryStore`,
-`ScannableStore`, `ContentAddressableStore`, `CASMemoryStore`, or
-`SweepableStore` does not expose those capabilities through the
-decorator. Implication: an `isinstance(store, CASMemoryStore)` check
-fails after decoration, so CAS, batch, scan, content-addressing, and
-active sweep are lost when encryption or ACLs are layered on. Tracking:
-`BL-156`.
+State: the bare `EncryptedStore(...)` / `ACLStore(...)` constructors
+still expose only the core `MemoryStore` surface (L1/L2 compatibility
+unchanged). The factories `memory.wrap_encrypted` / `memory.wrap_acl`
+(`BL-156`, ADR 0010) compose a decorator that forwards exactly the
+extension Protocols the wrapped backend satisfies, so
+`isinstance(wrapped, CASMemoryStore)` is truthful. One deliberate
+exception: `wrap_encrypted` does not forward `CASMemoryStore` even over
+a CAS backend, because AES-GCM's per-write random nonce makes a
+ciphertext-equality compare-and-set unrepresentable; encryption over a
+CAS backend drops CAS by design (documented in `memory/README.md`),
+rather than faking it. Implication: layer capability-rich backends with
+the `wrap_*` factories, not the bare constructors; CAS-under-encryption
+is unavailable.
 
-## L13. DynamoDB TTL is integer-second granularity
+## L13. DynamoDB native TTL sweep is integer-second (lazy expiry is float)
 
-State: `DynamoDBStore` stores expiry as integer seconds, truncating
-sub-second TTLs; `InMemoryStore`, `SQLiteStore`, and `S3Store` keep
-float seconds and `RedisStore` uses milliseconds. ADR 0004's
-"sub-second precision is supported" does not hold for the DynamoDB
-adapter. Implication: a sub-second TTL on DynamoDB rounds down (often
-to "expire at the next integer second"), and read vs `compare_and_set`
-absence can disagree at a second boundary. Tracking: `BL-157`.
+State: `DynamoDBStore` now stores `exp` as float seconds and uses a
+float `:now` in its CAS conditions (`BL-157`, ADR 0010), so the
+adapter's own lazy expiry, `read`, `scan`, `sweep_expired`, and
+`compare_and_set` honour a sub-second TTL and agree at a second
+boundary, matching the other adapters. DynamoDB's *native* server-side
+TTL sweep still reads only the integer part of `exp` and is
+best-effort (lagging up to ~48 h) regardless. Implication: a
+sub-second TTL is honoured by the adapter; the provider's own
+background sweep is coarse and lagging (already the documented model).
+No tracking item (resolved).
 
 ## L14. Out-of-tree workload loading executes the bundle's Python
 
-State: `load_workload_from_path` imports the target's `contract.py` and
+State: `load_workload_from_path` and `load_workload_from_entry_point`
+(`BL-121`, ADR 0010) import the target's `contract.py` and
 `__main__.py`, executing module-level code, with no `allow_contract`
 analog to the skill-install gate (ADR 0008). This is the intended L1/L2
 contract (a workload is trusted code), but unlike skill install it has
 no in-code gate. Implication: pointing the loader or `agents run` at an
-untrusted directory runs its Python; only load trusted bundles.
-Tracking: `BL-158`, `SECURITY.md`.
+untrusted directory, or resolving an untrusted installed-package entry
+point, runs its Python; only load trusted bundles. Tracking: `BL-158`,
+`SECURITY.md`.

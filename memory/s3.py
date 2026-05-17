@@ -132,11 +132,15 @@ class S3Store:
         existed = await asyncio.to_thread(self._delete_sync, key)
         self._audit.delete(key, existed=existed)
 
-    def _all_live_keys(self) -> list[str]:
+    def _all_live_keys(self, prefix: str = "") -> list[str]:
+        # Push ``prefix`` into the S3 LIST (server-side), so listing a
+        # subtree no longer pulls the whole namespace and HEAD/GETs every
+        # object just to discard most of them (BL-161).
+        full_prefix = f"{self._prefix}{prefix}"
         keys: list[str] = []
         token: str | None = None
         while True:
-            kw: dict[str, Any] = {"Bucket": self._bucket, "Prefix": self._prefix}
+            kw: dict[str, Any] = {"Bucket": self._bucket, "Prefix": full_prefix}
             if token:
                 kw["ContinuationToken"] = token
             resp = self._s3.list_objects_v2(**kw)
@@ -150,8 +154,7 @@ class S3Store:
         return sorted(keys)
 
     async def list_keys(self, prefix: str = "") -> list[str]:
-        keys = await asyncio.to_thread(self._all_live_keys)
-        return [k for k in keys if k.startswith(prefix)]
+        return await asyncio.to_thread(self._all_live_keys, prefix)
 
     async def mget(self, keys: list[str]) -> list[bytes | None]:
         for k in keys:
@@ -170,25 +173,37 @@ class S3Store:
             await self.delete(k)
 
     def _scan_sync(self, cursor: str, prefix: str, count: int) -> tuple[str, list[str]]:
-        kw: dict[str, Any] = {
-            "Bucket": self._bucket,
-            "Prefix": f"{self._prefix}{prefix}",
-            "MaxKeys": count,
-        }
-        if cursor:
-            kw["ContinuationToken"] = cursor
-        resp = self._s3.list_objects_v2(**kw)
         # Exclude expired-but-unswept keys so scan() agrees with
-        # read()/list_keys() and the ScannableStore contract (a page may
-        # then yield fewer than `count`; the caller continues via the
-        # cursor). The head-per-key cost is the documented S3 tradeoff.
-        keys = sorted(
-            short
-            for item in resp.get("Contents", [])
-            if self._get_live(short := item["Key"][len(self._prefix) :]) is not None
-        )
-        next_cursor = resp.get("NextContinuationToken", "") if resp.get("IsTruncated") else ""
-        return next_cursor, keys
+        # read()/list_keys(). A raw S3 page can be entirely expired keys
+        # while more live keys exist behind a continuation token;
+        # returning ("", []) there would wrongly signal exhaustion
+        # (audit B1). Page internally until at least one live key is
+        # collected or the listing truly ends, then return the cursor.
+        keys: list[str] = []
+        token = cursor
+        next_cursor = ""
+        while True:
+            kw: dict[str, Any] = {
+                "Bucket": self._bucket,
+                "Prefix": f"{self._prefix}{prefix}",
+                "MaxKeys": count,
+            }
+            if token:
+                kw["ContinuationToken"] = token
+            resp = self._s3.list_objects_v2(**kw)
+            keys.extend(
+                short
+                for item in resp.get("Contents", [])
+                if self._get_live(short := item["Key"][len(self._prefix) :]) is not None
+            )
+            if resp.get("IsTruncated"):
+                token = resp.get("NextContinuationToken", "")
+                next_cursor = token
+            else:
+                next_cursor = ""
+            if keys or not next_cursor:
+                break
+        return next_cursor, sorted(keys)
 
     async def scan(
         self, *, cursor: str = "", prefix: str = "", count: int = 100

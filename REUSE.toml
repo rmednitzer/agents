@@ -1,0 +1,17 @@
+version = 1
+
+# REUSE 3.x repository-wide licensing (BL-152). A single REUSE.toml
+# declares copyright + license for the whole tree, so the project is
+# REUSE-compliant (`reuse lint`, gated in CI) without a per-file SPDX
+# header on ~120 source files. New files inherit this automatically;
+# CONTRIBUTING.md still recommends an inline SPDX header for new files,
+# which `precedence = "aggregate"` lets coexist with this default.
+SPDX-PackageName = "agents"
+SPDX-PackageSupplier = "Roman Mednitzer"
+SPDX-PackageDownloadLocation = "https://github.com/rmednitzer/agents"
+
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Roman Mednitzer"
+SPDX-License-Identifier = "Apache-2.0"

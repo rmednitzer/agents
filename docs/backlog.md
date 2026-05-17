@@ -1,6 +1,6 @@
 # L2 Backlog
 
-Consolidated from ADRs 0002 through 0006. Generated 2026-05-16 after Phase 5 (`7c26543`). Updated 2026-05-16 after PR #20 merged to `main`; extended 2026-05-17 (ADR 0008 L3 roadmap, then the ADR 0009 code-audit items `BL-154`-`BL-165`).
+Consolidated from ADRs 0002 through 0006. Generated 2026-05-16 after Phase 5 (`7c26543`). Updated 2026-05-16 after PR #20 merged to `main`; extended 2026-05-17 (ADR 0008 L3 roadmap, the ADR 0009 code-audit items `BL-154`-`BL-162`, then the ADR 0010 L3 default-path-wiring wave: `BL-100`-`BL-104` resolved, the well-scoped follow-ups and Tier 1/2/3/4 items resolved, and the second-audit items `BL-163`-`BL-171`).
 
 ## Implementation status
 
@@ -133,36 +133,46 @@ The original L3 clusters (default-path wiring, real implementations,
 reference workload) keep their IDs and text below. ADR 0008 groups all
 open L3 work into delivery tiers:
 
-- Tier 0, security: `BL-112`, `BL-133`, `BL-134`, `BL-150`. The
-  first increment landed (`BL-134` resolved; `BL-112`, `BL-133`
-  in-progress; see "Security hardening").
+- Tier 0, security: `BL-112`, `BL-133`, `BL-134`, `BL-150`. `BL-134`
+  resolved; `BL-112` resolved (ADR 0010: marketplace source + signature
+  hook delivered); `BL-150` partial (blocking dependency-audit gate
+  delivered; commit-SHA pinning is the tracked remainder); `BL-133`
+  in-progress.
 - Tier 1, AI quality and safety: `BL-130`, `BL-131`, `BL-132`,
-  `BL-137`, `BL-139`, plus `BL-110`, `BL-120`.
+  `BL-137`, `BL-139`, plus `BL-110`, `BL-120`. `BL-110`, `BL-137`,
+  `BL-139` resolved (ADR 0010 / ADR 0009).
 - Tier 2, reliability and observability: `BL-135`, `BL-136`, `BL-138`,
-  plus `BL-100`-`BL-104`, `BL-113`, `BL-123`.
-- Tier 3, governance: `BL-152`, `BL-153` (`BL-153` resolved).
-- Tier 4, release and operations: `BL-151`.
+  plus `BL-100`-`BL-104`, `BL-113`, `BL-123`. `BL-100`-`BL-104`,
+  `BL-123`, `BL-136` resolved (ADR 0010).
+- Tier 3, governance: `BL-152`, `BL-153` (both resolved).
+- Tier 4, release and operations: `BL-151` (resolved, ADR 0010).
 
-Highest leverage remains "default-path wiring plus one real workload"
-(`BL-100`, `BL-120`), now preceded by Tier 0 security.
+The L3 default-path-wiring wave (`BL-100`-`BL-104`), the well-scoped
+ADR 0009 follow-ups, the Tier 1/2 cost/retry/reject items, the
+out-of-tree/CLI extensions, and governance/release maturity landed
+together; see [ADR 0010](./adr/0010-l3-default-path-wiring-and-audit-wave.md).
+Items resolved in that wave cite ADR 0010 and branch
+`claude/audit-and-docs-update-2U05F` as the resolution reference (stated
+here once rather than per line). The remaining highest-leverage open
+work is one real live-model workload (`BL-120`).
 
 ## Default-path wiring
 
 The L2 primitives exist but are opt-in / manually engaged. L3 makes the
 framework use them by default.
 
-- `BL-100` [pending] [M] Auto-compose a workload's loaded skill contracts with its workload contract in `run_under_contract`. `compose_contracts` and `Skill.contract()` exist (BL-052, BL-060) but composition is caller-driven today. (ADR 0002, ADR 0006)
-- `BL-101` [pending] [M] Record predicate pass/fail into a `DriftMonitor` from the enforcement loop and emit a threshold-crossing event. `DriftMonitor` (BL-062) is standalone; nothing feeds it. (ADR 0002)
-- `BL-102` [pending] [M] Recovery control flow: let a `RecoveryHandler` outcome drive retry / substitute / escalate, not just emit-and-continue. Today recovery (BL-061) is observational; the soft path always continues unchanged. (ADR 0002)
-- `BL-103` [pending] [S] Fold `InstrumentedDispatcher` into the recommended default dispatcher composition and ship a worked OTel/Grafana wiring example. (ADR 0006, BL-042/050)
-- `BL-104` [pending] [S] Harness/workload-runner-managed `TTLSweeper` lifecycle (start/stop tied to a run), instead of fully manual opt-in. (ADR 0004, BL-080)
+- `BL-100` [resolved] [M] Auto-compose a workload's loaded skill contracts with its workload contract in `run_under_contract`. Delivered: the `skill_contracts` keyword on `run_under_contract` composes via `compose_contracts` before enforcement; default None preserves L1. (ADR 0002, ADR 0006, ADR 0010)
+- `BL-101` [resolved] [M] Record predicate pass/fail into a `DriftMonitor` from the enforcement loop and emit a threshold-crossing event. Delivered: `drift_monitor` / `drift_threshold` keywords; new `DriftThresholdCrossed` event. (ADR 0002, ADR 0010)
+- `BL-102` [resolved] [M] Recovery control flow: let a `RecoveryHandler` outcome drive retry / substitute / escalate, not just emit-and-continue. Delivered: `RecoveryOutcome.directive` (continue/retry/substitute/escalate), honoured on the postcondition stage; default "continue" preserves L1. (ADR 0002, ADR 0010)
+- `BL-103` [resolved] [S] Fold `InstrumentedDispatcher` into the recommended default dispatcher composition. Delivered: `skills.dispatchers.default_dispatcher` (instrumented cheap-first chain). The worked OTel/Grafana example is documentation, tracked forward under `BL-113`/`BL-138`. (ADR 0006, BL-042/050, ADR 0010)
+- `BL-104` [resolved] [S] Harness/workload-runner-managed lifecycle (start/stop tied to a run), instead of fully manual opt-in. Delivered: the `lifecycles` keyword on `run_under_contract` enters/exits any async context manager (e.g. a `memory.TTLSweeper`) around the run; dependency-free so the harness does not import `memory`. (ADR 0004, BL-080, ADR 0010)
 
 ## Real implementations behind the pluggable Protocols
 
 L2 shipped Protocols plus deterministic test doubles; L3 supplies
 production implementations.
 
-- `BL-110` [pending] [M] A concrete `EmbeddingProvider` (via a Runtime or a provider SDK) so `EmbeddingDispatcher` (BL-051) is usable without a hand-rolled provider. (ADR 0006)
+- `BL-110` [resolved] [M] A concrete `EmbeddingProvider` so `EmbeddingDispatcher` (BL-051) is usable without a hand-rolled provider. Delivered: `skills.HashingEmbeddingProvider`, deterministic and dependency-free (the hashing trick); a model-quality vendor-backed provider stays out-of-tree by the same no-vendor-binding stance as ADR 0001. (ADR 0006, ADR 0010)
 - `BL-111` [pending] [M] `KeyProvider` beyond `StaticKeyProvider`: env/file and a KMS-backed provider, plus key rotation/versioning for `EncryptedStore` (BL-070). (ADR 0004)
 - `BL-112` [pending] [M] Marketplace `SkillSource` (Vercel `skills.sh`) and checksum/signature verification on install. Extends BL-054. (ADR 0006)
 - `BL-113` [pending] [L] True OTel spans + trace-context propagation. `OTelSink` (BL-041) emits log records with trace/span as attributes because the OTel logs SDK is unstable; revisit when it stabilizes, add GenAI semantic conventions for streaming. (ADR 0002)
@@ -171,21 +181,21 @@ production implementations.
 ## Reference workload and loose ends
 
 - `BL-120` [pending] [L] A real reference workload exercising the wired runtime end-to-end against a live model (only `_example` stub exists). Becomes the adapter's CI smoke, gated to skip without API keys.
-- `BL-121` [pending] [S] Out-of-tree workloads from an installed package / `[project.entry-points]`, not just a filesystem path. Extends BL-090. (ADR 0005 revisit trigger)
+- `BL-121` [resolved] [S] Out-of-tree workloads from an installed package / `[project.entry-points]`, not just a filesystem path. Delivered: `workloads.load_workload_from_entry_point` (group `agents.workloads`), reusing the shared loader + BL-010/011 validators; same trust boundary as path loading (`LIMITATIONS.md` L14). Extends BL-090. (ADR 0005, ADR 0010)
 - `BL-122` [pending] [S] Attribute-based / dynamic `AccessPolicy`, and an `AccessDenied` audit event through `EventSink`. Extends BL-071. (ADR 0004)
-- `BL-123` [pending] [M] Cost and per-tool wall-clock / token budgets; today the per-tool cap (BL-073) is call-count only. (ADR 0003 revisit trigger)
+- `BL-123` [resolved] [M] Cost and per-tool wall-clock / token budgets; the per-tool cap (BL-073) was call-count only. Delivered: `ActionBudget.max_cost_usd` / `max_tokens_per_tool` / `max_wall_clock_seconds_per_tool`, `BudgetTracker.consume_cost` and per-tool token/second attribution on `consume_tool_call` (all opt-in, default None preserves BL-073). (ADR 0003, ADR 0010)
 - `BL-124` [pending] [L] MVCC / version tokens beyond compare-and-set, and multi-key transactions where the backend supports them. Extends BL-072. (ADR 0004)
-- `BL-125` [pending] [S] `agents run` accepts typed input models + `--json` / streaming output, and an `agents skills install <source>` subcommand. Extends BL-021, BL-054. (ADR 0006)
+- `BL-125` [resolved] [S] `agents run --json` (compact output) and an `agents skills install <name> --from <source>` subcommand (local / github, `allow_contract=False`). Typed-input models / streaming output stay with the live-workload work (`BL-120`). Extends BL-021, BL-054. (ADR 0006, ADR 0010)
 
 ## Security hardening (Tier 0)
 
 First increment delivered 2026-05-17 (ADR 0008). The gate is defence in
 depth, not a sandbox (`LIMITATIONS.md` L3).
 
-- `BL-112` [in-progress] [M] Marketplace `SkillSource` (Vercel `skills.sh`) and integrity verification on install. Delivered: bounded download / member-count / per-member / total-size caps and an optional `sha256` on `GitHubSkillSource` (closes the decompression-bomb and unbounded-read exposure; cross-checked against S6). Remaining: a marketplace source and signature (not just checksum) verification. Extends `BL-054`. (ADR 0006, ADR 0008)
+- `BL-112` [resolved] [M] Marketplace `SkillSource` and integrity verification on install. Delivered (ADR 0008): bounded download / member / size caps and optional `sha256`. Delivered (ADR 0010): the hardened download/extract factored into one audited path, a `SignatureVerifier` hook (`signature` / `verify_signature`, framework binds no crypto vendor), and a generic `MarketplaceSkillSource` (configurable URL template, `strip_components`) over the same hardened path. Extends `BL-054`. (ADR 0006, ADR 0008, ADR 0010)
 - `BL-133` [in-progress] [M] Skill execution isolation. Delivered: `discover_skill(allow_contract=...)` and an `install_skill` default of `allow_contract=False` so an untrusted bundle's `contract.py` is not executed. Remaining: true isolation (subprocess or container, capability scoping) for opted-in contracts. (ADR 0008)
 - `BL-134` [resolved] [S] Secret and PII redaction for event content: `harness.Redactor` and `harness.RedactingSink`, scrubbing sensitive argument names, secret-shaped values, and over-long scalars before a sink. Closes plaintext leakage of tool arguments into sinks. (ADR 0008)
-- `BL-150` [pending] [S] Pin GitHub Actions to commit SHAs and add a blocking dependency-audit gate (Dependabot proposes updates but is not a gate). Targets SLSA Build L1 provenance as a follow-on (S5). (ADR 0008)
+- `BL-150` [in-progress] [S] Pin GitHub Actions to commit SHAs and add a blocking dependency-audit gate. Delivered (ADR 0010): a blocking `dependency-audit` job (`pip-audit` over the exported `uv.lock`, wired into the `ci-success` aggregate) plus the `release` workflow's provenance attestation. Remaining: commit-SHA pinning of every GitHub Action, deferred not faked (the run environment cannot resolve third-party action SHAs; a fabricated 40-char hash is worse than an honest tag pin, so this is a maintainer/Dependabot action like `BL-162`). (ADR 0008, ADR 0010)
 
 ## AI quality and safety (Tier 1)
 
@@ -194,23 +204,23 @@ Practice gaps the analysis found that were not previously tracked.
 - `BL-130` [pending] [L] Agent evaluation harness plus a CI regression gate: golden `(query, expected skill)` sets with P@1 / MRR for dispatch, and a contract-outcome trajectory fixture. CI gates lint/types/coverage but not behaviour; routing quality can regress silently (S1: measure against clear success criteria). (ADR 0008)
 - `BL-131` [pending] [L] `SemanticMemoryStore` extension Protocol (vector write plus similarity query) beside `MemoryStore`, with one reference implementation; reuse the `EmbeddingProvider` from `BL-110`. Enables just-in-time retrieval in-tree (S2). (ADR 0004, ADR 0008)
 - `BL-132` [pending] [M] Prompt and response caching on the runtime adapter: cache-breakpoint control for the stable tools/system prefix and surfacing `cache_creation_input_tokens` / `cache_read_input_tokens` (S3). Pairs with cost accounting (`BL-123`). (ADR 0003, ADR 0008)
-- `BL-137` [pending] [M] Structured tool-error result for a soft governance reject, instead of returning the `[blocked: ...]` string as the tool's value, so the model receives a typed rejection rather than apparent tool output (S1: clear agent-computer interface). (ADR 0002, ADR 0008)
+- `BL-137` [resolved] [M] Structured tool-error result for a soft governance reject, instead of returning the `[blocked: ...]` string as the tool's value. Delivered: `PydanticAIRuntime(soft_reject_as_error=True)` raises the framework's `ModelRetry` (a typed rejection the model handles as an error) instead of the string; default False preserves L1. Pairs with the guard fix (a SOFT governance predicate now actually reaches this path; ADR 0010 section 3). (ADR 0002, ADR 0008, ADR 0010)
 - `BL-139` [resolved] [S] Documented prompt-injection posture: tool results, MCP output, and skill bodies are untrusted external content; state the handling and content-isolation expectations in `SECURITY.md` (S1, S2). Delivered in the ADR 0009 audit: `SECURITY.md` "Untrusted content and prompt injection" section. (ADR 0008, ADR 0009)
 
 ## Reliability and observability (Tier 2)
 
 - `BL-135` [pending] [L] Memory compaction, summarisation, and tiering (hot to cold), and a size or LRU bound on the sweeper, not age only. Long-horizon workloads grow unbounded (S2: context compaction). (ADR 0004, ADR 0008)
-- `BL-136` [pending] [M] Retry, backoff, and circuit-breaker policy at the guard/runtime and memory-adapter boundary; today the model must re-issue a failed call. (ADR 0003, ADR 0008)
+- `BL-136` [resolved] [M] Retry, backoff, and circuit-breaker policy at the runtime boundary; the model previously had to re-issue a failed call. Delivered: an opt-in `harness.RetryPolicy` (bounded exponential backoff, a `retry_on` allowlist, a per-instance circuit breaker) wired into `PydanticAIRuntime.run`; a contract-terminal outcome (governance / approval / budget / cancellation) is never retried and retries share the budget. The memory-adapter-boundary breaker is the documented remainder. (ADR 0003, ADR 0008, ADR 0010)
 - `BL-138` [pending] [M] OTel GenAI semantic conventions on the spans from `BL-113`: `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.usage.input_tokens` / `output_tokens` / `cache_read.input_tokens`, and `execute_tool` spans (S4). Refines `BL-113`. (ADR 0002, ADR 0008)
 
 ## Governance (Tier 3)
 
-- `BL-152` [pending] [M] Full REUSE / SPDX conversion: per-file `SPDX-License-Identifier` headers and a `REUSE.toml`, with a CI check. (ADR 0008)
+- `BL-152` [resolved] [M] Full REUSE / SPDX conversion with a CI check. Delivered: a tree-wide `REUSE.toml` (REUSE 3.x) plus `LICENSES/Apache-2.0.txt`, gated by `reuse lint` in CI (`reuse` 6.2.0 verified compliant, 177/177 files). A single `REUSE.toml` was chosen over a per-file header on ~120 files: spec-sanctioned, no diff churn, no line-citation breakage; an inline per-file `SPDX-License-Identifier` is still allowed via `precedence = "aggregate"`. (ADR 0008, ADR 0010)
 - `BL-153` [resolved] [S] Governance documents: `STATUS.md`, `LIMITATIONS.md`, `CHANGELOG.md`, the ADR index (`docs/adr/README.md`), and an expanded `CONTRIBUTING.md` (DCO sign-off, SPDX baseline, security-review checkpoint, governance section). (ADR 0008)
 
 ## Release and operations (Tier 4)
 
-- `BL-151` [pending] [M] Versioning and release policy plus a release workflow (signed artifacts, SBOM, build provenance) and operational notes (deploy, rollback, backup and restore for memory backends). Pre-1.0 today with no release lifecycle (`STATUS.md`, `LIMITATIONS.md` L1, L4; S5 for provenance). (ADR 0008)
+- `BL-151` [resolved] [M] Versioning and release policy plus a release workflow and operational notes. Delivered: `docs/releasing.md` (semver-from-1.0 policy, the pre-1.0 `0.0.x` rule, release steps, rollback, per-backend memory backup/restore) and `.github/workflows/release.yml` (tag-triggered: full quality gate, `uv build`, CycloneDX SBOM, provenance attestation, GitHub Release). Publishing to an index is left a deliberate human gate pre-1.0. SLSA Build L2+ and signed-index publishing are the tracked remainder (`LIMITATIONS.md` L1/L4). (ADR 0008, ADR 0010)
 
 ## Code audit (ADR 0009, 2026-05-17)
 
@@ -221,15 +231,32 @@ the rest are tracked here and documented in `LIMITATIONS.md` (L10-L14).
 ADR 0009 records the cross-cutting decisions. Same conventions and ID
 discipline as above; `BL-1xx` range.
 
-- `BL-154` [pending] [M] Budgets do not accumulate across an approval pause and resume: thread the consumed counters / `completed_actions` into the resumed run so tokens, steps, tool calls, and per-tool quotas are cumulative and already-completed tool calls are not replayed. Pairs with the non-replay resume `BL-114`. (ADR 0003, ADR 0009; `LIMITATIONS.md` L10)
+- `BL-154` [resolved] [M] Budgets do not accumulate across an approval pause and resume. Delivered: `ResumableState` carries `consumed_steps/tokens/tool_calls/per_tool/cost_usd`; `run_under_contract` stamps `BudgetTracker.snapshot()` onto the paused state and seeds the resumed tracker via new `initial_*` kwargs, so budgets accumulate across the pause. Scope: this stops the per-pause reset; eliminating the replay (so already-completed non-approval tool calls do not re-execute and re-charge) is the non-replay resume, still tracked as `BL-114` (`LIMITATIONS.md` L10 updated to reflect the partial). (ADR 0003, ADR 0009, ADR 0010)
 - `BL-155` [pending] [L] True wall-clock preemption for a fully blocking, non-cooperative tool (thread/process execution so the watchdog can interrupt CPU-bound or sync-I/O tool code, not only await boundaries). (ADR 0003, ADR 0009; `LIMITATIONS.md` L11)
-- `BL-156` [pending] [M] `EncryptedStore` / `ACLStore` forward the extension Protocols (`BatchMemoryStore`, `ScannableStore`, `ContentAddressableStore`, `CASMemoryStore`, `SweepableStore`) of the store they wrap, so decoration does not silently drop CAS / batch / scan / content-addressing / sweep. (ADR 0004, ADR 0009; `LIMITATIONS.md` L12)
-- `BL-157` [pending] [S] DynamoDB float-second expiry (store `exp` as float, like the other adapters) so sub-second TTL holds, removing the read vs `compare_and_set` second-boundary disagreement. Deviation documented now (`memory/README.md`, `LIMITATIONS.md` L13). (ADR 0004, ADR 0009)
+- `BL-156` [resolved] [M] `EncryptedStore` / `ACLStore` forward the extension Protocols of the store they wrap. Delivered: `memory.wrap_acl` / `memory.wrap_encrypted` factories compose a decorator subclass mixing in only the Protocols the inner store satisfies, so `isinstance` stays truthful (unconditional forwarding would fake a capability, the ADR 0004 "don't fake it" violation). `EncryptedStore` forwards Batch/Scan/ContentAddressable/Sweepable (seal/unseal as needed) but intentionally NOT CAS (GCM nonce randomisation makes ciphertext-equality CAS unrepresentable; a documented deviation, `memory/README.md`). The bare `EncryptedStore`/`ACLStore` constructors are unchanged. (ADR 0004, ADR 0009, ADR 0010; `LIMITATIONS.md` L12 updated)
+- `BL-157` [resolved] [S] DynamoDB float-second expiry. Delivered: `_item` stores `exp` as `str(time.time()+ttl)` and the CAS `:now` is `str(time.time())` (float), so sub-second TTL holds and read vs `compare_and_set` agree at a second boundary; DynamoDB's own native TTL sweep reads the integer part and is best-effort anyway. (ADR 0004, ADR 0009, ADR 0010; `LIMITATIONS.md` L13 updated)
 - `BL-158` [resolved] [S] Document the out-of-tree workload trust boundary (loading a path executes its Python, no skill-install-style gate). Delivered: `LIMITATIONS.md` L14, `SECURITY.md` scope and hardening posture, `workloads.load_workload_from_path` docstring. (ADR 0005, ADR 0009)
 - `BL-159` [resolved] [M] Audit correctness/security fixes, additive: non-finite cosine similarity returns 0.0 instead of clamping NaN to 1.0 (`skills.embeddings`); `first_json_array` is single-pass linear, not O(n^2), against adversarial model output (`skills.dispatchers._json`); a JSON `bool` `confidence` is rejected, not coerced to 1.0 (LLM and skill-based dispatchers); `EncryptedStore` / `ACLStore` validate keys before any keyed operation per the `MemoryStore` Protocol (also closes an AAD cross-key collision); `Redactor` walks every event field, not only dict-valued ones. Regression tests added. (ADR 0009)
-- `BL-160` [resolved] [S] Documentation-accuracy fixes: README dispatcher count (eight, not "seven"); `docs/runtime-providers.md` stale line citations; `harness.redaction` BL reference (`BL-134`, was `BL-130`); `workloads.manifest` "Phase 5" present tense; the "five reference dispatchers" docstrings; the wall-clock watchdog "preemptive" wording; ADR 0005/0006 factual errata (the `skills/example/` path, the now-eight dispatchers, the L2-delivered "deferred" items) recorded in ADR 0009 (ADRs are immutable, so noted forward, not edited). (ADR 0009)
-- `BL-161` [pending] [M] Deferred audit hardening, by area. Skill install: use `tarfile` data filter or explicitly reject non-file members (not silently skip); clamp each member read to the remaining total budget; add an `allow_contract` passthrough to `SkillRegistry.from_directory`. Memory: atomic `BEGIN IMMEDIATE` batch for `SQLiteStore.mset` / `mdelete`; push the user `prefix` into `S3Store.list_keys` server-side (avoid O(N) GETs); loop or document `DynamoDBStore.scan` non-terminal empty pages; `name@version` parse via `rsplit("@", 1)`. CLI: `agents run` honours the manifest-declared dispatcher for model-free routers and reports a missing-dependency `ImportError` cleanly like `workloads list` does. (ADR 0002/0004/0005/0006, ADR 0009)
+- `BL-160` [resolved] [S] Documentation-accuracy fixes (historical record of the ADR 0009 pass; the "eight" count it asserted was itself wrong and is corrected forward by ADR 0010 section 6 / `BL-163`+ context: seven *router* dispatchers plus the InstrumentedDispatcher wrapper and the `default_dispatcher` factory). README dispatcher count (eight, not "seven"); `docs/runtime-providers.md` stale line citations; `harness.redaction` BL reference (`BL-134`, was `BL-130`); `workloads.manifest` "Phase 5" present tense; the "five reference dispatchers" docstrings; the wall-clock watchdog "preemptive" wording; ADR 0005/0006 factual errata (the `skills/example/` path, the now-eight dispatchers, the L2-delivered "deferred" items) recorded in ADR 0009 (ADRs are immutable, so noted forward, not edited). (ADR 0009)
+- `BL-161` [resolved] [M] Deferred audit hardening, by area. Delivered. Skill install: a non-file member inside the wanted subtree is rejected (not silently skipped), each member read is clamped to the remaining total budget, and `SkillRegistry.from_directory` takes an `allow_contract` passthrough. Memory: `SQLiteStore.mset`/`mdelete` are one `BEGIN IMMEDIATE` transaction; `S3Store.list_keys` pushes the prefix server-side; `S3Store.scan` and `DynamoDBStore.scan` loop non-terminal empty pages instead of falsely signalling exhaustion; `name@version` parses via `rpartition("@")`. CLI: `agents run` honours a model-free manifest dispatcher (keyword/embedding) and reports a missing-dependency `ImportError` cleanly like `workloads list`. (ADR 0002/0004/0005/0006, ADR 0009, ADR 0010)
 - `BL-162` [resolved] [XS] Repoint `main` branch protection from the stale required context `test` (no job emits it since the 3.12/3.13 matrix split) to `ci-success`, the stable aggregate gate ADR 0008 section 4 added for exactly this. Optionally also require `lint`, `type-check`, `analyze (python)`. Repository Settings, not a file, so no PR can do it; until then every PR shows a perpetual "Expected, waiting for status to be reported". Resolution must repoint, not relax: keep required checks and no-bypass on; removing the check or allowing bypass is explicitly rejected (it would delete the gate, not fix it). Resolved 2026-05-17 by the maintainer: branch protection now requires `lint`, `type-check`, `ci-success` (stale `test` removed; required checks and no-bypass kept on). Settings change, so no commit artifact. (ADR 0008 section 4, ADR 0009 section 5)
+
+## Code audit (ADR 0010, 2026-05-17)
+
+A second in-depth audit during the L3 wave, by area, against the same
+green gates. The clear bugs were fixed additively with regression tests
+in the same increment; ADR 0010 section 3 is the why. Same conventions
+and ID discipline; `BL-1xx` range.
+
+- `BL-163` [resolved] [S] `HarnessToolGuard` returned APPROVE for a SOFT governance failure, so a soft governance predicate was a silent no-op and the runtime's documented soft-reject path was unreachable. Now returns REJECT/SOFT (the runtime logs-and-continues; pairs with `BL-137`). Existing test updated to the corrected contract. (ADR 0002, ADR 0010)
+- `BL-164` [resolved] [S] A raising `RecoveryHandler` aborted the run, contradicting recovery.py's "a soft violation never halts". The handler is now contained: `RecoveryApplied(recovered=False, action="recovery handler raised: ...")` and the soft path continues. (ADR 0002, ADR 0010)
+- `BL-165` [resolved] [S] `PydanticAIRuntime.run` caught `BaseException` and could reinterpret a wall-clock cancellation / `BudgetExceeded` as an approval pause when guard state was also set. It now re-raises `asyncio.CancelledError` / `BudgetExceeded` before consulting guard state. (ADR 0003, ADR 0010)
+- `BL-166` [resolved] [S] `compose_contracts` kept the first occurrence on a predicate-name collision, which could keep a SOFT predicate over a HARD one and silently weaken a reviewed obligation. It now keeps the strictest (HARD over SOFT). (ADR 0002, ADR 0010)
+- `BL-167` [resolved] [S] `MemoryAudit` rejected a missing base-event key but not a reserved one (`namespace`, `key`, `kind`, ...); a caller-supplied `namespace` would raise "multiple values" mid-run on the first emit. Reserved keys are now rejected at construction, like the missing-key check. (ADR 0004, ADR 0010)
+- `BL-168` [resolved] [S] `SQLiteStore.sweep_expired` used `<=` while `read`/`list_keys`/`scan` use strict `>`, so an entry exactly at its expiry instant was live to readers but swept. The sweep boundary is now strict `<`, consistent with the readers. (ADR 0004, ADR 0010)
+- `BL-169` [resolved] [S] `LocalSkillSource.fetch` used `shutil.copytree` (default `symlinks=False`), dereferencing symlinks, so a crafted local mirror could copy a host secret's contents into the installed bundle. It now copies regular files only and refuses a symlink anywhere in the subtree. (ADR 0006, ADR 0010)
+- `BL-170` [resolved] [S] `S3Store.scan` could return `("", [])` (false exhaustion) for a page that was entirely expired-but-unswept while live keys remained behind a continuation token. It now pages internally until a live key is found or the listing truly ends (parity with the `DynamoDBStore.scan` fix in `BL-161`). (ADR 0004, ADR 0010)
+- `BL-171` [pending] [M] Prompt and response caching on the runtime adapter (`BL-132`) is deferred from the ADR 0010 wave: a correct implementation needs a verified PydanticAI provider-cache API and a live model to validate (like `BL-120`); a no-op flag would breach the "no half-finished implementation" bar. Tracked as the continuation of `BL-132`. (ADR 0003, ADR 0010)
 
 ## Sources consulted
 

@@ -12,10 +12,14 @@ Per-workload structure:
 validates that the manifest `name` matches the directory (BL-010) and
 that every `skills:` entry resolves in the registry, including the
 `name@version` form (BL-011). `load_workload_from_path(path)` loads
-out-of-tree bundles from an arbitrary directory with the same
-validators (BL-090). A real import failure in the package /
-`contract.py` / `__main__.py` propagates as the original exception
-rather than being masked as "not found". See
-[ADR 0005](../docs/adr/0005-workload-bundles.md).
+out-of-tree bundles from an arbitrary directory (BL-090), and
+`load_workload_from_entry_point(name)` loads them from an installed
+package's `[project.entry-points."agents.workloads"]` (BL-121); both
+apply the same validators and the same trust boundary (loading
+executes the bundle's Python; `SECURITY.md`, `LIMITATIONS.md` L14). A
+real import failure in the package / `contract.py` / `__main__.py`
+propagates as the original exception rather than being masked as "not
+found". See [ADR 0005](../docs/adr/0005-workload-bundles.md) and
+[ADR 0010](../docs/adr/0010-l3-default-path-wiring-and-audit-wave.md).
 
 See [CLAUDE.md](../CLAUDE.md) for conventions.

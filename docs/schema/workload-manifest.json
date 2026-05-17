@@ -1,8 +1,20 @@
 {
   "$defs": {
     "ActionBudget": {
-      "description": "Immutable action budget spec.\n\nAll fields are optional; None means unlimited for that dimension.\n\n``max_tool_calls`` is the aggregate cap across every tool.\n``max_tool_calls_per_tool`` (BL-073) caps individual tools, e.g.\n``{\"search\": 3, \"delete\": 1}``; a tool absent from the map is\nbounded only by the aggregate cap. Both are enforced.",
+      "description": "Immutable action budget spec.\n\nAll fields are optional; None means unlimited for that dimension.\n\n``max_tool_calls`` is the aggregate cap across every tool.\n``max_tool_calls_per_tool`` (BL-073) caps individual tools, e.g.\n``{\"search\": 3, \"delete\": 1}``; a tool absent from the map is\nbounded only by the aggregate cap. Both are enforced.\n\nL3 cost and per-tool resource caps (BL-123), all optional and\ndefaulting to None so an existing ActionBudget is unchanged. What\nthe default ``PydanticAIRuntime`` feeds, and what is caller-fed,\ndiffers by dimension (the framework binds no model or pricing, ADR\n0001, and PydanticAI reports token usage at the run level, not per\ntool):\n\n- ``max_cost_usd``: aggregate spend ceiling. The framework prices\n  no model, so the default adapter never calls ``consume_cost``;\n  this dimension stays 0 unless a pricing-aware caller or a\n  pricing-aware adapter feeds spend via ``consume_cost`` (the same\n  \"caller-fed\" stance as ``RuntimeSpec.parameters`` not being\n  auto-forwarded). It is the surface for cost capping, not an\n  automatic cost meter.\n- ``max_wall_clock_seconds_per_tool``: per-tool wall-clock ceiling.\n  The default adapter DOES feed this: it times each tool body and\n  attributes the duration, so this cap fires in a real run.\n- ``max_tokens_per_tool``: per-tool token ceiling. A tool call does\n  not itself consume model tokens (the model round-trips do), so\n  the default adapter has no per-tool token signal and never feeds\n  this; it is caller-fed (a tool that itself calls a model can pass\n  ``tokens=`` to ``consume_tool_call``).\n\nA tool absent from a per-tool map is bounded only by the aggregate\ncap for that dimension.",
       "properties": {
+        "max_cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Cost Usd"
+        },
         "max_steps": {
           "anyOf": [
             {
@@ -26,6 +38,21 @@
           ],
           "default": null,
           "title": "Max Tokens"
+        },
+        "max_tokens_per_tool": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Tokens Per Tool"
         },
         "max_tool_calls": {
           "anyOf": [
@@ -65,6 +92,21 @@
           ],
           "default": null,
           "title": "Max Wall Clock Seconds"
+        },
+        "max_wall_clock_seconds_per_tool": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Wall Clock Seconds Per Tool"
         }
       },
       "title": "ActionBudget",

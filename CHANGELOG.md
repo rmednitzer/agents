@@ -3,6 +3,89 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] L3 default-path wiring + audit wave (2026-05-17)
+
+See [ADR 0010](./docs/adr/0010-l3-default-path-wiring-and-audit-wave.md).
+All changes are additive to the L1 Protocols (new optional keywords /
+modules; defaults reproduce L1/L2 behaviour).
+
+### Added
+
+- Default-path wiring on `run_under_contract` (all opt-in): `skill_contracts`
+  composition (`BL-100`), `drift_monitor`/`drift_threshold` with a new
+  `DriftThresholdCrossed` event (`BL-101`), recovery directives via
+  `RecoveryOutcome.directive` (`BL-102`), and run-scoped `lifecycles`
+  (`BL-104`).
+- `skills.dispatchers.default_dispatcher`: the recommended instrumented,
+  cheap-first chain in one call (`BL-103`).
+- `skills.HashingEmbeddingProvider`: a deterministic, dependency-free
+  `EmbeddingProvider` so `EmbeddingDispatcher` works with no vendor
+  (`BL-110`).
+- `ActionBudget.max_cost_usd` / `max_tokens_per_tool` /
+  `max_wall_clock_seconds_per_tool`; `BudgetTracker.consume_cost`,
+  `snapshot`, and per-tool token/second attribution; `initial_*`
+  seeding for a cumulative resume (`BL-123`, `BL-154`).
+- `harness.RetryPolicy` and `PydanticAIRuntime(retry_policy=...,
+  soft_reject_as_error=...)` (`BL-136`, `BL-137`).
+- `skills.MarketplaceSkillSource`, a `SignatureVerifier` hook on the
+  network sources, and one shared hardened download/extract path
+  (`BL-112`).
+- `workloads.load_workload_from_entry_point` (installed-package
+  workloads via `[project.entry-points]`) (`BL-121`).
+- `agents run --json` and `agents skills install <name> --from <src>`
+  (`BL-125`); the CLI honours a model-free manifest dispatcher
+  (`BL-161`).
+- `memory.wrap_acl` / `memory.wrap_encrypted`: decorators that forward
+  the extension Protocols the wrapped backend supports, truthfully
+  (`BL-156`).
+- Governance/release: tree-wide `REUSE.toml` + `LICENSES/Apache-2.0.txt`
+  with a `reuse lint` CI gate (`BL-152`); a blocking `dependency-audit`
+  CI job (`BL-150`); `docs/releasing.md` and `.github/workflows/release.yml`
+  (`BL-151`); ADR 0010.
+
+### Fixed
+
+- `HarnessToolGuard`: a SOFT governance failure now returns REJECT/SOFT
+  instead of APPROVE (it was a silent no-op; the runtime's soft-reject
+  path was dead). (`BL-163`)
+- A raising `RecoveryHandler` is contained (`recovered=False`,
+  continue) instead of aborting a soft path. (`BL-164`)
+- `PydanticAIRuntime.run` re-raises `CancelledError`/`BudgetExceeded`
+  before consulting guard state. (`BL-165`)
+- `compose_contracts` keeps the strictest predicate (HARD over SOFT) on
+  a name collision, not first-occurrence. (`BL-166`)
+- `MemoryAudit` rejects reserved base-event keys (e.g. `namespace`) at
+  construction, not mid-run. (`BL-167`)
+- `SQLiteStore.sweep_expired` uses strict `<`, consistent with
+  read/list/scan. (`BL-168`)
+- `LocalSkillSource` copies regular files only and refuses a symlink
+  (was dereferencing into the bundle). (`BL-169`)
+- `S3Store.scan` / `DynamoDBStore.scan` page past non-terminal empty
+  pages instead of falsely signalling exhaustion; `S3Store.list_keys`
+  pushes the prefix server-side; `SQLiteStore` batch ops are atomic;
+  `SkillRegistry` `name@version` parses via `rpartition`; non-file
+  archive members are rejected; per-member reads clamp to the remaining
+  budget; `DynamoDBStore` `exp` is float seconds. (`BL-157`, `BL-161`,
+  `BL-170`)
+
+### Changed
+
+- `EncryptedStore.read`/`write` route through shared `_seal`/`_unseal`
+  helpers (behaviour unchanged); `install_skill`/registry gain an
+  `allow_contract` passthrough.
+
+### Documentation
+
+- ADR 0010; `docs/releasing.md`; backlog statuses (`BL-100`-`BL-104`,
+  `BL-110`, `BL-112`, `BL-121`, `BL-123`, `BL-125`, `BL-136`, `BL-137`,
+  `BL-150`-`BL-152`, `BL-154`, `BL-156`, `BL-157`, `BL-161` resolved;
+  `BL-163`-`BL-171` added); `STATUS.md`/`LIMITATIONS.md` refreshed
+  (L4, L5, L9, L10, L12-L14). Dispatcher-count erratum: "seven routers
+  plus an InstrumentedDispatcher wrapper" (ADR 0009 said "eight",
+  internally contradictory; ADRs are immutable, corrected forward).
+  `docs/runtime-providers.md` PydanticAI doc URLs and shifted line
+  citations corrected.
+
 ## [Unreleased] Skill bundles: shell and routing (2026-05-17)
 
 ### Added

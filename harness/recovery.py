@@ -17,9 +17,19 @@ exactly.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
-__all__ = ["RecoveryHandler", "RecoveryOutcome"]
+__all__ = ["RecoveryDirective", "RecoveryHandler", "RecoveryOutcome"]
+
+# What the enforcement loop should do after a soft violation's handler
+# ran. ``continue`` is the L1 behaviour (emit-and-continue, the run
+# proceeds unchanged). The others let a handler drive control flow
+# (BL-102); they only take effect on the postcondition stage, where the
+# output is in hand:
+#  - ``retry``: re-invoke the runtime once and re-validate the output.
+#  - ``substitute``: replace the output with ``RecoveryOutcome.replacement``.
+#  - ``escalate``: raise PostconditionViolation despite the soft severity.
+RecoveryDirective = Literal["continue", "retry", "substitute", "escalate"]
 
 
 @dataclass(frozen=True)
@@ -32,10 +42,23 @@ class RecoveryOutcome:
         recovered: The handler's own signal that it believes the
             condition was remediated. Recorded for audit; it does not
             change the soft-continue control flow.
+        directive: What the enforcement loop should do next (BL-102).
+            Defaults to ``"continue"`` so an existing handler that does
+            not set it preserves the exact L1 emit-and-continue path.
+            ``retry`` / ``substitute`` / ``escalate`` are honoured only
+            on the postcondition stage (the only stage with an output to
+            act on); on other stages a non-continue directive is recorded
+            but the run still continues, as before.
+        replacement: The output to use when ``directive == "substitute"``.
+            Ignored otherwise. Must validate against the workload's
+            output model or the substitution is rejected and the run
+            continues with the original output.
     """
 
     action: str
     recovered: bool = True
+    directive: RecoveryDirective = "continue"
+    replacement: Any = None
 
 
 @runtime_checkable
