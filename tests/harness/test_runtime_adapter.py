@@ -414,3 +414,28 @@ async def test_retry_policy_does_not_retry_unlisted_error() -> None:
     with pytest.raises(ValueError, match="not transient"):
         await rt.run("go")
     assert calls["n"] == 1  # not retried
+
+
+# --- BL-123 wiring: per-tool wall-clock fires in a real run (Codex #1)
+
+
+@pytest.mark.asyncio
+async def test_per_tool_wall_clock_enforced_in_run() -> None:
+    """A slow tool trips max_wall_clock_seconds_per_tool via the wrapper.
+
+    Before the fix the runtime never passed wall_clock_seconds, so the
+    per-tool wall-clock cap could not fire during a real run.
+    """
+
+    def slow() -> str:
+        import time as _t
+
+        _t.sleep(0.02)
+        return "done"
+
+    rt = PydanticAIRuntime(TestModel(), output_type=str)
+    budget = BudgetTracker(ActionBudget(max_wall_clock_seconds_per_tool={"slow": 0.0}))
+    with pytest.raises(BudgetExceeded) as exc:
+        await rt.run("go", tools=[slow], budget=budget)
+    assert exc.value.budget_kind == "wall_clock:slow"
+    assert budget.tool_calls == 1  # counted once, not double-counted

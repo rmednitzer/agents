@@ -90,3 +90,20 @@ def _cleanup_modules() -> None:
 def _modclean() -> Any:
     yield
     _cleanup_modules()
+
+
+def test_missing_dotted_target_is_workload_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dotted target whose package is absent -> WorkloadNotFound.
+
+    ModuleNotFoundError.name is the top-level package ("nope_pkg"), not
+    the full dotted value ("nope_pkg.sub"); the loader must still
+    normalise the absent-target case (Codex review #5).
+    """
+    monkeypatch.setattr(
+        "importlib.metadata.entry_points",
+        lambda *, group: [_EP("ep", "nope_pkg_xyz.sub")],
+    )
+    with pytest.raises(WorkloadNotFound, match="entry-point target"):
+        load_workload_from_entry_point("ep")

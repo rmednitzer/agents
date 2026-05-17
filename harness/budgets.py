@@ -42,14 +42,30 @@ class ActionBudget(BaseModel):
     bounded only by the aggregate cap. Both are enforced.
 
     L3 cost and per-tool resource caps (BL-123), all optional and
-    defaulting to None so an existing ActionBudget is unchanged:
+    defaulting to None so an existing ActionBudget is unchanged. What
+    the default ``PydanticAIRuntime`` feeds, and what is caller-fed,
+    differs by dimension (the framework binds no model or pricing, ADR
+    0001, and PydanticAI reports token usage at the run level, not per
+    tool):
 
-    - ``max_cost_usd``: aggregate spend ceiling; the adapter reports
-      cost via ``consume_cost`` (a model-priced run) or it stays 0.
-    - ``max_tokens_per_tool`` / ``max_wall_clock_seconds_per_tool``:
-      per-tool token and wall-clock ceilings, the resource analogues of
-      ``max_tool_calls_per_tool``. A tool absent from a map is bounded
-      only by the aggregate cap for that dimension.
+    - ``max_cost_usd``: aggregate spend ceiling. The framework prices
+      no model, so the default adapter never calls ``consume_cost``;
+      this dimension stays 0 unless a pricing-aware caller or a
+      pricing-aware adapter feeds spend via ``consume_cost`` (the same
+      "caller-fed" stance as ``RuntimeSpec.parameters`` not being
+      auto-forwarded). It is the surface for cost capping, not an
+      automatic cost meter.
+    - ``max_wall_clock_seconds_per_tool``: per-tool wall-clock ceiling.
+      The default adapter DOES feed this: it times each tool body and
+      attributes the duration, so this cap fires in a real run.
+    - ``max_tokens_per_tool``: per-tool token ceiling. A tool call does
+      not itself consume model tokens (the model round-trips do), so
+      the default adapter has no per-tool token signal and never feeds
+      this; it is caller-fed (a tool that itself calls a model can pass
+      ``tokens=`` to ``consume_tool_call``).
+
+    A tool absent from a per-tool map is bounded only by the aggregate
+    cap for that dimension.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -87,6 +103,8 @@ class BudgetTracker:
         initial_tokens: int = 0,
         initial_tool_calls: int = 0,
         initial_per_tool: dict[str, int] | None = None,
+        initial_per_tool_tokens: dict[str, int] | None = None,
+        initial_per_tool_seconds: dict[str, float] | None = None,
         initial_cost_usd: float = 0.0,
     ) -> None:
         """Construct a per-run counter.
@@ -106,8 +124,8 @@ class BudgetTracker:
         self._tokens = initial_tokens
         self._tool_calls = initial_tool_calls
         self._per_tool: dict[str, int] = dict(initial_per_tool or {})
-        self._per_tool_tokens: dict[str, int] = {}
-        self._per_tool_seconds: dict[str, float] = {}
+        self._per_tool_tokens: dict[str, int] = dict(initial_per_tool_tokens or {})
+        self._per_tool_seconds: dict[str, float] = dict(initial_per_tool_seconds or {})
         self._cost_usd = initial_cost_usd
         self._started_at = datetime.now(UTC)
 
@@ -143,6 +161,8 @@ class BudgetTracker:
             "consumed_tokens": self._tokens,
             "consumed_tool_calls": self._tool_calls,
             "consumed_per_tool": dict(self._per_tool),
+            "consumed_per_tool_tokens": dict(self._per_tool_tokens),
+            "consumed_per_tool_seconds": dict(self._per_tool_seconds),
             "consumed_cost_usd": self._cost_usd,
         }
 
@@ -234,6 +254,8 @@ class BudgetTracker:
             return _remaining(self._tokens, self._budget.max_tokens)
         if kind == "tool_calls":
             return _remaining(self._tool_calls, self._budget.max_tool_calls)
+        if kind == "cost":
+            return _remaining(self._cost_usd, self._budget.max_cost_usd)
         elapsed = (datetime.now(UTC) - self._started_at).total_seconds()
         return _remaining(elapsed, self._budget.max_wall_clock_seconds)
 

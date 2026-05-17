@@ -274,6 +274,8 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
                 "initial_tokens": resume.consumed_tokens,
                 "initial_tool_calls": resume.consumed_tool_calls,
                 "initial_per_tool": dict(resume.consumed_per_tool),
+                "initial_per_tool_tokens": dict(resume.consumed_per_tool_tokens),
+                "initial_per_tool_seconds": dict(resume.consumed_per_tool_seconds),
                 "initial_cost_usd": resume.consumed_cost_usd,
             }
         tracker = BudgetTracker(budget, sink=active_sink, base_event_fields=base, **seed)
@@ -299,22 +301,23 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
             update.update(tracker.snapshot())
         return state.model_copy(update=update)
 
-    async def _invoke() -> Any:
+    async def _invoke(*, resume_state: ResumableState | None) -> Any:
         return await runtime.run(
             prompt=input.model_dump_json(),
             deps=deps,
             budget=tracker,
             mcp_servers=mcp_servers,
             guard=active_guard,
-            resume=resume,
+            resume=resume_state,
         )
 
     async with AsyncExitStack() as stack:
         for lifecycle in lifecycles or ():
             await stack.enter_async_context(lifecycle)
 
-        # 4. Runtime invocation
-        result = await _invoke()
+        # 4. Runtime invocation (the first leg continues any approval
+        # pause via `resume`).
+        result = await _invoke(resume_state=resume)
 
         # 4a. An approval pause short-circuits (BL-002), carrying the
         # budget snapshot for a cumulative resume (BL-154).
@@ -323,7 +326,13 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
 
         # 5/6. Parse output, validate postconditions, honour any
         # postcondition recovery directive (BL-102). A "retry" directive
-        # re-invokes the runtime at most once.
+        # re-invokes the runtime at most once. The retry does NOT carry
+        # `resume`: a retry is a fresh attempt to satisfy a postcondition,
+        # not a continuation of the approved pause, so re-passing `resume`
+        # would let the retried run re-consume a prior approval and run
+        # an approval-gated tool again without fresh human approval. With
+        # resume=None the retry re-pauses (returns a ResumableState) if it
+        # hits an approval-gated tool again, requiring a new decision.
         retried = False
         while True:
             if isinstance(result, output_model):
@@ -371,7 +380,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
             if not retry_requested:
                 break
             retried = True
-            result = await _invoke()
+            result = await _invoke(resume_state=None)
             if isinstance(result, ResumableState):
                 return _finalize_resumable(result)
 

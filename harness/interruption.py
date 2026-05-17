@@ -83,6 +83,8 @@ class ResumableState(BaseModel):
     consumed_tokens: int = 0
     consumed_tool_calls: int = 0
     consumed_per_tool: dict[str, int] = Field(default_factory=dict)
+    consumed_per_tool_tokens: dict[str, int] = Field(default_factory=dict)
+    consumed_per_tool_seconds: dict[str, float] = Field(default_factory=dict)
     consumed_cost_usd: float = 0.0
 
     def approve(self, interruption_id: str) -> ResumableState:

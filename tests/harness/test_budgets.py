@@ -238,3 +238,35 @@ def test_snapshot_round_trips_into_seed() -> None:
     )
     assert t2.tokens == 10
     assert t2.cost_usd == pytest.approx(0.5)
+
+
+# --- Codex review fixes: remaining("cost") and per-tool resume --------
+
+
+def test_remaining_cost_returns_usd_not_seconds() -> None:
+    tracker = BudgetTracker(ActionBudget(max_cost_usd=2.0))
+    tracker.consume_cost(0.5)
+    # Must be USD remaining (1.5), not the wall-clock fall-through.
+    assert tracker.remaining("cost") == pytest.approx(1.5)
+
+
+def test_remaining_cost_unbounded_is_inf() -> None:
+    assert BudgetTracker(ActionBudget()).remaining("cost") == float("inf")
+
+
+def test_snapshot_carries_per_tool_token_and_second_maps() -> None:
+    t1 = BudgetTracker(ActionBudget())
+    t1.consume_tool_call(tool="search", tokens=30, wall_clock_seconds=1.5)
+    snap = t1.snapshot()
+    assert snap["consumed_per_tool_tokens"] == {"search": 30}
+    assert snap["consumed_per_tool_seconds"] == {"search": pytest.approx(1.5)}
+    # Seeding a resumed tracker accumulates, not resets: the per-tool
+    # token cap fires across the (resumed) leg boundary.
+    t2 = BudgetTracker(
+        ActionBudget(max_tokens_per_tool={"search": 50}),
+        initial_per_tool_tokens=snap["consumed_per_tool_tokens"],
+        initial_per_tool_seconds=snap["consumed_per_tool_seconds"],
+    )
+    with pytest.raises(BudgetExceeded) as exc:
+        t2.consume_tool_call(tool="search", tokens=25)  # 30 + 25 > 50
+    assert exc.value.budget_kind == "tokens:search"

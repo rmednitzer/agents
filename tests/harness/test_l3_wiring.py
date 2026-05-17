@@ -342,3 +342,52 @@ async def test_bl154_budget_accumulates_across_resume() -> None:
             budget=budget,
             resume=resumed,
         )
+
+
+# --- Codex P1: postcondition retry must not reuse a prior approval ----
+
+
+class _ResumeRecordingRuntime:
+    """Records the `resume` argument of every run() call."""
+
+    name = "resume-recording"
+
+    def __init__(self) -> None:
+        self.resumes: list[Any] = []
+
+    async def run(self, prompt: str, *, resume: Any = None, **kw: Any) -> Any:
+        self.resumes.append(resume)
+        return _Out(text="raw")  # never satisfies _needs_fix
+
+    def stream(self, prompt: str, **kw: Any) -> AsyncIterator[Any]:
+        raise NotImplementedError
+
+
+@pytest.mark.asyncio
+async def test_p1_retry_does_not_replay_prior_approval() -> None:
+    contract: Contract[_In, _Out] = Contract(name="c", version="1", postconditions=[_needs_fix])
+    rt = _ResumeRecordingRuntime()
+    approved = ResumableState(
+        contract_name="c",
+        contract_version="1",
+        workload="c",
+        input_payload={},
+        pending_approvals=[
+            ApprovalInterruption(id="a1", created_at=_now(), tool="t", decision="approved")
+        ],
+        trace_id="trace-1",
+    )
+    handler = _Directive(RecoveryOutcome(action="retry", directive="retry"))
+    await run_under_contract(
+        runtime=rt,
+        contract=contract,
+        input=_In(query="q"),
+        output_model=_Out,
+        recovery={"needs_fix": handler},
+        resume=approved,
+    )
+    # First leg continues the approved pause; the retry leg must NOT
+    # carry the approval (resume=None) or it could re-authorise an
+    # approval-gated tool without a fresh human decision.
+    assert rt.resumes[0] is approved
+    assert rt.resumes[1] is None

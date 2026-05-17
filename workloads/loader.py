@@ -243,7 +243,16 @@ def load_workload_from_entry_point(
     try:
         module = importlib.import_module(match.value)
     except ModuleNotFoundError as exc:
-        if exc.name in (match.value, None):
+        # For a dotted target ``foo.bar``, a missing ``foo`` reports
+        # exc.name == "foo" (the top-level package), not the full
+        # target. The target itself being absent (the missing module is
+        # the target or an ancestor package of it) is "not found"; a
+        # missing module that is NOT an ancestor means the target
+        # imported but a dependency is absent: a real ImportError to
+        # surface for honest triage, not mislabel as "not found"
+        # (parity with the in-tree load_workload).
+        missing = exc.name
+        if missing is None or match.value == missing or match.value.startswith(missing + "."):
             raise WorkloadNotFound(name, f"entry-point target {match.value!r}: {exc}") from exc
         raise
 

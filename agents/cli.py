@@ -117,7 +117,17 @@ def cmd_skills_list(args: argparse.Namespace) -> int:
 
 async def _run_workload(name: str, query: str) -> dict[str, Any]:
     registry = _skill_registry()
-    lw = load_workload(name, registry=registry)
+    # An ImportError from the LOAD phase (a workload package with a
+    # broken/missing dependency) is an operator error: normalise it to a
+    # WorkloadError so the CLI reports it cleanly (BL-161). An ImportError
+    # raised later, inside the workload body, is NOT caught here: it
+    # propagates for honest triage, the same contract as a genuine
+    # in-body TypeError (audit / Codex review: the prior blanket
+    # `except ImportError` in cmd_run masked body failures).
+    try:
+        lw = load_workload(name, registry=registry)
+    except ImportError as exc:
+        raise WorkloadError(f"workload {name!r} failed to import: {exc!r}") from exc
 
     dispatch: dict[str, Any] | None = None
     if lw.manifest.dispatcher and lw.manifest.skills:
@@ -160,23 +170,18 @@ async def _run_workload(name: str, query: str) -> dict[str, Any]:
 def cmd_run(args: argparse.Namespace) -> int:
     """BL-021: load a workload, optionally dispatch, run under contract.
 
-    Reports a WorkloadError and a missing-dependency ImportError from
-    ``load_workload`` cleanly (non-zero exit, no traceback), the same
-    resilience ``workloads list`` already has (BL-161). A genuine
-    exception raised *inside* the workload body is deliberately NOT
-    swallowed: it propagates for honest triage rather than being
+    A load-phase failure (including a missing-dependency ImportError,
+    normalised to WorkloadError inside ``_run_workload``) is reported
+    cleanly (non-zero exit, no traceback), the same resilience
+    ``workloads list`` has (BL-161). A genuine exception raised *inside*
+    the workload body (TypeError, ImportError, anything) is deliberately
+    NOT caught here: it propagates for honest triage rather than being
     relabelled as an operator error.
     """
     try:
         out = asyncio.run(_run_workload(args.workload, args.query))
     except WorkloadError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
-    except ImportError as exc:
-        # A workload package with a broken/missing dependency: load_workload
-        # propagates the real ImportError rather than mislabelling it
-        # "not found". Surface it cleanly, like `workloads list`.
-        print(f"error: workload {args.workload!r} failed to import: {exc!r}", file=sys.stderr)
         return 1
     indent = None if getattr(args, "json", False) else 2
     print(json.dumps(out, indent=indent, default=str))

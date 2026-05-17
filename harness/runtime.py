@@ -306,20 +306,43 @@ def _wrap_tool(
             used_approvals=used_approvals,
         )
 
+    def _charge_wall_clock(started: float) -> None:
+        # The gate already counted the call (pre-execution, so an
+        # over-quota call is blocked before it runs); attribute the
+        # measured body duration to the per-tool wall-clock cap here,
+        # post-execution (n=0 adds no count). This is what makes
+        # ActionBudget.max_wall_clock_seconds_per_tool fire in a real
+        # run. Per-tool token attribution is intentionally NOT done
+        # here: a tool call does not itself consume model tokens (the
+        # model round-trips do) and PydanticAI reports usage at the run
+        # level, so the default adapter has no per-tool token signal;
+        # max_tokens_per_tool is a caller-fed surface (a tool that
+        # itself calls a model can pass tokens=...).
+        if budget is not None:
+            budget.consume_tool_call(0, tool=name, wall_clock_seconds=time.perf_counter() - started)
+
     @functools.wraps(func)
     async def _async_wrapper(*args: Any, **kwargs: Any) -> Any:
         soft = await _local_gate(kwargs)
         if soft is not None:
             return soft
-        result = func(*args, **kwargs)
-        return await result if inspect.isawaitable(result) else result
+        started = time.perf_counter()
+        try:
+            result = func(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        finally:
+            _charge_wall_clock(started)
 
     @functools.wraps(func)
     async def _sync_wrapper(*args: Any, **kwargs: Any) -> Any:
         soft = await _local_gate(kwargs)
         if soft is not None:
             return soft
-        return func(*args, **kwargs)
+        started = time.perf_counter()
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _charge_wall_clock(started)
 
     wrapper = _async_wrapper if is_async else _sync_wrapper
     with contextlib.suppress(ValueError, TypeError):
@@ -444,7 +467,16 @@ class PydanticAIRuntime:
             )
             if soft is not None:
                 return soft
-            return await call_tool(name, tool_args)
+            started = time.perf_counter()
+            try:
+                return await call_tool(name, tool_args)
+            finally:
+                # Per-tool wall-clock parity with local tools (BL-123);
+                # the gate already counted the call. n=0 adds no count.
+                if budget is not None:
+                    budget.consume_tool_call(
+                        0, tool=name, wall_clock_seconds=time.perf_counter() - started
+                    )
 
         toolsets = [_to_pydantic_mcp(s, _mcp_process) for s in (mcp_servers or [])]
         return Agent(

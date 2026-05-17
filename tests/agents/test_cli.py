@@ -198,3 +198,26 @@ def test_skills_install_bad_source_spec(capsys: pytest.CaptureFixture[str]) -> N
     rc = main(["skills", "install", "x", "--from", "weird:thing"])
     assert rc == 1
     assert "must be" in capsys.readouterr().err
+
+
+def test_run_does_not_mask_import_error_in_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An ImportError raised *inside* main() surfaces, not relabelled.
+
+    Same honest-triage contract as a genuine in-body TypeError; the
+    prior blanket `except ImportError` in cmd_run masked it (Codex #7).
+    """
+
+    async def _buggy_main(q: str) -> str:
+        import a_module_that_truly_does_not_exist_zzz  # noqa: F401
+
+        return q
+
+    class _LW:
+        manifest = type("M", (), {"dispatcher": None, "skills": []})()
+        main = staticmethod(_buggy_main)
+
+    monkeypatch.setattr(cli, "load_workload", lambda name, *, registry: _LW())
+    with pytest.raises(ModuleNotFoundError, match="a_module_that_truly_does_not_exist_zzz"):
+        main(["run", "x", "q"])
