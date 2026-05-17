@@ -12,6 +12,7 @@ error.
 
 from __future__ import annotations
 
+import heapq
 import json
 
 __all__ = ["first_json_array"]
@@ -96,12 +97,19 @@ def first_json_array(text: str) -> str | None:
     spans = _balanced_spans(text)
     if not spans:
         return None
-    spans.sort()  # by opening index, then end: earliest/outermost first
-    for opened, end in spans[:_MAX_CANDIDATES]:
+    # Only the _MAX_CANDIDATES smallest-opening spans are ever parsed,
+    # so select exactly those: heapq.nsmallest is O(n log k) with k
+    # constant, keeping an adversarial O(n)-span blob linear instead of
+    # the O(n log n) a full spans.sort() would cost (the DoS bound
+    # BL-173 intends). nsmallest returns them in ascending order, so
+    # candidates[0] is still the earliest/outermost span.
+    candidates = heapq.nsmallest(_MAX_CANDIDATES, spans)
+    for opened, end in candidates:
         candidate = text[opened:end]
         try:
             if isinstance(json.loads(candidate), list):
                 return candidate
         except (json.JSONDecodeError, RecursionError):
             continue
-    return text[spans[0][0] : spans[0][1]]
+    first = candidates[0]
+    return text[first[0] : first[1]]

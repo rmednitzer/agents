@@ -259,9 +259,19 @@ class EncryptedStore:
     async def list_keys(self, prefix: str = "") -> list[str]:
         return await self._inner.list_keys(prefix)
 
+    def _aes_cached(self, key_id: str, key_bytes: bytes) -> Any:
+        """AESGCM for ``key_id``, caching the given bytes (no re-fetch)."""
+        aes = self._aes_cache.get(key_id)
+        if aes is None:
+            aes = self._aesgcm(key_bytes)
+            self._aes_cache[key_id] = aes
+        return aes
+
     def _aes_for(self, key_id: str) -> Any:
         aes = self._aes_cache.get(key_id)
         if aes is None:
+            # Only reached for a historical key id on decrypt; the
+            # current key is cached by _seal from current_key()'s bytes.
             aes = self._aesgcm(self._vkp.key(self._ns, key_id))
             self._aes_cache[key_id] = aes
         return aes
@@ -274,12 +284,15 @@ class EncryptedStore:
         # Versioned envelope: 1-byte key-id length, key-id, nonce, ct.
         # The key id is NOT in the AAD; AAD stays namespace::key so a
         # value re-sealed under a rotated key still binds to the same
-        # namespace/key. The id only selects the decrypt key.
-        key_id, _ = self._vkp.current_key(self._ns)
+        # namespace/key. The id only selects the decrypt key. Use the
+        # key bytes current_key() already returned (do not call
+        # provider.key() again: for a KMS provider that would double
+        # the lookup per write).
+        key_id, key_bytes = self._vkp.current_key(self._ns)
         kid = key_id.encode()
         if not 0 < len(kid) < 256:
             raise ValueError("key id must be 1..255 bytes when UTF-8 encoded")
-        aes = self._aes_for(key_id)
+        aes = self._aes_cached(key_id, key_bytes)
         ct = bytes(aes.encrypt(nonce, value, aad))
         return bytes([len(kid)]) + kid + nonce + ct
 
@@ -290,8 +303,18 @@ class EncryptedStore:
         if not self._versioned:
             nonce, ct = sealed[:_NONCE_BYTES], sealed[_NONCE_BYTES:]
             return bytes(self._aes.decrypt(nonce, ct, aad))
+        # A stored value is data from a backend (a trust boundary): a
+        # truncated/corrupt envelope must raise a controlled ValueError,
+        # not an uncontrolled IndexError/UnicodeDecodeError.
+        if not sealed:
+            raise ValueError("malformed encrypted envelope: empty value")
         n = sealed[0]
-        key_id = sealed[1 : 1 + n].decode()
+        if n == 0 or len(sealed) < 1 + n + _NONCE_BYTES:
+            raise ValueError("malformed encrypted envelope: truncated header")
+        try:
+            key_id = sealed[1 : 1 + n].decode()
+        except UnicodeDecodeError as exc:
+            raise ValueError("malformed encrypted envelope: bad key id") from exc
         body = sealed[1 + n :]
         nonce, ct = body[:_NONCE_BYTES], body[_NONCE_BYTES:]
         aes = self._aes_for(key_id)

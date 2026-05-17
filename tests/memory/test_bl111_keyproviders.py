@@ -160,3 +160,50 @@ async def test_wrap_encrypted_accepts_versioned_provider() -> None:
     await store.mset({"a": b"1", "b": b"2"})
     kp.rotate("v2", _K2)
     assert await store.mget(["a", "b"]) == [b"1", b"2"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "corrupt",
+    [b"", b"\x00rest", b"\x02v1short"],
+    ids=["empty", "zero-len-id", "truncated-body"],
+)
+async def test_malformed_versioned_envelope_raises_value_error(corrupt: bytes) -> None:
+    """A truncated/corrupt stored value (backend trust boundary) raises
+    a controlled ValueError, not IndexError/UnicodeDecodeError."""
+    kp = RotatingKeyProvider({"v1": _K1}, "v1")
+    store = EncryptedStore(_inner(), kp)
+    inner = store._inner  # type: ignore[attr-defined]
+    await inner.write("k", corrupt)
+    with pytest.raises(ValueError, match="malformed encrypted envelope"):
+        await store.read("k")
+
+
+@pytest.mark.asyncio
+async def test_seal_does_not_double_lookup_current_key() -> None:
+    """_seal uses current_key()'s returned bytes; it must not also call
+    provider.key() for the same id (a KMS provider would double the
+    lookup per write)."""
+
+    class _Counting:
+        def __init__(self) -> None:
+            self.current_calls = 0
+            self.key_calls = 0
+
+        def current_key(self, namespace: str) -> tuple[str, bytes]:
+            self.current_calls += 1
+            return "v1", _K1
+
+        def key(self, namespace: str, key_id: str) -> bytes:
+            self.key_calls += 1
+            return _K1
+
+    kp = _Counting()
+    assert isinstance(kp, VersionedKeyProvider)
+    store = EncryptedStore(_inner(), kp)
+    await store.write("k", b"payload")
+    assert kp.current_calls == 1
+    assert kp.key_calls == 0
+    # A read of a current-key value hits the _seal-populated cache too.
+    assert await store.read("k") == b"payload"
+    assert kp.key_calls == 0
