@@ -88,8 +88,16 @@ class Redactor:
     def _scrub(self, value: Any) -> Any:
         if isinstance(value, dict):
             return {k: self._scrub_member(k, v) for k, v in value.items()}
-        if isinstance(value, list | tuple | set | frozenset):
-            return type(value)(self._scrub(v) for v in value)
+        if isinstance(value, list | tuple):
+            # Rebuild as a plain list/tuple. A tuple subclass such as a
+            # namedtuple has an arity-sensitive constructor, so
+            # type(value)(<generator>) would raise; degrading to the
+            # builtin is safe for a sink-bound sanitised copy.
+            items = [self._scrub(v) for v in value]
+            return tuple(items) if isinstance(value, tuple) else items
+        if isinstance(value, set | frozenset):
+            scrubbed = [self._scrub(v) for v in value]
+            return frozenset(scrubbed) if isinstance(value, frozenset) else set(scrubbed)
         return self._scrub_scalar(value)
 
     def _scrub_member(self, key: Any, value: Any) -> Any:

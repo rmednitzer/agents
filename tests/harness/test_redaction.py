@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import namedtuple
 from datetime import UTC, datetime
 
 from harness.contract import Severity
@@ -62,6 +63,14 @@ def test_recurses_into_tuple_and_set() -> None:
     out = Redactor().redact(e)
     assert out.action_arguments["payload"] == ({"api_key": "[REDACTED]"},)
     assert out.action_arguments["tags"] == {"[REDACTED]", "ok"}
+
+
+def test_namedtuple_value_degrades_to_tuple_without_error() -> None:
+    cfg = namedtuple("cfg", ["aws", "ok"])
+    e = _governance({"p": cfg("AKIA1234567890ABCDEF", "v")})
+    out = Redactor().redact(e)
+    assert out.action_arguments["p"] == ("[REDACTED]", "v")
+    assert type(out.action_arguments["p"]) is tuple
 
 
 def test_event_without_dict_fields_returned_unchanged() -> None:
