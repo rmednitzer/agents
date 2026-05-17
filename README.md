@@ -1,5 +1,7 @@
 # Agents
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/rmednitzer/agents)
+
 Infrastructure repository for agentic workloads: runtime, skills, harness, memory.
 
 ## Status
