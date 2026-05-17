@@ -56,3 +56,20 @@ jobs:
         with:
           name: coverage-xml-${{ matrix.python }}
           path: coverage.xml
+
+  # Stable aggregate gate. Its name never changes with the test matrix,
+  # so branch protection can require this one context instead of the
+  # matrix-expanded "test (3.x)" names (whose context names change when
+  # the matrix changes, which silently breaks a required check).
+  ci-success:
+    name: ci-success
+    if: always()
+    needs: [lint, type-check, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all CI jobs to have succeeded
+        run: |
+          echo "lint=${{ needs.lint.result }} type-check=${{ needs.type-check.result }} test=${{ needs.test.result }}"
+          [ "${{ needs.lint.result }}" = "success" ] \
+            && [ "${{ needs.type-check.result }}" = "success" ] \
+            && [ "${{ needs.test.result }}" = "success" ]
