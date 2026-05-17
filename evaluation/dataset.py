@@ -77,8 +77,6 @@ def load_dispatch_golden(path: str | Path) -> DispatchGoldenSet:
     return DispatchGoldenSet.model_validate(data)
 
 
-def dispatch_golden_from_cases(
-    name: str, cases: Sequence[DispatchCase]
-) -> DispatchGoldenSet:
+def dispatch_golden_from_cases(name: str, cases: Sequence[DispatchCase]) -> DispatchGoldenSet:
     """Build a DispatchGoldenSet programmatically (tests/helpers)."""
     return DispatchGoldenSet(name=name, cases=tuple(cases))

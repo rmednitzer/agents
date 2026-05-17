@@ -185,9 +185,7 @@ def test_deep_nesting_surfaces_dispatch_error() -> None:
             raise NotImplementedError
 
     registry = SkillRegistry()
-    registry.add(
-        Skill(manifest=SkillManifest(name="x", description="d"), path=Path("/tmp/x"))
-    )
+    registry.add(Skill(manifest=SkillManifest(name="x", description="d"), path=Path("/tmp/x")))
     dispatcher = LLMDispatcher(registry, _DeepRuntime())
     with pytest.raises(DispatchError):
         asyncio.run(dispatcher.dispatch("anything"))

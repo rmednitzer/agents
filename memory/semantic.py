@@ -89,9 +89,7 @@ class InMemorySemanticStore:
         sink: EventSink | None = None,
         base_event_fields: dict[str, object] | None = None,
     ) -> None:
-        self._inner = InMemoryStore(
-            namespace, sink=sink, base_event_fields=base_event_fields
-        )
+        self._inner = InMemoryStore(namespace, sink=sink, base_event_fields=base_event_fields)
         self._embedder = embedder
         self._vectors: dict[str, list[float]] = {}
 

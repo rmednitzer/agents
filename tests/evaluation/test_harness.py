@@ -28,9 +28,7 @@ _REPO = Path(__file__).resolve().parents[2]
 
 def _skill(name: str, desc: str, triggers: str) -> Skill:
     return Skill(
-        manifest=SkillManifest(
-            name=name, description=desc, metadata={"triggers": triggers}
-        ),
+        manifest=SkillManifest(name=name, description=desc, metadata={"triggers": triggers}),
         path=Path("/tmp/" + name),
     )
 
@@ -123,17 +121,11 @@ def _must_be_ok(i: _In) -> bool:
 
 @pytest.mark.asyncio
 async def test_evaluate_trajectory_classifies_outcomes() -> None:
-    contract: Contract[_In, _Out] = Contract(
-        name="c", version="1", preconditions=[_must_be_ok]
-    )
+    contract: Contract[_In, _Out] = Contract(name="c", version="1", preconditions=[_must_be_ok])
     cases = [
         TrajectoryCase(name="good", input_payload={"ok": True}, expected="completed"),
-        TrajectoryCase(
-            name="bad", input_payload={"ok": False}, expected="precondition"
-        ),
-        TrajectoryCase(
-            name="mismatch", input_payload={"ok": False}, expected="completed"
-        ),
+        TrajectoryCase(name="bad", input_payload={"ok": False}, expected="precondition"),
+        TrajectoryCase(name="mismatch", input_payload={"ok": False}, expected="completed"),
     ]
     report = await evaluate_trajectory(_Stub(), contract, _In, _Out, cases)
     assert report.n == 3

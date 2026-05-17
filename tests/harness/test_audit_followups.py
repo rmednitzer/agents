@@ -65,12 +65,8 @@ def test_governance_union_keeps_hard_over_earlier_soft() -> None:
     """A workload's SOFT governance predicate declared first must not
     downgrade a skill's same-named HARD veto (the governance analogue
     of BL-166)."""
-    workload: Contract[Any, Any] = Contract(
-        name="w", version="1", governance=[_guard_soft]
-    )
-    skill: Contract[Any, Any] = Contract(
-        name="s", version="1", governance=[_guard_hard]
-    )
+    workload: Contract[Any, Any] = Contract(name="w", version="1", governance=[_guard_soft])
+    skill: Contract[Any, Any] = Contract(name="s", version="1", governance=[_guard_hard])
     composed = compose_contracts("c", "1", workload, skill)
     govs = {g.name: g for g in composed.governance}
     assert govs["delete_guard"].severity == Severity.HARD
@@ -112,9 +108,7 @@ async def test_postcondition_retry_records_drift_once() -> None:
     the failing postcondition is recorded once (fixed) not twice
     (buggy), so the distribution is an even pass/fail split."""
     monitor = DriftMonitor()
-    contract: Contract[_In, _Out] = Contract(
-        name="c", version="1", postconditions=[_post_fixed]
-    )
+    contract: Contract[_In, _Out] = Contract(name="c", version="1", postconditions=[_post_fixed])
     # Baseline: one passing run -> counts {pass: 1}.
     await run_under_contract(
         runtime=_Stub(_Out(text="fixed")),

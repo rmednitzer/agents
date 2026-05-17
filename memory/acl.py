@@ -185,9 +185,7 @@ class ACLStore:
 
     def _guard(self, operation: Operation, key: str) -> None:
         if not self._policy.allows(self._principal, operation, key):
-            self._audit.access_denied(
-                principal=self._principal, operation=operation, key=key
-            )
+            self._audit.access_denied(principal=self._principal, operation=operation, key=key)
             raise AccessDenied(self._principal, operation, key)
 
     async def read(self, key: str) -> bytes | None:
@@ -338,9 +336,7 @@ def wrap_acl(
     if isinstance(inner, SweepableStore):
         mixins.append(_ACLSweepMixin)
     if not mixins:
-        return ACLStore(
-            inner, policy, principal, sink=sink, base_event_fields=base_event_fields
-        )
+        return ACLStore(inner, policy, principal, sink=sink, base_event_fields=base_event_fields)
     cls = type("ACLStore", (ACLStore, *mixins), {})
     return cls(  # type: ignore[no-any-return]
         inner, policy, principal, sink=sink, base_event_fields=base_event_fields
