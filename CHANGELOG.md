@@ -45,8 +45,11 @@ ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 - `LIMITATIONS.md` L10-L14 (budget non-cumulative across resume;
   watchdog preempts only at await; decorators do not forward extension
   Protocols; DynamoDB integer-second TTL; out-of-tree workload code
-  execution). `docs/backlog.md`: `BL-154`-`BL-161` added; provenance
-  date refreshed.
+  execution). `docs/backlog.md`: `BL-154`-`BL-162` added; provenance
+  date refreshed. `BL-162` / ADR 0009 section 5 record the ADR 0008
+  section 4 follow-up: `main` branch protection must be repointed from
+  the stale `test` context to `ci-success` (a Settings change, not a
+  file; repoint, do not relax the gate).
 - Fixed factual drift: README dispatcher count (eight, not "seven");
   `docs/runtime-providers.md` stale line citations; the `BL-130` ->
   `BL-134` reference in `harness.redaction`; `workloads.manifest`

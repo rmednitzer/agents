@@ -89,6 +89,27 @@ for a blocking tool). `SECURITY.md` gains the prompt-injection /
 untrusted-content posture (`BL-139` resolved). `CLAUDE.md`'s markdown
 rule now exempts code spans, which it always did in practice.
 
+### 5. ADR 0008 section 4 follow-up: branch protection must be repointed
+
+ADR 0008 section 4 added the `ci-success` aggregate job precisely so
+branch protection can require one stable context instead of the
+matrix-expanded `test (3.x)` names. That job ships and passes, but the
+`main` branch-protection rule still requires a context literally named
+`test`, which no job emits since the matrix split. GitHub holds an
+unproduced required context as "Expected, waiting for status to be
+reported" indefinitely, so every PR is unmergeable except by bypassing
+the rule. This is a repository Settings value, not a file, so no PR
+(neither #24 nor this one) can change it.
+
+Decision: track the one-time settings change as `BL-162` and state the
+resolution explicitly so it is not "fixed" by weakening the gate. The
+correct action is to repoint, not relax: in the `main` rule, replace
+the stale required check `test` with `ci-success` (optionally also
+`lint`, `type-check`, `analyze (python)`), keeping required checks and
+no-bypass on. Removing the required check or enabling bypass would
+satisfy the merge box while deleting the gate ADR 0008 section 4
+created, and is explicitly rejected here.
+
 ## Consequences
 
 Positive: the exploitable and silently-wrong paths are closed without an
