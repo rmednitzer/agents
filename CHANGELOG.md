@@ -3,6 +3,83 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Third audit + L3 capability wave (2026-05-17)
+
+See [ADR 0011](./docs/adr/0011-third-audit-and-l3-capability-wave.md).
+All changes are additive to the L1 Protocols (new optional keywords /
+modules / side-by-side Protocols; defaults reproduce prior behaviour).
+
+### Added
+
+- `memory.EnvKeyProvider` / `memory.FileKeyProvider` (single key,
+  base64/hex/raw, stdlib only); the `memory.VersionedKeyProvider`
+  Protocol and `memory.RotatingKeyProvider` reference; `EncryptedStore`
+  writes a rotation-safe key-id value envelope over a versioned
+  provider so a rotation does not strand prior ciphertext (a plain
+  `KeyProvider` keeps the exact prior on-disk format). (`BL-111`)
+- `memory.AttributeACL` / `memory.AttributeRule` (attribute-based
+  access decided per call) and a `harness` `AccessDenied` event
+  (exported as `AccessDeniedEvent`) emitted by `ACLStore` / `wrap_acl`
+  before raising when the optional audit surface is supplied.
+  (`BL-122`)
+- `memory.SemanticMemoryStore` extension Protocol + `SemanticHit` and
+  `memory.InMemorySemanticStore` (with `memory.Embedder`), a
+  deterministic in-tree vector store reusing the BL-110
+  `HashingEmbeddingProvider`. (`BL-131`)
+- `memory.VersionedMemoryStore` extension Protocol
+  (`read_versioned` / `write_versioned` / `delete_versioned`, a
+  content-hash MVCC token) with `InMemoryStore` and `SQLiteStore`
+  reference impls. (`BL-124`)
+- A top-level `evaluation/` component (`evaluate_dispatch` P@1 / MRR,
+  `evaluate_trajectory`, golden-set loader, metrics), the in-tree
+  golden set, `scripts/eval.py`, and a blocking CI `evaluation` job in
+  the `ci-success` aggregate (mypy and the coverage target now include
+  `evaluation`). (`BL-130`)
+- `run_under_contract(..., parent_span_id=...)` for a correlated
+  nested-run span tree (None preserves the prior flat behaviour).
+  (`BL-176`)
+- ADR 0011.
+
+### Fixed
+
+- A pre-existing `dest/<name>` symlink let `GitHubSkillSource` /
+  `MarketplaceSkillSource` escape the install directory (it resolved
+  before clearing the link); a hardened `_prepare_install_dir` unlinks
+  the link first and asserts containment (the network-source twin of
+  `BL-169`). (`BL-172`)
+- `_balanced_spans` was O(n^2) on nested `[[[...]]]` model output
+  (per-close substring slices); now O(1) index pairs with a capped
+  lazy parse, and `RecursionError` from a deep span is contained in
+  the extractor and the LLM / skill-based dispatcher boundary
+  (DispatchError contract kept). (`BL-173`)
+- `compose_contracts` governance keeps the strictest predicate (HARD
+  over SOFT) on a name collision, not first-occurrence (the governance
+  analogue of `BL-166`; a reviewed HARD veto was silently downgraded).
+  (`BL-174`)
+- A postcondition retry directive re-recorded every predicate into the
+  `DriftMonitor`; postcondition drift is now recorded exactly once per
+  run. (`BL-175`)
+- `DynamoDBStore.compare_and_set` (match branch) / `compare_and_delete`
+  gate on `exp >= :now`, matching `_live_item`'s live boundary (was
+  `> :now`, CAS-absent at the exact expiry instant). (`BL-177`)
+- `SQLiteStore.mset` / `mdelete` of an empty batch is an early no-op
+  (was taking the write lock for nothing). (`BL-178`)
+
+### Changed
+
+- `RetryPolicy` docstring corrected: token/step usage is charged from
+  the final attempt only (PydanticAI raises without partial usage on a
+  failed run); the gap is tracked. (`BL-179`, `LIMITATIONS.md` L15)
+
+### Documentation
+
+- ADR 0011; `docs/adr/README.md`; backlog statuses (`BL-111`, `BL-122`,
+  `BL-124`, `BL-130`, `BL-131` resolved; `BL-172`-`BL-179` added;
+  `BL-180` added as the BL-124 multi-key remainder);
+  `STATUS.md` / `LIMITATIONS.md` refreshed (L5 narrowed, L6 narrowed,
+  L15 added); component READMEs and `CLAUDE.md` layout (the
+  `evaluation/` component).
+
 ## [Unreleased] L3 default-path wiring + audit wave (2026-05-17)
 
 See [ADR 0010](./docs/adr/0010-l3-default-path-wiring-and-audit-wave.md).

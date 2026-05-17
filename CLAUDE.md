@@ -33,15 +33,19 @@ agents/
   skills/      reusable skill definitions, registry, dispatchers
   harness/     orchestration and execution control
   memory/      memory backends, schemas, retrieval
+  evaluation/  behavioural regression gate (dispatch P@1/MRR, trajectory)
   tests/       test suite, mirrors source layout
   docs/        architecture, ADRs, backlog, generated JSON Schema
   scripts/     operational and developer scripts
 ```
 
-The L1 framework, the full L2 wave, and the L3 default-path-wiring + audit
-wave are implemented on `main`; see `docs/backlog.md` (line-item tracker)
-and the cross-cutting ADRs `0007` (L2), `0008`/`0009` (L3 entry + first
-audit), and `0010` (default-path wiring, second audit, governance maturity).
+The L1 framework, the full L2 wave, the L3 default-path-wiring + audit
+wave, and the third-audit + L3 capability wave are implemented on
+`main`; see `docs/backlog.md` (line-item tracker) and the cross-cutting
+ADRs `0007` (L2), `0008`/`0009` (L3 entry + first audit), `0010`
+(default-path wiring, second audit, governance maturity), and `0011`
+(third audit; key providers, attribute-based ACL, MVCC tokens,
+semantic memory, the evaluation gate).
 
 ## Conventions
 
@@ -85,7 +89,7 @@ New memory backend:
 1. Add `memory/<backend>.py` implementing the `MemoryStore` Protocol (single module; the existing adapters are `memory/{inmemory,sqlite,redis,s3,dynamodb}.py`).
 2. Import any third-party driver lazily inside `__init__` with a clear error naming the extra; declare the extra in `[project.optional-dependencies]`. The package must import and type-check with the driver absent.
 3. Reuse `memory._audit.MemoryAudit` for the optional `sink`/`base_event_fields` surface; offload blocking I/O via `asyncio.to_thread`; validate keys with `memory.validators`.
-4. Implement only the extension Protocols the backend can honour (Batch/Scan/ContentAddressable/CAS/Sweepable); do not fake unsupported ones.
+4. Implement only the extension Protocols the backend can honour (Batch/Scan/ContentAddressable/CAS/Sweepable/Semantic/Versioned); do not fake unsupported ones.
 5. Tests under `tests/memory/`, using an in-process double (`fakeredis`, `moto`) guarded by `pytest.importorskip`. Document retention, isolation, and any semantics deviation in `memory/README.md` and the module docstring.
 
 ## Quality bar
@@ -110,18 +114,20 @@ Uses `uv`. Set up: `uv sync --all-extras` (installs every optional backend plus 
 
 - `make test` runs pytest.
 - `make lint` runs `ruff check`.
-- `make type-check` runs `mypy agents harness memory workloads skills`.
+- `make type-check` runs `mypy agents harness memory workloads skills evaluation`.
 - `make check` runs lint + type-check + test (run before pushing).
 - `make schema` regenerates `docs/schema/*.json` from the Pydantic models.
-- CI also runs `uvx reuse lint` (REUSE 3.x compliance via `REUSE.toml`)
-  and a blocking `dependency-audit` job (`pip-audit` over the exported
-  lockfile), both in the `ci-success` aggregate gate.
+- CI also runs `uvx reuse lint` (REUSE 3.x compliance via `REUSE.toml`),
+  a blocking `dependency-audit` job (`pip-audit` over the exported
+  lockfile), and a blocking `evaluation` job (`python scripts/eval.py`,
+  the BL-130 dispatch P@1/MRR regression gate), all in the `ci-success`
+  aggregate gate.
 
 The PydanticAI runtime is tested deterministically with `TestModel`/`FunctionModel` (no network or API keys). Optional-backend tests skip cleanly when their driver is absent. Provider selection and credentials are documented in `docs/runtime-providers.md`.
 
 ## Status and limitations
 
-Phase and document maturity: `STATUS.md`. Explicit scope boundaries and known gaps: `LIMITATIONS.md`. Material changes by phase: `CHANGELOG.md`. Versioning, release, and operations policy: `docs/releasing.md`. ADR index: `docs/adr/README.md`. The L3 roadmap is tiered in `docs/backlog.md`; cross-cutting decisions are ADR 0007 (L2), ADR 0008/0009 (L3 entry + first audit), and ADR 0010 (default-path wiring, second audit, governance and release maturity).
+Phase and document maturity: `STATUS.md`. Explicit scope boundaries and known gaps: `LIMITATIONS.md`. Material changes by phase: `CHANGELOG.md`. Versioning, release, and operations policy: `docs/releasing.md`. ADR index: `docs/adr/README.md`. The L3 roadmap is tiered in `docs/backlog.md`; cross-cutting decisions are ADR 0007 (L2), ADR 0008/0009 (L3 entry + first audit), ADR 0010 (default-path wiring, second audit, governance and release maturity), and ADR 0011 (third audit; key providers, attribute-based ACL, MVCC tokens, semantic memory, the evaluation gate).
 
 Security conventions: untrusted skill bundles are loaded with `allow_contract=False` (no `contract.py` execution) and bounded extraction; pin an immutable `ref` plus a `sha256` for tamper-evident installs; wrap event sinks in `harness.RedactingSink` when arguments may carry secrets. The gate is defence in depth, not a sandbox (see `LIMITATIONS.md` L3).
 
