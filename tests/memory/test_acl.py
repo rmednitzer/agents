@@ -104,3 +104,16 @@ async def test_acl_composes_over_encryption() -> None:
     raw = await inner.read("k")
     assert raw is not None
     assert b"secret" not in raw  # still encrypted at rest
+
+
+@pytest.mark.asyncio
+async def test_invalid_key_rejected() -> None:
+    # Key validation precedes the policy check, per the MemoryStore
+    # Protocol. (regression: memory audit #2)
+    from memory.errors import NamespaceViolation
+
+    s = ACLStore(_inner(), _policy(), "alice")
+    with pytest.raises(NamespaceViolation):
+        await s.write("bad::key", b"v")
+    with pytest.raises(NamespaceViolation):
+        await s.read("a/b")

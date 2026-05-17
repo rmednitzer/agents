@@ -150,6 +150,12 @@ def load_workload_from_path(
     own name is the workload identity for the BL-010 check, so the same
     name/skills validators apply as for in-tree workloads.
 
+    Security: importing the bundle executes its Python (``contract.py``
+    at load, ``__main__.py`` module-level code). A workload is trusted
+    code by contract; unlike skill install (ADR 0008) there is no
+    ``allow_contract`` gate here. Only load directories you trust. See
+    ``SECURITY.md`` and ``LIMITATIONS.md`` L14.
+
     Args:
         path: Filesystem path to the workload directory.
         registry: Optional SkillRegistry for the BL-011 skills check.

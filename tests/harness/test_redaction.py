@@ -114,3 +114,26 @@ def test_redacting_sink_passes_through_clean_events() -> None:
     inner = MemorySink()
     RedactingSink(inner).emit(ContractStarted(**_BASE))
     assert inner.events[0].kind == "contract_started"
+
+
+def test_secret_in_top_level_string_field_is_scrubbed() -> None:
+    # redact() now walks every field, not only dict-valued ones, so a
+    # secret-shaped value in a plain string field is caught too.
+    # (regression: harness audit #6)
+    e = GovernanceViolated(
+        **_BASE,
+        predicate="p",
+        severity=Severity.SOFT,
+        action="AKIA1234567890ABCDEF",
+        action_arguments={},
+    )
+    out = Redactor().redact(e)
+    assert out.action == "[REDACTED]"
+
+
+def test_clean_non_dict_event_keeps_identity() -> None:
+    # An event with no sensitive content is still returned as the same
+    # object (no needless copy), so the deepened walk stays a no-op on
+    # benign events.
+    e = ContractStarted(**_BASE)
+    assert Redactor().redact(e) is e

@@ -1,4 +1,4 @@
-"""Secret and PII redaction for harness events (BL-130).
+"""Secret and PII redaction for harness events (BL-134).
 
 Harness events carry free-form caller data: ``GovernanceViolated`` and
 ``ApprovalRequested`` serialize raw tool ``arguments``, and the
@@ -68,19 +68,22 @@ class Redactor:
     placeholder: str = "[REDACTED]"
 
     def redact(self, event: HarnessEvent) -> HarnessEvent:
-        """Return a new event with dict-valued fields scrubbed.
+        """Return a new event with every field scrubbed.
 
-        Frozen events are not mutated; a ``model_copy`` carrying scrubbed
-        values is returned. Events with no dict fields are returned
-        unchanged (no copy).
+        Every field is walked, not only ``dict``-valued ones: a
+        secret-shaped or over-long value in a top-level string or list
+        field is scrubbed too, so the safety net does not depend on the
+        payload being nested under a dict. Frozen events are not
+        mutated; a ``model_copy`` carrying scrubbed values is returned.
+        An event with no sensitive content is returned unchanged (the
+        same object, no copy), since scrubbing is a strict no-op there.
         """
         update: dict[str, Any] = {}
         for name in type(event).model_fields:
             value = getattr(event, name)
-            if isinstance(value, dict):
-                scrubbed = self._scrub(value)
-                if scrubbed != value:
-                    update[name] = scrubbed
+            scrubbed = self._scrub(value)
+            if scrubbed != value:
+                update[name] = scrubbed
         if not update:
             return event
         return event.model_copy(update=update)

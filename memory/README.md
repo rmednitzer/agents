@@ -6,4 +6,10 @@ Adapters: `InMemoryStore` (reference), `SQLiteStore` (stdlib, durable), `RedisSt
 
 Cross-namespace access is a contract violation. Tests must cover isolation explicitly.
 
+Documented deviations and decorator scope:
+
+- TTL precision: `InMemoryStore` / `SQLiteStore` / `S3Store` keep float seconds, `RedisStore` uses milliseconds, `DynamoDBStore` truncates to integer seconds. A sub-second TTL on DynamoDB rounds down; ADR 0004's "sub-second precision" does not hold for that adapter (`LIMITATIONS.md` L13, `BL-157`).
+- S3 is eventually consistent: a read just after a write or delete may see the prior state.
+- `EncryptedStore` and `ACLStore` implement the core `MemoryStore` surface only. They do not forward `BatchMemoryStore` / `ScannableStore` / `ContentAddressableStore` / `CASMemoryStore` / `SweepableStore`, so layering them over a capable backend hides those capabilities (`LIMITATIONS.md` L12, `BL-156`). Both validate keys before any keyed operation, per the Protocol (the inner store also validates; for `EncryptedStore` the early check also prevents an AAD cross-key collision).
+
 See [CLAUDE.md](../CLAUDE.md) for conventions.

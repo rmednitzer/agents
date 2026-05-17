@@ -14,6 +14,7 @@ a later ADR supersedes an earlier one rather than editing it.
 | [0006](./0006-skills-and-dispatcher.md) | Skills and dispatcher | Accepted | Agent Skills compliance, registry, the dispatcher Protocol. |
 | [0007](./0007-l2-implementation-wave.md) | L2 implementation wave | Accepted | Additive-to-L1 rule, lazy backends, the L2 batch delivery. |
 | [0008](./0008-l3-security-hardening-and-roadmap.md) | L3 entry, security hardening, validated roadmap | Accepted | Skill-install and event hardening, the tiered L3 roadmap, CI hardening. |
+| [0009](./0009-code-audit-hardening.md) | Code audit, additive hardening, errata | Accepted | The full-audit fixes, the tracked gaps, ADR 0005/0006 errata. |
 
 See [docs/backlog.md](../backlog.md) for the line-item tracker and
 [CLAUDE.md](../../CLAUDE.md) for when a change needs a new ADR.

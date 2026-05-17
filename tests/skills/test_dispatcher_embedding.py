@@ -41,6 +41,30 @@ def test_cosine_similarity_basics() -> None:
         cosine_similarity([1.0], [1.0, 2.0])
 
 
+def test_cosine_similarity_non_finite_returns_zero() -> None:
+    # A NaN/inf component must not become a 1.0 confidence: min/max
+    # clamping returns the non-NaN operand, so an unguarded NaN would
+    # sort to the top of the ranking. (regression: skills audit S1)
+    nan = float("nan")
+    inf = float("inf")
+    assert cosine_similarity([nan, 1.0], [1.0, 1.0]) == 0.0
+    assert cosine_similarity([1.0, 1.0], [inf, 0.0]) == 0.0
+    assert cosine_similarity([inf, nan], [nan, inf]) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_nan_provider_does_not_pin_confidence_to_one() -> None:
+    class _NaNProvider:
+        async def embed(self, texts: list[str]) -> list[list[float]]:
+            return [[float("nan"), 1.0] for _ in texts]
+
+    r = SkillRegistry()
+    r.add(_skill("poison", "anything"))
+    matches = await EmbeddingDispatcher(r, _NaNProvider()).dispatch("q", limit=1)
+    # Score collapses to 0.0, so it is not a confident (1.0) match.
+    assert matches == [] or matches[0].confidence < 1.0
+
+
 @pytest.mark.asyncio
 async def test_ranks_by_similarity() -> None:
     r = SkillRegistry()

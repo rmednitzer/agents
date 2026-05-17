@@ -7,8 +7,11 @@ scripts/, references/, assets/.
 Framework extensions (lane, triggers, namespace) live in the spec's
 open `metadata` field so skills remain spec-compliant.
 
-Five reference dispatchers ship with the framework: KeywordDispatcher,
-LLMDispatcher, LaneDispatcher, RoutingChainDispatcher, SkillBasedDispatcher.
+Eight dispatchers ship: the five core routers (KeywordDispatcher,
+LLMDispatcher, LaneDispatcher, RoutingChainDispatcher,
+SkillBasedDispatcher) plus the L2 MultiDispatcher and
+EmbeddingDispatcher, and InstrumentedDispatcher wraps any of them with
+telemetry. See skills/dispatchers for the per-dispatcher contract.
 
 See docs/adr/0006-skills-and-dispatcher.md.
 """

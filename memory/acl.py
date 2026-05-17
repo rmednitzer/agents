@@ -21,6 +21,7 @@ from typing import Literal, Protocol, runtime_checkable
 from memory.errors import AccessDenied
 from memory.store import MemoryStore
 from memory.types import Namespace
+from memory.validators import validate_key
 
 __all__ = ["ACLStore", "AccessPolicy", "Operation", "RoleACL"]
 
@@ -97,14 +98,20 @@ class ACLStore:
             raise AccessDenied(self._principal, operation, key)
 
     async def read(self, key: str) -> bytes | None:
+        # Key validation precedes the policy check: the MemoryStore
+        # Protocol mandates validation before any keyed operation, and
+        # the key-format rules are public, so ordering leaks nothing.
+        validate_key(key)
         self._guard("read", key)
         return await self._inner.read(key)
 
     async def write(self, key: str, value: bytes, *, ttl_seconds: float | None = None) -> None:
+        validate_key(key)
         self._guard("write", key)
         await self._inner.write(key, value, ttl_seconds=ttl_seconds)
 
     async def delete(self, key: str) -> None:
+        validate_key(key)
         self._guard("delete", key)
         await self._inner.delete(key)
 
