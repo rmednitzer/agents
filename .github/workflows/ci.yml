@@ -37,7 +37,7 @@ jobs:
           enable-cache: true
       - run: uv python install 3.12
       - run: uv sync --all-extras
-      - run: uv run mypy agents harness memory workloads skills
+      - run: uv run mypy agents harness memory workloads skills evaluation
 
   test:
     runs-on: ubuntu-latest
@@ -53,7 +53,7 @@ jobs:
           enable-cache: true
       - run: uv python install ${{ matrix.python }}
       - run: uv sync --all-extras --python ${{ matrix.python }}
-      - run: uv run --python ${{ matrix.python }} pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov-report=term-missing --cov-report=xml --cov-fail-under=94
+      - run: uv run --python ${{ matrix.python }} pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov=evaluation --cov-report=term-missing --cov-report=xml --cov-fail-under=94
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-xml-${{ matrix.python }}
@@ -78,6 +78,22 @@ jobs:
       - name: Audit locked dependencies for known advisories
         run: uvx pip-audit --strict --progress-spinner=off -r audit-requirements.txt
 
+  # BL-130: the behavioural regression gate. CI verifies code shape;
+  # this fails when dispatch routing quality (P@1 / MRR over the
+  # in-tree golden set, deterministic KeywordDispatcher) regresses
+  # below threshold. Network-free, so it is a blocking gate.
+  evaluation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+      - run: uv run python scripts/eval.py --min-p-at-1 1.0 --min-mrr 1.0
+
   # Stable aggregate gate. Its name never changes with the test matrix,
   # so branch protection can require this one context instead of the
   # matrix-expanded "test (3.x)" names (whose context names change when
@@ -85,13 +101,14 @@ jobs:
   ci-success:
     name: ci-success
     if: always()
-    needs: [lint, type-check, test, dependency-audit]
+    needs: [lint, type-check, test, dependency-audit, evaluation]
     runs-on: ubuntu-latest
     steps:
       - name: Require all CI jobs to have succeeded
         run: |
-          echo "lint=${{ needs.lint.result }} type-check=${{ needs.type-check.result }} test=${{ needs.test.result }} dependency-audit=${{ needs.dependency-audit.result }}"
+          echo "lint=${{ needs.lint.result }} type-check=${{ needs.type-check.result }} test=${{ needs.test.result }} dependency-audit=${{ needs.dependency-audit.result }} evaluation=${{ needs.evaluation.result }}"
           [ "${{ needs.lint.result }}" = "success" ] \
             && [ "${{ needs.type-check.result }}" = "success" ] \
             && [ "${{ needs.test.result }}" = "success" ] \
-            && [ "${{ needs.dependency-audit.result }}" = "success" ]
+            && [ "${{ needs.dependency-audit.result }}" = "success" ] \
+            && [ "${{ needs.evaluation.result }}" = "success" ]

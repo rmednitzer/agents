@@ -9,15 +9,27 @@ principal's role does not permit it.
 
 ``Operation`` is one of read / write / delete / list. RoleACL is a
 simple, declarative policy: role -> allowed operations, with optional
-per-role key-prefix scoping. Richer policies (attribute-based, external
-PDP) are just other AccessPolicy implementations.
+per-role key-prefix scoping. AttributeACL (BL-122) is the attribute-
+based (ABAC) policy: grants are decided per call against the
+principal's attributes, not a static role table. Richer policies
+(external PDP) are just other AccessPolicy implementations.
+
+A denied access raises ``memory.errors.AccessDenied``; when an
+ACLStore is given the optional ``sink`` / ``base_event_fields`` audit
+surface (the BL-040 convention) it also emits a
+``harness.events.AccessDenied`` event just before raising, so a denial
+is observable through the EventSink and not only as a caller exception
+(BL-122).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Literal, Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from typing import Any, Literal, Protocol, runtime_checkable
 
+from harness.sinks import EventSink
+from memory._audit import MemoryAudit
 from memory.errors import AccessDenied
 from memory.store import (
     BatchMemoryStore,
@@ -26,11 +38,20 @@ from memory.store import (
     MemoryStore,
     ScannableStore,
     SweepableStore,
+    VersionedMemoryStore,
 )
 from memory.types import Namespace
 from memory.validators import validate_key
 
-__all__ = ["ACLStore", "AccessPolicy", "Operation", "RoleACL", "wrap_acl"]
+__all__ = [
+    "ACLStore",
+    "AccessPolicy",
+    "AttributeACL",
+    "AttributeRule",
+    "Operation",
+    "RoleACL",
+    "wrap_acl",
+]
 
 Operation = Literal["read", "write", "delete", "list"]
 
@@ -80,6 +101,57 @@ class RoleACL:
         return any(key.startswith(p) for p in scope)
 
 
+@dataclass(frozen=True)
+class AttributeRule:
+    """One ABAC grant (BL-122).
+
+    Grants ``operations`` to a principal iff every ``match`` attribute
+    equals the principal's attribute of that name, and (when
+    ``prefixes`` is non-empty) the target key/prefix is within one of
+    them. An empty ``match`` matches every principal; empty
+    ``prefixes`` scopes to all keys.
+    """
+
+    operations: frozenset[Operation]
+    match: Mapping[str, str] = field(default_factory=dict)
+    prefixes: tuple[str, ...] = ()
+
+
+class AttributeACL:
+    """Attribute-based (dynamic) access policy (BL-122).
+
+    Unlike RoleACL's static principal -> role -> operations table, a
+    grant is decided per call by evaluating ``rules`` against the
+    principal's attributes. ``attributes`` maps a principal to its
+    attribute map (e.g. ``{"team": "payments", "clearance": "high"}``);
+    a rule grants when the operation is in the rule, every required
+    attribute matches, and the key is in scope. An unknown principal
+    has no attributes, so only rules with an empty ``match`` (and a
+    matching prefix) can grant it. Side-effect free, as the
+    AccessPolicy Protocol requires.
+    """
+
+    def __init__(
+        self,
+        attributes: Mapping[str, Mapping[str, str]],
+        rules: Sequence[AttributeRule],
+    ) -> None:
+        self._attributes = {p: dict(a) for p, a in attributes.items()}
+        self._rules = list(rules)
+
+    def allows(self, principal: str, operation: Operation, key: str) -> bool:
+        attrs = self._attributes.get(principal, {})
+        for rule in self._rules:
+            if operation not in rule.operations:
+                continue
+            if any(attrs.get(k) != v for k, v in rule.match.items()):
+                continue
+            if rule.prefixes and not any(key.startswith(p) for p in rule.prefixes):
+                continue
+            return True
+        return False
+
+
 class ACLStore:
     """Wraps a MemoryStore, enforcing an AccessPolicy for one principal.
 
@@ -91,10 +163,22 @@ class ACLStore:
 
     name: str = "acl"
 
-    def __init__(self, inner: MemoryStore, policy: AccessPolicy, principal: str) -> None:
+    def __init__(
+        self,
+        inner: MemoryStore,
+        policy: AccessPolicy,
+        principal: str,
+        *,
+        sink: EventSink | None = None,
+        base_event_fields: dict[str, Any] | None = None,
+    ) -> None:
         self._inner = inner
         self._policy = policy
         self._principal = principal
+        # BL-122: emit a harness AccessDenied event on a denial when the
+        # audit surface is supplied (BL-040 convention: silent without
+        # base fields, so standalone use is unchanged).
+        self._audit = MemoryAudit(inner.namespace.name, sink, base_event_fields)
 
     @property
     def namespace(self) -> Namespace:
@@ -102,6 +186,7 @@ class ACLStore:
 
     def _guard(self, operation: Operation, key: str) -> None:
         if not self._policy.allows(self._principal, operation, key):
+            self._audit.access_denied(principal=self._principal, operation=operation, key=key)
             raise AccessDenied(self._principal, operation, key)
 
     async def read(self, key: str) -> bytes | None:
@@ -221,15 +306,59 @@ class _ACLSweepMixin:
         return await self._inner.sweep_expired()
 
 
-def wrap_acl(inner: MemoryStore, policy: AccessPolicy, principal: str) -> ACLStore:
+class _ACLVersionedMixin:
+    # BL-124 MVCC forwarded through ACL (BL-156): ACL does not transform
+    # bytes, so the content-hash version token is preserved. Gated like
+    # the core methods (read/write/delete).
+    _inner: VersionedMemoryStore
+    _guard: Callable[[Operation, str], None]
+
+    async def read_versioned(self, key: str) -> tuple[bytes, str] | None:
+        validate_key(key)
+        self._guard("read", key)
+        return await self._inner.read_versioned(key)
+
+    async def write_versioned(
+        self,
+        key: str,
+        value: bytes,
+        *,
+        expected_version: str | None = None,
+        ttl_seconds: float | None = None,
+    ) -> str | None:
+        validate_key(key)
+        self._guard("write", key)
+        return await self._inner.write_versioned(
+            key, value, expected_version=expected_version, ttl_seconds=ttl_seconds
+        )
+
+    async def delete_versioned(self, key: str, expected_version: str) -> bool:
+        validate_key(key)
+        self._guard("delete", key)
+        return await self._inner.delete_versioned(key, expected_version)
+
+
+def wrap_acl(
+    inner: MemoryStore,
+    policy: AccessPolicy,
+    principal: str,
+    *,
+    sink: EventSink | None = None,
+    base_event_fields: dict[str, Any] | None = None,
+) -> ACLStore:
     """ACLStore that also forwards whatever extension Protocols ``inner``
     supports (BL-156).
 
     Returns a plain ``ACLStore`` when ``inner`` is core-only, or an
     ``ACLStore`` subclass mixing in batch / scan / content-addressing /
-    CAS / sweep forwarding for exactly the Protocols ``inner`` satisfies,
-    so ``isinstance`` stays truthful. Use this instead of constructing
-    ``ACLStore`` directly when the backend is capability-rich.
+    CAS / sweep / versioned forwarding for exactly the Protocols
+    ``inner`` satisfies, so ``isinstance`` stays truthful. Use this
+    instead of constructing ``ACLStore`` directly when the backend is
+    capability-rich. ``sink`` / ``base_event_fields`` (BL-122) are
+    forwarded so a denial is audited; omitting them preserves the
+    silent default. (SemanticMemoryStore is intentionally not forwarded:
+    ACL-gating a similarity query has no single principal-scoped key;
+    see ADR 0011 and memory/README.md.)
     """
     mixins: list[type] = []
     if isinstance(inner, BatchMemoryStore):
@@ -242,7 +371,11 @@ def wrap_acl(inner: MemoryStore, policy: AccessPolicy, principal: str) -> ACLSto
         mixins.append(_ACLCASMixin)
     if isinstance(inner, SweepableStore):
         mixins.append(_ACLSweepMixin)
+    if isinstance(inner, VersionedMemoryStore):
+        mixins.append(_ACLVersionedMixin)
     if not mixins:
-        return ACLStore(inner, policy, principal)
+        return ACLStore(inner, policy, principal, sink=sink, base_event_fields=base_event_fields)
     cls = type("ACLStore", (ACLStore, *mixins), {})
-    return cls(inner, policy, principal)  # type: ignore[no-any-return]
+    return cls(  # type: ignore[no-any-return]
+        inner, policy, principal, sink=sink, base_event_fields=base_event_fields
+    )

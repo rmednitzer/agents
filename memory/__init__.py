@@ -10,18 +10,31 @@ construction of additional stores.
 Workloads serialize their own data; the store handles raw bytes.
 """
 
-from memory.acl import AccessPolicy, ACLStore, Operation, RoleACL, wrap_acl
+from memory.acl import (
+    AccessPolicy,
+    ACLStore,
+    AttributeACL,
+    AttributeRule,
+    Operation,
+    RoleACL,
+    wrap_acl,
+)
 from memory.dynamodb import DynamoDBStore
 from memory.encryption import (
     EncryptedStore,
+    EnvKeyProvider,
+    FileKeyProvider,
     KeyProvider,
+    RotatingKeyProvider,
     StaticKeyProvider,
+    VersionedKeyProvider,
     wrap_encrypted,
 )
 from memory.errors import AccessDenied, MemoryError, NamespaceViolation
 from memory.inmemory import InMemoryStore
 from memory.redis import RedisStore
 from memory.s3 import S3Store
+from memory.semantic import Embedder, InMemorySemanticStore
 from memory.sqlite import SQLiteStore
 from memory.store import (
     BatchMemoryStore,
@@ -29,7 +42,10 @@ from memory.store import (
     ContentAddressableStore,
     MemoryStore,
     ScannableStore,
+    SemanticHit,
+    SemanticMemoryStore,
     SweepableStore,
+    VersionedMemoryStore,
 )
 from memory.sweep import TTLSweeper
 from memory.types import Namespace
@@ -46,11 +62,17 @@ __all__ = [
     "ACLStore",
     "AccessDenied",
     "AccessPolicy",
+    "AttributeACL",
+    "AttributeRule",
     "BatchMemoryStore",
     "CASMemoryStore",
     "ContentAddressableStore",
     "DynamoDBStore",
+    "Embedder",
     "EncryptedStore",
+    "EnvKeyProvider",
+    "FileKeyProvider",
+    "InMemorySemanticStore",
     "InMemoryStore",
     "KeyProvider",
     "MemoryError",
@@ -60,12 +82,17 @@ __all__ = [
     "Operation",
     "RedisStore",
     "RoleACL",
+    "RotatingKeyProvider",
     "S3Store",
     "SQLiteStore",
     "ScannableStore",
+    "SemanticHit",
+    "SemanticMemoryStore",
     "StaticKeyProvider",
     "SweepableStore",
     "TTLSweeper",
+    "VersionedKeyProvider",
+    "VersionedMemoryStore",
     "validate_key",
     "validate_namespace_name",
     "wrap_acl",

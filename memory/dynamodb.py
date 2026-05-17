@@ -295,7 +295,13 @@ class DynamoDBStore:
             kw["ExpressionAttributeValues"] = {":now": now}
         else:
             # Match value AND not expired (an expired row is absent).
-            kw["ConditionExpression"] = "v = :e AND (attribute_not_exists(exp) OR exp > :now)"
+            # ``exp >= :now`` (not ``>``) so the live boundary matches
+            # the reader: ``_live_item`` treats a row as expired only
+            # when ``now > float(exp)``, i.e. live while ``now <= exp``.
+            # With strict ``>`` a row at the exact expiry instant was
+            # readable but CAS-absent, the read-vs-CAS boundary class
+            # BL-157/BL-168 fixed for the other paths/adapters.
+            kw["ConditionExpression"] = "v = :e AND (attribute_not_exists(exp) OR exp >= :now)"
             kw["ExpressionAttributeValues"] = {":e": {"B": expected}, ":now": now}
         try:
             await asyncio.to_thread(lambda: self._db.put_item(**kw))
@@ -317,7 +323,10 @@ class DynamoDBStore:
                     Key={"pk": {"S": self._pk(key)}},
                     # Parity with read(): an expired row is absent, so a
                     # compare-and-delete against it must not succeed.
-                    ConditionExpression=("v = :e AND (attribute_not_exists(exp) OR exp > :now)"),
+                    # ``exp >= :now`` matches ``_live_item``'s live
+                    # boundary (expired only when ``now > exp``), like
+                    # the compare_and_set match-branch.
+                    ConditionExpression=("v = :e AND (attribute_not_exists(exp) OR exp >= :now)"),
                     ExpressionAttributeValues={
                         ":e": {"B": expected},
                         ":now": {"N": str(time.time())},

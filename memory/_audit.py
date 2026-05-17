@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from harness.events import MemoryDelete, MemoryRead, MemoryWrite
+from harness.events import AccessDenied, MemoryDelete, MemoryRead, MemoryWrite
 from harness.sinks import EventSink, NullSink
 
 __all__ = ["MemoryAudit"]
@@ -32,7 +32,18 @@ _REQUIRED_BASE_FIELDS = frozenset(
 # put in base fields), so reject these up front, like the missing-key
 # check.
 _RESERVED_BASE_FIELDS = frozenset(
-    {"namespace", "key", "kind", "timestamp", "hit", "value_bytes", "existed", "ttl_seconds"}
+    {
+        "namespace",
+        "key",
+        "kind",
+        "timestamp",
+        "hit",
+        "value_bytes",
+        "existed",
+        "ttl_seconds",
+        "principal",
+        "operation",
+    }
 )
 
 
@@ -104,6 +115,20 @@ class MemoryAudit:
                     namespace=self._namespace,
                     key=key,
                     existed=existed,
+                    **self._base,
+                )
+            )
+
+    def access_denied(self, *, principal: str, operation: str, key: str) -> None:
+        """Emit an AccessDenied event for an ACLStore denial (BL-122)."""
+        if self._base:
+            self._sink.emit(
+                AccessDenied(
+                    timestamp=datetime.now(UTC),
+                    namespace=self._namespace,
+                    principal=principal,
+                    operation=operation,
+                    key=key,
                     **self._base,
                 )
             )

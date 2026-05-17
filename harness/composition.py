@@ -10,8 +10,13 @@ enforceable contract. ADR 0002 fixed the rule; this implements it:
   caller by importing obligations they never reviewed, nor strengthen
   one beyond what all parties agreed. The predicate object is taken from
   the first contract that declares the name.
-- governance: **union** (dedup by name, declaration order preserved).
-  Action policy is safety-critical: every party's veto must apply.
+- governance: **union** (dedup by name, declaration order preserved,
+  strictest severity kept). Action policy is safety-critical: every
+  party's veto must apply, and at its declared strength. Keeping the
+  first-declared severity (the pre-fix behaviour) silently downgraded a
+  reviewed HARD veto to SOFT when another party happened to declare the
+  same-named predicate soft first, the exact governance analogue of the
+  pre/inv/post downgrade BL-166 closed.
 - approval_required: **union**. If any party requires human approval for
   a tool, the composed contract requires it.
 
@@ -65,15 +70,26 @@ def _intersect_by_name(
 
 
 def _union_by_name(groups: list[list[Predicate[Any]]]) -> list[Predicate[Any]]:
-    """All predicates across groups, deduplicated by name, order preserved."""
-    out: list[Predicate[Any]] = []
-    seen: set[str] = set()
+    """All predicates across groups, deduped by name, strictest kept.
+
+    Declaration order (first occurrence) is preserved for the output,
+    but a HARD instance always wins over a SOFT one of the same name:
+    governance is the most safety-critical set, so composition must not
+    silently weaken a party's reviewed HARD veto just because another
+    party declared a same-named predicate soft earlier (mirrors the
+    BL-166 strictest rule for ``_intersect_by_name``).
+    """
+    strictest: dict[str, Predicate[Any]] = {}
+    order: list[str] = []
     for group in groups:
         for p in group:
-            if p.name not in seen:
-                seen.add(p.name)
-                out.append(p)
-    return out
+            chosen = strictest.get(p.name)
+            if chosen is None:
+                order.append(p.name)
+                strictest[p.name] = p
+            elif chosen.severity != Severity.HARD and p.severity == Severity.HARD:
+                strictest[p.name] = p
+    return [strictest[n] for n in order]
 
 
 def compose_contracts(

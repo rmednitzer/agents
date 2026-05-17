@@ -187,6 +187,36 @@ def _extract_subdir(
     return extracted
 
 
+def _prepare_install_dir(dest: Path, name: str) -> Path:
+    """Clear and resolve ``dest / name`` without following a symlink.
+
+    A pre-existing ``dest/<name>`` *symlink* is the network-source twin
+    of the ``LocalSkillSource`` symlink hole (audit, this wave). The old
+    code did ``(dest / name).resolve()`` *before* clearing it: ``resolve``
+    follows the link, so ``shutil.rmtree`` then deleted the link's
+    target's contents and extraction wrote members fully outside
+    ``dest`` (``_safe_target`` only re-validates against the already
+    escaped base). Unlink the link itself first (never traverse it),
+    then resolve, then assert the result is still under ``dest`` so a
+    crafted bundle cannot escape the install directory.
+    """
+    raw = dest / name
+    if raw.is_symlink():
+        # Unlink the link itself; never traverse it (the escape hole).
+        raw.unlink()
+    elif raw.is_dir():
+        shutil.rmtree(raw)
+    elif raw.exists():
+        # A regular (or other non-dir) file: unlink it. rmtree would
+        # raise NotADirectoryError and break the "clear" contract.
+        raw.unlink()
+    target = raw.resolve()
+    dest_resolved = dest.resolve()
+    if target != dest_resolved / name or dest_resolved not in target.parents:
+        raise SkillLoadError(str(raw), "install path escapes the destination directory")
+    return target
+
+
 def _verify_integrity(
     data: bytes,
     url: str,
@@ -318,9 +348,7 @@ class GitHubSkillSource:
             signature=self._signature,
             verify_signature=self._verify_signature,
         )
-        target = (dest / name).resolve()
-        if target.exists():
-            shutil.rmtree(target)
+        target = _prepare_install_dir(dest, name)
         # GitHub codeload wraps everything in one "<repo>-<ref>/" root
         # component: strip 1, then match the "<prefix>/<name>/" subtree.
         wanted = f"{self._prefix}/{name}/".lstrip("/")
@@ -397,9 +425,7 @@ class MarketplaceSkillSource:
             signature=self._signature,
             verify_signature=self._verify_signature,
         )
-        target = (dest / name).resolve()
-        if target.exists():
-            shutil.rmtree(target)
+        target = _prepare_install_dir(dest, name)
         wanted = f"{self._prefix}/{name}/".lstrip("/")
         extracted = _extract_subdir(
             data,

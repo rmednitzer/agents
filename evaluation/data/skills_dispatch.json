@@ -1,0 +1,35 @@
+{
+  "name": "in-tree-skills-keyword",
+  "cases": [
+    {
+      "query": "I need an example template to use as a reference",
+      "expected": "example",
+      "note": "triggers: example, template, reference"
+    },
+    {
+      "query": "give me a reference example skill template",
+      "expected": "example",
+      "note": "trigger-dominant routing to the example skill"
+    },
+    {
+      "query": "write a bash script using set -euo pipefail strict mode",
+      "expected": "shell",
+      "note": "triggers: bash, set -euo pipefail, strict mode"
+    },
+    {
+      "query": "add a trap and a retry with a timeout to my shell script",
+      "expected": "shell",
+      "note": "triggers: trap, retry, timeout, shell script"
+    },
+    {
+      "query": "configure ssh ProxyJump through a bastion with ControlMaster",
+      "expected": "shell",
+      "note": "triggers: ssh, ProxyJump, bastion, ControlMaster"
+    },
+    {
+      "query": "use rsync and scp over ssh with BatchMode",
+      "expected": "shell",
+      "note": "triggers: rsync, scp, ssh, BatchMode"
+    }
+  ]
+}

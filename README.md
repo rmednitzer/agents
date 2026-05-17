@@ -4,10 +4,12 @@ Infrastructure repository for agentic workloads: runtime, skills, harness, memor
 
 ## Status
 
-L1 framework, the full L2 implementation wave, and the L3 default-path
-wiring + audit wave, on `main` (see [docs/backlog.md](./docs/backlog.md),
+L1 framework, the full L2 implementation wave, the L3 default-path
+wiring + audit wave, and the third-audit + L3 capability wave, on
+`main` (see [docs/backlog.md](./docs/backlog.md),
 [ADR 0007](./docs/adr/0007-l2-implementation-wave.md),
-[ADR 0010](./docs/adr/0010-l3-default-path-wiring-and-audit-wave.md)).
+[ADR 0010](./docs/adr/0010-l3-default-path-wiring-and-audit-wave.md),
+[ADR 0011](./docs/adr/0011-third-audit-and-l3-capability-wave.md)).
 Every L2/L3 change is additive to the L1 Protocols: new optional
 parameters, new modules, and side-by-side Protocols; nothing in the L1
 surface was removed. The package imports and type-checks with no
@@ -22,6 +24,7 @@ See [CLAUDE.md](./CLAUDE.md) for repository structure and conventions.
 - `skills/` Agent Skills bundles, registry, dispatchers, install sources
 - `harness/` contracts, enforcement, runtime adapter, budgets, events
 - `memory/` namespace-bound stores and production adapters
+- `evaluation/` behavioural regression gate (dispatch P@1/MRR, trajectory)
 - `tests/` test suite (mirrors the source layout)
 - `docs/` architecture, ADRs, the L2 backlog, generated JSON Schema
 - `scripts/` operational and developer scripts
@@ -47,10 +50,19 @@ See [CLAUDE.md](./CLAUDE.md) for repository structure and conventions.
 - **Memory.** Namespace-bound `MemoryStore` with `InMemoryStore`
   reference plus `SQLiteStore`, `RedisStore`, `S3Store`, `DynamoDBStore`
   adapters; extension Protocols for batch, cursor scan,
-  content-addressing, and CAS; `TTLSweeper`; transparent `EncryptedStore`
-  (AES-256-GCM) and per-key `ACLStore`, with `wrap_encrypted` /
-  `wrap_acl` forwarding the wrapped backend's extension Protocols
-  truthfully; optional audit events.
+  content-addressing, CAS, MVCC version tokens
+  (`VersionedMemoryStore`), and similarity query
+  (`SemanticMemoryStore` + `InMemorySemanticStore`); `TTLSweeper`;
+  transparent `EncryptedStore` (AES-256-GCM) with static / env / file
+  / rotating (`VersionedKeyProvider`) key providers, and `ACLStore`
+  with role and attribute-based (`AttributeACL`) policies and an
+  audited `AccessDenied` event, both with `wrap_encrypted` / `wrap_acl`
+  forwarding the wrapped backend's extension Protocols truthfully;
+  optional audit events.
+- **Evaluation.** A behavioural regression gate: `evaluate_dispatch`
+  (P@1 / MRR over a JSON golden set) and `evaluate_trajectory`
+  (expected vs actual contract terminal outcome), deterministic and
+  network-free, run as a blocking CI job via `scripts/eval.py`.
 - **Skills.** Agent Skills spec-compliant loader/registry, skill
   versioning (`name@version`), seven router dispatchers (the five core
   keyword, LLM, lane, routing-chain, skill-based, plus the L2
@@ -84,6 +96,7 @@ pip install 'agents[otel]'    # OTelSink (OTLP/HTTP)
 ```bash
 make check     # ruff + mypy + pytest
 make schema    # regenerate docs/schema/*.json from the models
+uv run python scripts/eval.py   # the BL-130 dispatch regression gate
 ```
 
 ## Project status and security

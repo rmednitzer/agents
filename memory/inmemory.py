@@ -231,6 +231,51 @@ class InMemoryStore:
         self._audit.delete(key, existed=True)
         return True
 
+    # --- VersionedMemoryStore (BL-124) --------------------------------
+
+    @staticmethod
+    def _token(value: bytes) -> str:
+        return hashlib.sha256(value).hexdigest()
+
+    async def read_versioned(self, key: str) -> tuple[bytes, str] | None:
+        validate_key(key)
+        async with self._lock:
+            value = self._live_value(key, time.time())
+        self._audit.read(key, hit=value is not None)
+        if value is None:
+            return None
+        return value, self._token(value)
+
+    async def write_versioned(
+        self,
+        key: str,
+        value: bytes,
+        *,
+        expected_version: str | None = None,
+        ttl_seconds: float | None = None,
+    ) -> str | None:
+        validate_key(key)
+        effective_ttl = self._effective_ttl(ttl_seconds)
+        async with self._lock:
+            current = self._live_value(key, time.time())
+            live_version = None if current is None else self._token(current)
+            if live_version != expected_version:
+                return None
+            expires_at = time.time() + effective_ttl if effective_ttl is not None else None
+            self._data[key] = _Entry(value=value, expires_at=expires_at)
+        self._audit.write(key, value_bytes=len(value), ttl_seconds=effective_ttl)
+        return self._token(value)
+
+    async def delete_versioned(self, key: str, expected_version: str) -> bool:
+        validate_key(key)
+        async with self._lock:
+            current = self._live_value(key, time.time())
+            if current is None or self._token(current) != expected_version:
+                return False
+            del self._data[key]
+        self._audit.delete(key, existed=True)
+        return True
+
     # --- SweepableStore (BL-080) --------------------------------------
 
     async def sweep_expired(self) -> int:

@@ -40,8 +40,9 @@ jobs:
       # into a release.
       - run: uv sync --all-extras
       - run: uv run ruff check .
-      - run: uv run mypy agents harness memory workloads skills
-      - run: uv run pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov-fail-under=94
+      - run: uv run mypy agents harness memory workloads skills evaluation
+      - run: uv run pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov=evaluation --cov-fail-under=94
+      - run: uv run python scripts/eval.py --min-p-at-1 1.0 --min-mrr 1.0
       - run: uvx reuse lint
 
       - name: Build sdist and wheel

@@ -79,6 +79,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
     drift_monitor: DriftMonitor | None = None,
     drift_threshold: float | None = None,
     lifecycles: Sequence[AbstractAsyncContextManager[Any]] | None = None,
+    parent_span_id: str | None = None,
 ) -> OutputT | ResumableState:
     """Execute a workload under contract.
 
@@ -127,6 +128,11 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         lifecycles: Async context managers entered around the run and
             exited after it (BL-104), e.g. a memory.TTLSweeper bound to
             the run's lifetime. Entered in order, exited in reverse.
+        parent_span_id: Optional OTel parent span id stamped onto every
+            emitted event so a workload that runs ``run_under_contract``
+            from inside another contract produces a correlated span
+            tree instead of flat siblings. None (the default) preserves
+            the prior behaviour (events carry ``parent_span_id=None``).
 
     Returns:
         OutputT on successful completion.
@@ -157,6 +163,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         "contract_version": contract.version,
         "trace_id": trace_id,
         "span_id": span_id,
+        "parent_span_id": parent_span_id,
     }
 
     active_sink.emit(ContractStarted(timestamp=started_at, **base))
@@ -334,6 +341,22 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         # resume=None the retry re-pauses (returns a ResumableState) if it
         # hits an approval-gated tool again, requiring a new decision.
         retried = False
+        post_records: list[tuple[str, bool]] = []
+
+        def _flush_post() -> None:
+            """Record this leg's postcondition outcomes into the drift
+            monitor exactly once (BL-101).
+
+            A leg abandoned for a retry (BL-102) must not contribute:
+            re-running every postcondition on the retried leg would
+            otherwise double-count each predicate and skew the JSD
+            signal. Flushed at each terminal point of a leg (a
+            hard/escalate raise, or a final no-retry completion) and
+            discarded when the leg is retried.
+            """
+            for _name, _ok in post_records:
+                _record(_name, _ok, "postcondition")
+
         while True:
             if isinstance(result, output_model):
                 output: OutputT = result
@@ -341,9 +364,10 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
                 output = output_model.model_validate(result)
 
             retry_requested = False
+            post_records.clear()
             for pred_post in contract.postconditions:
                 ok = pred_post(output)
-                _record(pred_post.name, ok, "postcondition")
+                post_records.append((pred_post.name, ok))
                 if ok:
                     continue
                 active_sink.emit(
@@ -356,11 +380,13 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
                     )
                 )
                 if pred_post.severity == Severity.HARD:
+                    _flush_post()
                     raise PostconditionViolation(pred_post.name)
                 outcome = await _recover(pred_post.name, "postcondition", output)
                 if outcome is None or outcome.directive == "continue":
                     continue
                 if outcome.directive == "escalate":
+                    _flush_post()
                     raise PostconditionViolation(pred_post.name, "escalated by recovery handler")
                 if outcome.directive == "substitute":
                     # An invalid substitution is ignored; the soft
@@ -378,6 +404,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
                 # retry exhausted: soft-continue, as before.
 
             if not retry_requested:
+                _flush_post()
                 break
             retried = True
             result = await _invoke(resume_state=None)

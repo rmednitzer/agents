@@ -40,21 +40,33 @@ action SHAs; deferred, not faked) and there is no signed
 publish-to-index. Implication: not yet SLSA Build L2. Tracking:
 `BL-150` (SHA pinning remainder), `BL-151`.
 
-## L5. No semantic memory or context compaction
+## L5. Semantic memory is in-tree; compaction/tiering is not
 
-State: `MemoryStore` is scalar key-value; there is no vector retrieval
-and no summarisation or tiering. (`HashingEmbeddingProvider`, BL-110,
-makes `EmbeddingDispatcher` usable without a vendor, but it is a
-deterministic lexical baseline, not a semantic model, and does not add
-memory retrieval.) Implication: retrieval-augmented and long-horizon
-workloads need an external store. Tracking: `BL-131`, `BL-135`.
+State: the `SemanticMemoryStore` extension Protocol and
+`InMemorySemanticStore` reference ship (`BL-131`, ADR 0011): vector
+write plus similarity query, reusing the `HashingEmbeddingProvider`
+(`BL-110`) through memory's own `Embedder` Protocol. The shipped
+embedder is a deterministic lexical baseline, not a semantic model (a
+model-quality embedder satisfies the same `Embedder` Protocol and is
+the workload's choice, out-of-tree by the ADR 0001 stance). There is
+still no summarisation or tiering, and the durable adapters do not
+implement `SemanticMemoryStore`. Implication: in-tree just-in-time
+retrieval works for a single process; long-horizon compaction and a
+durable vector backend are open. Tracking: `BL-135` (compaction /
+tiering), `BL-131` notes the embedder scope.
 
-## L6. No evaluation harness
+## L6. The behavioural gate is deterministic-only
 
-State: CI gates lint, types, and coverage, not agent behaviour.
-Dispatcher routing quality and contract-outcome quality are not
-measured. Implication: behavioural regressions are invisible. Tracking:
-`BL-130`.
+State: the evaluation harness (`evaluation/`, `scripts/eval.py`)
+measures dispatch P@1 / MRR over a golden set and contract terminal
+outcomes over a trajectory fixture, and a blocking CI `evaluation` job
+in the `ci-success` aggregate fails on a routing regression (`BL-130`,
+ADR 0011). The in-tree gate is deterministic and network-free (the
+`KeywordDispatcher` and a stub runtime); an LLM-dispatcher or live
+runtime trajectory suite is not yet gated. Implication: deterministic
+routing/contract regressions are caught; live-model behaviour is not
+yet measured in CI. Tracking: `BL-120` (the credentialed suite lands
+with the live-model workload).
 
 ## L7. Observability is log records, not spans
 
@@ -148,3 +160,33 @@ no in-code gate. Implication: pointing the loader or `agents run` at an
 untrusted directory, or resolving an untrusted installed-package entry
 point, runs its Python; only load trusted bundles. Tracking: `BL-158`,
 `SECURITY.md`.
+
+## L15. RetryPolicy counts tokens/steps from the final attempt only
+
+State: with an opt-in `RetryPolicy`, wall-clock is bounded end to end
+and tool-call / per-tool quotas are fed live from the gate, so those
+dimensions hold across retries. Token and step usage is charged from
+the *final* attempt's `result.usage` only: PydanticAI raises without
+exposing partial usage on a failed `agent.run()`, so a failed
+attempt's model round-trips are not counted (`BL-179`, ADR 0011).
+Implication: a retrying run can exceed `max_tokens` / `max_steps` by
+the failed legs' usage; bound a retrying run by the wall-clock or
+tool-call dimension if a hard token ceiling matters. Closing this
+needs upstream partial-usage on the exception path (the same
+upstream-dependent shape as `BL-114` / `BL-132`). Tracking: `BL-179`.
+
+## L16. Versioned-encryption legacy migration is current-key only
+
+State: adopting a `VersionedKeyProvider` on a store previously sealed
+by a plain `KeyProvider` works for values whose key is the versioned
+provider's *current* version: the plain and versioned on-disk formats
+have no distinguishing marker, so the authenticated legacy fallback
+(`BL-181`, ADR 0011) retries a non-envelope value as legacy `nonce+ct`
+with the current key only (AES-GCM authentication guarantees no silent
+wrong value). Implication: the migration contract is to seed the key
+ring with the existing key as the current version and rewrite values
+before rotating away from it; legacy data still under a key the
+provider has already rotated past is not reachable for a legacy read
+(re-encrypt it through the old store first). New stores and
+already-versioned stores are unaffected. No tracking item (a
+documented operational contract, not a defect).
