@@ -59,7 +59,17 @@ done
 command -v tmux >/dev/null 2>&1 || die "tmux not found"
 command -v timeout >/dev/null 2>&1 || die "timeout not found"
 
-WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/tmux-run.XXXXXXXX")
+# The pane command is built with single-quoted path interpolations and
+# then re-parsed by tmux's `sh -c`. A single quote in the workdir path
+# (via a pathological TMPDIR) would break that fragment. Sanitize the
+# base so every derived path is [A-Za-z0-9._/-] only, making the
+# single-quoted fragment provably safe in any POSIX sh.
+base=${TMPDIR:-/tmp}
+if [[ $base == *[!A-Za-z0-9._/-]* || -z $base ]]; then
+  log warn "TMPDIR unsafe or empty; falling back to /tmp"
+  base=/tmp
+fi
+WORKDIR=$(mktemp -d "$base/tmux-run.XXXXXXXX")
 cmd_file="$WORKDIR/cmd"   # the command, verbatim: no re-quoting needed
 rc_file="$WORKDIR/rc"     # the exit code, written by the pane
 chan="finished"           # fixed wait-for channel name
@@ -75,7 +85,8 @@ chan="finished"           # fixed wait-for channel name
 chmod +x -- "$cmd_file"
 
 # Pane command (run by tmux via `sh -c`). \$? is escaped so it expands in
-# the PANE, not here. Embedded paths are safe (mktemp, no spaces/quotes).
+# the PANE, not here. Paths are sanitized above, so the single-quoted
+# fragments cannot be broken by a quote in the path.
 pane_cmd="bash '$cmd_file'; echo \$? > '$rc_file'; tmux -L '$SOCK' wait-for -S '$chan'"
 
 # Start the private server, raise history so capture-pane -S - can see

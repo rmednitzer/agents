@@ -152,22 +152,23 @@ terminal. `ssh host cmd` (no `-t`) runs `cmd` without a PTY and returns
 its **real exit status** directly: no scraping, no prompt parsing.
 
 ```bash
-ssh -o BatchMode=yes -o ConnectTimeout=10 host 'systemctl is-active nginx'
+ssh -n -T -o BatchMode=yes -o ConnectTimeout=10 \
+  host 'systemctl is-active nginx'
 echo $?    # the remote command's exit code, exactly
 ```
 
-Do not put `--` after the host: `ssh` stops parsing its own options at the
-destination, so everything after it (including `--`) is the **remote**
-command. `ssh host -- cmd` asks the remote shell to run `-- cmd`. To guard
-a hostname that could start with `-`, put the terminator before the host
-(`ssh [opts] -- host cmd`).
-
-Use `-T` to force no PTY, `-t` only when the remote genuinely needs one
-(an interactive tool, `sudo` with a TTY requirement). `BatchMode=yes`
-turns password and host-key prompts into immediate failures instead of
-hangs, which is what you want in automation. Multiplex repeated
-connections with `ControlMaster auto` + `ControlPersist` for speed and
-reliability rather than scripting a single long interactive session.
+This is rung 1 over the network and is almost always the right answer for
+remote automation. The full treatment (ssh_config match order, keys and
+agent, host-key trust and certificate authorities, `ProxyJump`,
+`ControlMaster` multiplexing, the stdin-stealing and double-quoting
+pitfalls, the `--`-after-host trap, forwarding, `scp`/`rsync`,
+`authorized_keys` constraints, and `sshd` hardening) is in
+`references/ssh-in-depth.md`. The minimum: `BatchMode=yes` (fail fast,
+never prompt), `ConnectTimeout`/`ServerAlive*` (do not hang on a dead
+peer), `-n` (ssh steals stdin in `while read` loops), `-T` no PTY (`-tt`
+only when the remote demands one), and never `ssh host -- cmd` (the `--`
+becomes the remote command). Multiplex with `ControlMaster auto` +
+`ControlPersist` rather than scripting one long interactive session.
 
 ## 7. The general principle
 

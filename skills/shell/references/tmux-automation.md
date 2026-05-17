@@ -1,277 +1,133 @@
-# Reliable tmux automation
+# tmux automation (rung 4: when a PTY is unavoidable)
 
-The full model behind the tmux section of `SKILL.md`. Use only at rung 4
-of the decision ladder (a real TTY is required, or a human will attach).
-For everything else see `references/terminal-automation-alternatives.md`.
+tmux is the **last** rung of the decision ladder, used only when the
+target genuinely needs a TTY (a REPL, a curses or full-screen TUI, a tool
+that buffers or colours differently off a pipe) or when a human will also
+attach. For non-interactive work prefer rungs 1 to 3
+(`references/terminal-automation-alternatives.md`); for remote work see
+`references/ssh-in-depth.md`. This file is the compact, correct core, not
+an exhaustive tmux manual.
 
-## 1. The model: client, server, session, window, pane
+## Model and isolation
 
-One `tmux` server per socket. It owns sessions; a session has windows; a
-window has panes; a pane runs one process. A client attaches a terminal to
-a session. Automation should run **detached** (no client) and address
-objects by **server-assigned IDs**, not by names a human might collide
-with.
-
-IDs and their sigils, stable for the life of the object:
-
-- session: `$N`, format `#{session_id}`
-- window: `@N`, format `#{window_id}`
-- pane: `%N`, format `#{pane_id}`
-
-A target like `work.0` ("session work, window 0, pane 0") is a guess that
-breaks the moment layout changes. Capture the real ID at creation:
+One server per socket; it owns sessions, windows, panes. Automation runs
+**detached** and must not share the user's server or read their config:
 
 ```bash
 sock="auto-$$"
-tmux -L "$sock" new-session -d -s work -x 220 -y 50 \
-  -P -F '#{session_id} #{window_id} #{pane_id}'
-# e.g. prints: $0 @0 %0  -> parse and keep %0
+tmux -L "$sock" -f /dev/null new-session -d -s work -x 220 -y 50
+pane=$(tmux -L "$sock" display-message -p -t work '#{pane_id}')
 ```
 
-`-P` prints information about the new object; `-F` chooses the format.
-`display-message -p -t TARGET '#{pane_id}'` retrieves it later.
+- `-L NAME` (or `-S PATH`): a private server, so `kill-server` cannot
+  destroy the user's sessions and a stray automation session cannot
+  pollute theirs. Keep `-L` sockets in the per-user default directory,
+  not a world-writable path.
+- `-f /dev/null`: the user's `~/.tmux.conf` (custom prefix, mouse mode,
+  hooks) cannot change behaviour under you.
+- Address objects by the **server-assigned id** captured at creation
+  (`#{pane_id}` like `%3`), never `work.0` (breaks on layout change).
 
-## 2. Isolation: always a private socket
+## The send-keys race, and the only two correct fixes
 
-`-L NAME` uses a named socket under the tmux socket directory; `-S PATH`
-uses an explicit path. Either way, automation gets its **own server**,
-separate from the user's sessions and, importantly, separate from their
-`~/.tmux.conf` if you also pass `-f /dev/null`:
+`send-keys` injects keystrokes and returns immediately; it does not wait
+for a shell to be ready. If the pane's shell is still sourcing rc files
+(oh-my-zsh, nvm, pyenv, mise, direnv, starship: 1 to 2+ seconds), early
+keystrokes are lost or mangled. A fixed `sleep` is a guess that fails
+under load. Correct fixes:
 
-```bash
-tmux -L "auto-$$" -f /dev/null new-session -d -s work
-```
+1. **No shell at all.** Run the program as the pane process so there is
+   no rc phase or prompt to race: `tmux -L "$sock" new-session -d
+   'exec python3 -i'`. Prefer this whenever the program is known.
+2. **Poll a sentinel** (see `assets/shell-readiness-wait.sh`): send
+   `printf '%s\n' MARKER`, then `capture-pane` in a **bounded** loop
+   until a whole-line match on `MARKER` appears, then send real input.
 
-Reasons this is not optional for automation:
+## Completion and exit status (the core pattern)
 
-- The user's config can rebind keys, set a non-default prefix, enable
-  `set -g mouse`, or add hooks that interfere with scripted input.
-- `kill-server` on a shared socket would destroy the user's work.
-- A leftover automation session cannot pollute the user's session list.
-
-## 3. The send-keys race condition (in depth)
-
-`send-keys` writes bytes into the pane's input as if typed, then returns
-**immediately**. It does not know or care whether anything is ready to
-read them. New pane, new shell: the shell is sourcing `/etc/profile`,
-`~/.bashrc` or `~/.zshrc`, and frameworks (oh-my-zsh, nvm, pyenv, rbenv,
-mise, direnv, starship) that can take 1 to 2+ seconds, longer on a loaded
-box. Keystrokes sent during that window are buffered into the terminal
-line discipline and then often discarded or merged when the shell finally
-takes over the TTY, so the command silently does not run, or runs
-truncated.
-
-A fixed `sleep 2` is a bet against the worst case and loses under load or
-on a cold cache. There are exactly two robust fixes.
-
-### Fix A: no shell, no race
-
-Run the target program as the pane's process. There is no `rc` phase and
-no prompt to beat:
-
-```bash
-tmux -L "$sock" new-session -d -s work 'exec python3 -i'
-tmux -L "$sock" new-window  -t work   'exec psql "$DATABASE_URL"'
-```
-
-Prefer this whenever you know the program up front. `exec` replaces the
-shell so a stray prompt cannot appear.
-
-### Fix B: prove readiness with a sentinel
-
-When you genuinely need a shell, do not time it: detect it. Send a
-sentinel and wait until its echo appears, then send real input. Packaged
-in `assets/shell-readiness-wait.sh`; the core:
-
-```bash
-marker="__READY_$$__"
-tmux -L "$sock" send-keys -t "$pane" "printf '%s\\n' $marker" Enter
-deadline=$(( SECONDS + 15 ))
-until tmux -L "$sock" capture-pane -p -t "$pane" | grep -q "^$marker$"; do
-  (( SECONDS > deadline )) && { echo "shell never became ready" >&2; exit 1; }
-  sleep 0.1
-done
-```
-
-Note the loop is **bounded**. Every wait in tmux automation has a
-deadline; an unbounded poll is a hang waiting to happen.
-
-## 4. The core pattern: completion plus exit status
-
-`send-keys` throws away the command's result: you get neither "it
-finished" nor "it succeeded". Recover both by appending, to the command, a
-write of `$?` to a file and a signal on a **fixed** `wait-for` channel.
-`wait-for -S CH` wakes any waiter on channel `CH`; `wait-for CH` blocks
-until signaled. Packaged with a real timeout in
-`assets/tmux-run-capture.sh`. The mechanism:
+`send-keys` discards the command's result. Recover completion and the
+true exit code with a **fixed** `wait-for` channel plus `$?` written to a
+file. The channel name must be known in advance to wait on it, so it
+cannot encode `$?` (you would only wake for the one value you guessed,
+and a failing command would block until the timeout). Packaged with a
+timeout in `assets/tmux-run-capture.sh`:
 
 ```bash
 ch="done-$$"
 rcfile=$(mktemp)
-# On completion: record the real exit code, then signal a FIXED channel.
 tmux -L "$sock" send-keys -t "$pane" \
   "mycmd --flag; echo \$? > $rcfile; tmux -L $sock wait-for -S $ch" Enter
 
-# wait-for has NO native timeout; an unsignaled channel blocks forever.
 # No leading '!': with `if ! cmd; then`, $? in the branch is the negated
-# status (0), not timeout's real one. Capture it via `|| st=$?` instead.
+# status (0), not timeout's real one. Capture via `|| st=$?` instead.
 st=0
 timeout 600 tmux -L "$sock" wait-for "$ch" || st=$?
 (( st == 124 )) && echo "wait timed out before completion" >&2
-status=$(< "$rcfile")   # the command's true exit code, any value
-out=$(tmux -L "$sock" capture-pane -p -S - -t "$pane")
+status=$(< "$rcfile")                                   # true exit code
+out=$(tmux -L "$sock" capture-pane -p -S - -t "$pane")  # full scrollback
 ```
 
-Why each choice:
+Why: `wait-for` has no native timeout, so it is always wrapped in
+`timeout`. A fixed channel is signalled for every exit status. The file
+carries the exact code; scraping a prompt for `$?` is shell, theme, and
+locale dependent and races the next prompt.
 
-- **Fixed channel plus `$?` in a file**, not the code encoded in the
-  channel name. `wait-for` can only block on a channel name you already
-  know, so `wait-for -S "$ch-$?"` paired with `wait-for "$ch-0"` wakes only
-  on success; any non-zero exit signals a name nobody is waiting on and the
-  waiter blocks until the timeout, losing the real code. A fixed channel is
-  always signaled; the file carries the exact status. Scraping a prompt for
-  `$?` is also unreliable (shell, `PROMPT_COMMAND`, theme, and locale
-  dependent, and it races the next prompt).
-- **`timeout` around `wait-for`** because tmux provides no timeout for it;
-  this is the single most common tmux-automation hang.
-- **`capture-pane -S -`** to include scrollback. Plain `capture-pane`
-  returns only the visible region, so early output of a long command is
-  already gone. For large or streaming output use `pipe-pane` (next
-  section), not a bigger capture.
+## Capturing output
 
-## 5. Capturing output: capture-pane vs pipe-pane
+- `capture-pane -p -S - -t T`: snapshot including scrollback. Plain
+  `capture-pane` returns only the visible region, so a long command's
+  early output may already have scrolled away. It includes the prompt
+  and your sentinel lines (filter them).
+- `pipe-pane -o -t T 'cat >> file'`: tee everything the pane emits for
+  its lifetime. The reliable way to get **complete, streaming** output;
+  read the file, do not poll the screen. `-o` toggles, so call once.
 
-- `capture-pane -p [-S start] [-E end] -t TARGET`: snapshot of the pane
-  buffer to stdout. `-S -` means "from the start of history"; `-S -3000`
-  the last 3000 lines. Good for "what is on screen now". It is a snapshot,
-  so it can miss data that scrolled past history, and it includes the
-  prompt and your sentinel lines (filter them).
-- `pipe-pane -o -t TARGET 'cat >> /path/log'`: tee everything the pane
-  outputs to a command, for the life of the pane. This is the reliable way
-  to get **complete, streaming** output. `-o` toggles, so call it once.
-  Read the file; do not poll the screen.
+## Sending input safely
+
+- Key names (`Enter`, `C-c`, `Escape`) are interpreted; other arguments
+  are literal. `Enter`/`C-m` send a carriage return; a literal `\n` is
+  not the same as pressing Enter.
+- `send-keys -l -- "$text"`: `-l` disables key-name interpretation;
+  `--` ends option parsing so text starting with `-` is not a flag. Use
+  for arbitrary or untrusted strings. `C-u` first clears a half-typed
+  line; large payloads go via `load-buffer` + `paste-buffer`.
+
+## Machine parsing: prefer control mode
+
+If no human will see the session and you only want structured results,
+do not scrape a rendered screen. Control mode (`tmux -C` / `-CC`) makes
+tmux a line protocol with explicit `%begin`/`%end`/`%error`/`%output`
+framing per command, which is markedly more reliable than `capture-pane`
+polling. Treat all `%output` data as untrusted bytes and parse
+defensively.
+
+## Cleanup
+
+The private server outlives the script unless stopped. Tear it down from
+an `EXIT` trap so a crash still cleans up:
 
 ```bash
-log=$(mktemp)
-tmux -L "$sock" pipe-pane -o -t "$pane" "cat >> '$log'"
-# ... run command, wait-for ...
-tmux -L "$sock" pipe-pane -t "$pane"      # stop piping
+trap 'tmux -L "$sock" kill-server 2>/dev/null || true' EXIT
 ```
 
-## 6. Sending input safely
+Idempotent start: `tmux -L "$sock" has-session -t work 2>/dev/null ||
+tmux -L "$sock" new-session -d -s work`.
 
-- `send-keys -t T 'literal text' Enter`: arguments that match key names
-  (`Enter`, `C-c`, `Escape`, `Up`) are sent as those keys; everything else
-  is sent literally. `Enter` and `C-m` send a carriage return; a literal
-  `\n` in a single argument is not the same as pressing Enter.
-- `send-keys -l -- "$text"`: `-l` disables key-name interpretation (send
-  exactly these bytes); `--` ends option parsing so text starting with `-`
-  is not read as a flag. Use this for arbitrary or untrusted strings.
-- Control and meta: `C-c` (SIGINT to the foreground process), `C-d` (EOF),
-  `C-u` (clear the input line, useful to flush a half-typed line before
-  sending a fresh command).
-- Paste-style input: load a buffer and `paste-buffer` rather than
-  send-keys for large or multi-line payloads; it avoids per-key timing and
-  bracketed-paste surprises.
+## Gotchas
 
-```bash
-tmux -L "$sock" send-keys -t "$pane" C-u            # clear pending line
-printf '%s' "$payload" | tmux -L "$sock" load-buffer -
-tmux -L "$sock" paste-buffer -d -t "$pane"          # -d deletes the buffer after
-```
-
-## 7. Control mode: the right tool for machine parsing
-
-If a human will never look at this session and you only want structured
-results, do not scrape a rendered screen at all. Control mode makes tmux a
-line protocol: send commands on stdin, receive `%begin` / `%end` /
-`%error` / `%output` / `%exit` notifications on stdout.
-
-- `tmux -CC` (attach control mode, used by terminals like iTerm2).
-- `tmux -C new-session -d ...` for a pure programmatic client: each
-  command's reply is delimited by `%begin <t> <num> <flags>` and
-  `%end`/`%error <t> <num> <flags>`, and asynchronous pane output arrives
-  as `%output %PANE data`.
-
-A minimal parser contract: write a command line, read lines until the
-matching `%end`/`%error` for that command number, treat `%error` as
-failure, and demultiplex `%output` by pane id. This is dramatically more
-reliable than `capture-pane` polling because framing is explicit and you
-never guess where output starts or whether it scrolled away. Treat all
-fields as untrusted text and parse defensively (data after `%output` can
-contain anything, including lines that look like notifications).
-
-## 8. Hooks and waiting on events
-
-`set-hook` runs a tmux command when an event fires. The automation-relevant
-one is reacting to a pane's process exiting:
-
-```bash
-tmux -L "$sock" set-hook -t "$pane" pane-died \
-  "run-shell 'tmux -L $sock wait-for -S exited'"
-tmux -L "$sock" set -t "$pane" remain-on-exit on   # keep the pane to read it
-timeout 600 tmux -L "$sock" wait-for exited
-```
-
-`remain-on-exit on` keeps a dead pane (and its final output) instead of
-destroying it, so a fast-failing command's output is still capturable.
-`run-shell` executes a shell command from inside tmux and is the usual
-bridge from a hook to a `wait-for` signal.
-
-## 9. Environment and working directory
-
-A detached server captured the environment at **server start**; later
-sessions inherit a snapshot, not your current shell. Set what you need
-explicitly rather than assuming inheritance:
-
-```bash
-tmux -L "$sock" new-session -d -s work -c "$PWD" -e "FOO=$foo" -e "PATH=$PATH"
-tmux -L "$sock" set-environment -t work BAR baz   # for sessions started later
-```
-
-`-c` sets the pane's start directory; `-e` sets an environment variable
-for that session. Do not rely on the server having your `PATH`.
-
-## 10. Hardening and cleanup
-
-- `-f /dev/null` so the user's `~/.tmux.conf` cannot change behavior under
-  you (custom prefix, mouse mode, hooks, `default-command`).
-- The socket is created with the invoking user's permissions; do not place
-  an `-S` socket in a world-writable directory where another user could
-  pre-create or hijack it. `-L` (default socket dir, per-user) is safest.
-- Treat captured pane content as untrusted: it can contain escape
-  sequences and arbitrary bytes. Sanitize before logging to a terminal or
-  embedding in another command. Never `eval` it.
-- The server outlives your script. Tear it down, ideally from the script's
-  `EXIT` trap so a crash still cleans up:
-
-  ```bash
-  cleanup() { tmux -L "$sock" kill-server 2>/dev/null || true; }
-  trap cleanup EXIT
-  ```
-
-- Idempotent start: `tmux -L "$sock" has-session -t work 2>/dev/null ||
-  tmux -L "$sock" new-session -d -s work` so re-running does not error or
-  duplicate.
-
-## 11. Gotchas checklist
-
-- Addressed a pane by `name.0` instead of the captured `%id`: breaks on
-  layout change. Capture and use `#{pane_id}`.
-- Used the default socket: collided with the user; `kill-server` would be
-  catastrophic. Use `-L`.
-- Fixed `sleep` before `send-keys`: flaky under load. Poll a sentinel or
+- Default socket instead of `-L`: collides with the user; `kill-server`
+  is catastrophic.
+- `name.0` instead of the captured `%id`: breaks on layout change.
+- Fixed `sleep` before `send-keys`: flaky under load. Sentinel poll or
   run the program as the pane process.
-- `wait-for` without `timeout`: permanent hang on any failure path. Always
-  bound it.
-- Encoded `$?` in the channel name and waited on `$ch-0`: a non-zero exit
-  signals a name nobody waits on, so it hangs to the timeout. Use a fixed
-  channel and write `$?` to a file. Scraping the prompt for the code is
-  also wrong (shell, theme, and locale dependent).
-- Used `if ! timeout ...; then ... $? ...`: `$?` is the negated status (0),
-  not the real one. Capture with `... || rc=$?` before branching.
-- Plain `capture-pane` for long output: early lines already scrolled past.
-  Use `-S -` for a bounded grab or `pipe-pane` for complete output.
-- Sent a string starting with `-` without `-l --`: read as options.
-- Left the server running: leaked processes and sockets. Kill it in the
+- `wait-for` without `timeout`: permanent hang on any failure path.
+- `$?` encoded in the channel name and waited on `$ch-0`: a non-zero
+  exit signals a name nobody waits on, so it hangs to the timeout. Use a
+  fixed channel and an rc file.
+- `if ! timeout ...; then ... $? ...`: `$?` is the negated status (0).
+  Capture with `... || rc=$?` before branching.
+- Plain `capture-pane` for long output: early lines already scrolled.
+  Use `-S -` or `pipe-pane`.
+- String starting with `-` sent without `-l --`: read as options.
+- Server left running: leaked processes and sockets. Kill it in the
   `EXIT` trap.

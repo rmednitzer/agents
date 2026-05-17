@@ -135,6 +135,35 @@ timeout, so it is always wrapped in `timeout`.
 `tmux -L S list-panes -F '...'`; keep `-F` scoped to the object the list
 command enumerates.
 
+## SSH automation
+
+```bash
+ssh -n -T -o BatchMode=yes -o ConnectTimeout=10 \
+  -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+  -o StrictHostKeyChecking=accept-new host 'set -Eeuo pipefail; cmd'
+rc=$?   # remote command's real exit code (255 = ssh connection failure)
+```
+
+| Need | Option / keyword |
+|---|---|
+| Never prompt; fail fast | `-o BatchMode=yes` |
+| Do not hang on a dead host | `-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4` |
+| New host ok, changed key refused | `-o StrictHostKeyChecking=accept-new` |
+| Stop ssh eating loop stdin | `-n` (or `< /dev/null`) |
+| No PTY / force PTY | `-T` / `-tt` (only if remote needs it) |
+| Only this key, avoid `Too many auth failures` | `-o IdentitiesOnly=yes -i key` |
+| Jump host (not agent forwarding) | `-J user@bastion[,user@bastion2]` |
+| Reuse one auth'd connection | `ControlMaster auto` / `ControlPath ~/.ssh/cm/%C` / `ControlPersist 10m` |
+| Run a local script remotely | `ssh host bash -s -- args < script.sh` |
+| Fail if a tunnel cannot open | `-o ExitOnForwardFailure=yes` |
+| Manage a master | `ssh -O check\|exit\|stop host` |
+| Bulk/idempotent copy | `rsync -e 'ssh -o BatchMode=yes' -az src/ host:/dst/` |
+
+Traps: `ssh host -- cmd` runs `-- cmd` remotely (the `--` is not a local
+terminator; it goes before the host). Remote args are expanded locally
+then by the remote shell (single-quote or push a script). `known_hosts`
+hashed (`HashKnownHosts yes`) means use `ssh-keygen -F`/`-R`, not grep.
+
 ## Alternatives picker (one line)
 
 | Goal | Tool |

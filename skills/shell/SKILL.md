@@ -1,37 +1,46 @@
 ---
 name: shell
 description: >-
-  Author robust, safe Bash and drive terminals reliably. Use when writing or
-  reviewing shell scripts (Bash strict mode, quoting, word splitting, ShellCheck,
-  error and signal handling, traps, retries, timeouts, locking, concurrency,
-  idempotent and atomic operations), or when automating an interactive terminal
-  (tmux send-keys race conditions, wait-for completion and exit-status capture,
-  capture-pane, pipe-pane, control mode) and when to pick a more reliable
-  alternative instead (direct exec, setsid, systemd-run, script, expect, GNU
-  screen, zellij). Triggers on bash, sh, shell script, shebang, set -euo
-  pipefail, ShellCheck, heredoc, trap, tmux, screen, terminal multiplexer,
-  send-keys, PTY, expect, detached background job.
+  Author robust, safe Bash and run commands reliably on local and remote
+  machines. Use when writing or reviewing shell scripts (strict mode, quoting,
+  word splitting, ShellCheck, error and signal handling, traps, retries,
+  timeouts, locking, concurrency, idempotent and atomic writes); when automating
+  SSH (ssh_config model, keys and agent, host-key trust and certificate
+  authorities, ProxyJump bastions, ControlMaster multiplexing, BatchMode,
+  no-PTY exit-status semantics, scp and rsync, authorized_keys constraints,
+  sshd hardening); or, as a last resort, when driving an interactive terminal
+  (tmux send-keys race, wait-for completion and exit-status capture, control
+  mode) and picking a more reliable alternative (direct exec, setsid,
+  systemd-run, script, expect, GNU screen). Triggers on bash, sh, shell script,
+  shebang, ShellCheck, heredoc, trap, ssh, ssh_config, scp, rsync, known_hosts,
+  ProxyJump, ControlMaster, BatchMode, tmux, expect, detached background job.
 license: Apache-2.0
 metadata:
   lane: shell
-  version: 1.0.0
+  version: 1.1.0
   triggers: >-
     bash, shell, sh, shell script, shebang, strict mode, set -euo pipefail,
     shellcheck, quoting, word splitting, heredoc, trap, signal, retry, timeout,
-    flock, tmux, screen, zellij, terminal multiplexer, send-keys, pty, tty,
-    expect, detached job, background process, nohup, setsid, systemd-run
+    flock, ssh, scp, sftp, rsync, ssh_config, known_hosts, host key, ProxyJump,
+    bastion, jump host, ControlMaster, ssh multiplexing, BatchMode, ssh
+    certificate, sshd hardening, tmux, screen, terminal multiplexer, send-keys,
+    pty, tty, expect, detached job, background process, nohup, setsid,
+    systemd-run
 ---
 
 # Shell: robust Bash and reliable terminal automation
 
-Two distinct jobs share this skill because they are usually done together and
-fail for the same reason (treating the shell as forgiving when it is not):
+Two jobs share this skill because they are usually done together and fail for
+the same reason (treating the shell as forgiving when it is not):
 
 1. Writing Bash that is safe under failure, untrusted input, and odd filenames.
-2. Driving a live terminal (a REPL, a TUI, an SSH prompt) when no API exists.
+2. Running commands reliably on local and **remote** machines: SSH first
+   (it is the terminal you actually automate), and a real interactive
+   terminal (`tmux`) only as a last resort when a PTY is unavoidable.
 
-The governing rule for job 2: **the most reliable terminal automation is the
-one that never allocates a PTY.** Reach for `tmux` only after the decision
+The governing rule for job 2: **the most reliable automation never allocates a
+PTY.** For remote work that means `ssh host cmd` with the right options, not
+scripting an interactive session. Reach for `tmux` only after the decision
 ladder below rules out the cheaper, deterministic options.
 
 ## When to use
@@ -62,6 +71,14 @@ failure mode (a PTY, a shell, timing, screen scraping).
 | 2 | Long-running, must outlive the parent or an SSH disconnect, no TTY needed | `setsid`/`nohup`, or `systemd-run --user` (cgroup-tracked). Write a log file and an **exit-code sentinel file**; poll the sentinel. |
 | 3 | Strict prompt then response (login, passphrase, `(yes/no)`) | `expect` (or `pexpect`). Deterministic match, no sleeps. |
 | 4 | Needs a real TTY: a REPL, a curses TUI, a program that buffers or colours differently on a pipe, or a session you also want to attach to | `tmux` on a **private socket**, with the sentinel + `wait-for` pattern below. Use control mode (`-CC`) when you must machine-parse. |
+
+**Remote targets ride these same rungs over SSH, not a scripted login.**
+A remote command is rung 1: `ssh host cmd` runs without a PTY and returns
+the command's real exit code. Make it reliable with `BatchMode=yes`,
+`ConnectTimeout`, and `ServerAliveInterval` so it fails fast instead of
+hanging; see the SSH section below and `references/ssh-in-depth.md`. Only
+use `ssh -tt` (force a PTY) when the remote genuinely demands one, and only
+wrap a remote session in tmux when a human will attach.
 
 Rungs 1 to 3 are covered in `references/terminal-automation-alternatives.md`,
 including `systemd-run`, `script(1)`, `expect`, GNU `screen`, and `zellij`,
@@ -146,106 +163,121 @@ For anything past a throwaway one-liner, follow the structure in
   `wait -n` pool) beats unbounded `&`. Serialize across script invocations
   with `flock` on a lock file, not an ad-hoc lock directory.
 
+## Reliable SSH automation
+
+SSH is the terminal you actually automate. Almost every flaky "remote"
+script traces back to one of the items below. Full treatment (ssh_config
+match order, keys and agent, host-key trust and CAs, jump hosts,
+multiplexing, forwarding, file transfer, authorized_keys constraints,
+sshd hardening) is in `references/ssh-in-depth.md`.
+
+The non-negotiable automation invocation:
+
+```bash
+ssh -n -T \
+  -o BatchMode=yes -o ConnectTimeout=10 \
+  -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+  -o StrictHostKeyChecking=accept-new \
+  "$host" 'set -Eeuo pipefail; remote-cmd --flag'
+rc=$?   # the REMOTE command's real exit code (255 is ssh's own failure)
+```
+
+Why each piece, and the load-bearing rules:
+
+- **`BatchMode=yes`**: never prompt. A missing or wrong key fails
+  immediately instead of blocking CI on a hidden password prompt forever.
+  Pair with key or certificate auth.
+- **`ConnectTimeout` + `ServerAliveInterval`/`ServerAliveCountMax`**: a
+  dead or black-holed host is detected in seconds, not never. Without
+  these, automation hangs indefinitely on a firewalled peer.
+- **`StrictHostKeyChecking=accept-new`**: accept a new host, still refuse
+  a *changed* key. Never `no` (defeats MITM protection); never leave the
+  interactive default in a script (it hangs with no TTY). Prepopulate
+  with `ssh-keyscan` and use `yes` when you can.
+- **`-n` (stdin from `/dev/null`)**: `ssh` reads stdin, so inside
+  `while read h; do ssh "$h" ...; done < hosts` the first `ssh` eats the
+  rest of `hosts` and the loop runs once. `-n` (or `< /dev/null`) unless
+  you are deliberately piping data in.
+- **`-T` no PTY**; the remote command's exit status passes through.
+  `ssh -tt` forces a PTY only when the remote demands one (`sudo`
+  `requiretty`, an interactive tool).
+- **`--` is not a local option terminator after the host.** `ssh` stops
+  parsing its own options at the destination, so `ssh host -- cmd` asks
+  the *remote* shell to run `-- cmd`. The guard goes before the host.
+- **Remote command quoting is double expansion** (local shell, then the
+  remote login shell). Single-quote to defer, or push a script:
+  `ssh host bash -s -- arg < script.sh`.
+- **`IdentitiesOnly yes`** when an agent holds several keys, or the
+  server's `MaxAuthTries` rejects you (`Too many authentication
+  failures`) before the right key is offered.
+- **Multiplex many connections**: `ControlMaster auto`,
+  `ControlPath ~/.ssh/cm/%C` (use `%C`; the literal `%r@%h:%p` overflows
+  the socket-path limit), `ControlPersist 10m`. Authenticate once; far
+  faster and more reliable than N fresh handshakes.
+- **Bastions: `ProxyJump`**, not agent forwarding (the bastion never
+  sees your keys). At scale, an SSH **certificate authority** removes
+  `known_hosts` TOFU and `authorized_keys` sprawl; lock automation keys
+  with `restrict`,`command=`,`from=` in `authorized_keys`.
+
 ## Reliable tmux automation
 
-Use only at rung 4. Full treatment, gotchas, and control mode are in
-`references/tmux-automation.md`. The patterns below are the ones that turn
-flaky tmux scripting into reliable scripting.
+Use only at rung 4, when a PTY is genuinely unavoidable and SSH-direct
+will not do. The reference is now compact and focused:
+`references/tmux-automation.md`. The patterns below are the ones that
+turn flaky tmux scripting into reliable scripting.
 
-### Always use a private socket and stable IDs
-
-A shared default server mixes your automation with the user's sessions and
-their config. Isolate with `-L`, and never address windows or panes by a
-name a human might also have; capture the **server-assigned ID** at creation
-with `-P -F`.
+**Isolate and use stable IDs.** A private server (`-L`) keeps your
+automation off the user's server (so `kill-server` is safe) and, with
+`-f /dev/null`, off their config. Address panes by the captured
+server-assigned id, never `work.0`:
 
 ```bash
 sock="auto-$$"
-tmux -L "$sock" new-session -d -s work -x 220 -y 50
-# Capture the real pane id (%N). Do not guess "work.0".
+tmux -L "$sock" -f /dev/null new-session -d -s work -x 220 -y 50
 pane=$(tmux -L "$sock" display-message -p -t work '#{pane_id}')
+trap 'tmux -L "$sock" kill-server 2>/dev/null || true' EXIT  # or it leaks
 ```
 
-### The send-keys race, and the only two correct fixes
+**Beat the send-keys race.** `send-keys` returns immediately and does not
+wait for the shell to be ready; if the pane's shell is still sourcing rc
+files (1 to 2+ seconds) early keystrokes are lost. A fixed `sleep` fails
+under load. Either run the program as the pane process (no shell, no race:
+`new-session -d 'exec python3 -i'`) or poll a sentinel
+(`assets/shell-readiness-wait.sh`).
 
-`send-keys` injects keystrokes into a pane; it returns immediately and does
-**not** wait for a shell to be ready to read them. If the pane's shell is
-still sourcing `rc` files (oh-my-zsh, nvm, pyenv, starship, direnv can take
-1 to 2+ seconds), early keystrokes are silently lost or mangled. A fixed
-`sleep` is a guess that fails under load. The two correct fixes:
-
-**A. Do not use a shell at all.** Run the program as the pane's process so
-there is no `rc` phase and no prompt to race:
-
-```bash
-tmux -L "$sock" new-session -d -s work "python3 -i"
-```
-
-**B. Poll for readiness with a sentinel before sending the real input**
-(see `assets/shell-readiness-wait.sh`): send `printf 'SENTINEL\n'`, then
-`capture-pane` in a bounded loop until the echoed sentinel appears, then
-send the real command.
-
-### Capture completion AND exit status (the core pattern)
-
-`send-keys` discards the command's result. To run a command, block until it
-finishes, and recover its exit code, append a `wait-for` signal that carries
-the status. This is the single most important tmux pattern; the packaged,
-timeout-bounded version is `assets/tmux-run-capture.sh`.
+**Capture completion and the true exit code.** `send-keys` discards the
+result. Use a **fixed** `wait-for` channel plus `$?` in a file; the
+channel name must be known in advance, so it cannot encode `$?` (you would
+only wake for the one value guessed and a failure would hang to the
+timeout). Packaged in `assets/tmux-run-capture.sh`:
 
 ```bash
 ch="done-$$"; rcfile=$(mktemp)
-# On completion: record the REAL exit code to a file, then signal a FIXED
-# channel. The channel name must be known in advance to wait on it, so it
-# cannot encode $? (you would only wake for the one code you guessed).
 tmux -L "$sock" send-keys -t "$pane" \
   'mycmd --flag; echo $? > '"$rcfile"'; tmux -L '"$sock"' wait-for -S '"$ch" Enter
-# ALWAYS bound it; wait-for has no native timeout. No leading '!': under
-# `if ! cmd`, $? in the branch is the negation, not timeout's real status.
+# No leading '!': under `if ! cmd`, $? in the branch is the negation, not
+# timeout's real status. wait-for has no native timeout, so bound it.
 st=0; timeout 600 tmux -L "$sock" wait-for "$ch" || st=$?
 (( st == 124 )) && echo "timed out before the command finished" >&2
-out=$(tmux -L "$sock" capture-pane -p -S - -t "$pane")
+out=$(tmux -L "$sock" capture-pane -p -S - -t "$pane")  # -S - = scrollback
 status=$(< "$rcfile")   # the command's true exit code (any value)
 ```
 
-Notes that matter:
+For complete or streaming output use `pipe-pane` to a file, not a bigger
+`capture-pane`. To machine-parse rather than present to a human, prefer
+control mode (`tmux -C`): explicit `%begin`/`%end`/`%output` framing beats
+screen scraping. Both are detailed in `references/tmux-automation.md`.
 
-- `wait-for` has no built-in timeout; an unsignaled channel hangs forever.
-  Always wrap it in `timeout` and decide what a timeout means.
-- Use a **fixed** channel and write `$?` to a file. `wait-for` needs the
-  exact channel name in advance, so encoding the code into the name
-  (`$ch-$?`) only ever wakes for the one value you guessed and a failing
-  command then blocks until the timeout. Screen-scraping a prompt for the
-  exit code is just as unreliable (shell, prompt, and locale dependent).
-- `capture-pane` sees only the visible region unless you pass a scrollback
-  range (`-S -`); a long command's early output may have scrolled away. For
-  unbounded or streaming output, `pipe-pane` to a file and read the file.
-- Send literal text with `send-keys -l` and terminate option parsing with
-  `--` so text starting with `-` is not read as a flag. `Enter` is a
-  key name; a literal newline is not the same thing.
+## Picking the mechanism (one-line guidance)
 
-### Machine parsing: prefer control mode
-
-If the goal is to parse tmux output programmatically rather than to present
-a session to a human, control mode (`tmux -CC` / `-C`) emits structured,
-line-oriented `%begin`/`%end`/`%output` blocks instead of you scraping a
-rendered screen. It is markedly more reliable than `capture-pane` polling.
-Details and a parser sketch are in `references/tmux-automation.md`.
-
-### Clean up the server
-
-A private-socket server outlives your script unless you stop it. End with
-`tmux -L "$sock" kill-server 2>/dev/null || true`, ideally from the `EXIT`
-trap so a crash still tears it down.
-
-## tmux vs the alternatives (one-line guidance)
-
-- Just need the output and exit code, no TTY: **do not use tmux** (rung 1).
-- Need it to survive disconnect, no TTY: **`systemd-run --user`** or
-  `setsid` + sentinel file. More reliable than a detached tmux session you
-  later scrape.
+- Remote command, output and exit code: **`ssh host cmd`** with the
+  automation options above. Not a scripted login, not tmux.
+- Local, output and exit code, no TTY: **run it directly** (rung 1).
+- Survive disconnect, no TTY: **`systemd-run --user`** or `setsid` +
+  sentinel file. More reliable than a detached tmux session you scrape.
 - Prompt/response only: **`expect`**. Deterministic; no polling.
-- Need a TTY and/or human attach later: **tmux** with the patterns above.
+- Needs a TTY and/or a human attaches later: **tmux** with the patterns
+  above.
 - Pure session recording for humans: **`script -c`** or `asciinema`.
 
 The full matrix, with why each is more reliable for its niche, is in
@@ -263,16 +295,22 @@ References (load on demand; do not inline their full contents):
   stderr logging, `getopts` and long options, `mktemp` and trap-based
   cleanup, idempotency, atomic writes, retry with backoff and jitter,
   timeouts, `flock`, bounded concurrency, dependency preflight, dry-run.
-- `references/tmux-automation.md`: full tmux scripting model, IDs and
-  formats, the race condition in depth, `wait-for`, `capture-pane` vs
-  `pipe-pane`, control mode with a parser sketch, hooks, environment,
-  hardening, gotchas.
+- `references/ssh-in-depth.md`: the ssh_config first-match model, keys and
+  agent (`IdentitiesOnly`, agent-forwarding risk), host-key trust
+  (`accept-new`) and certificate authorities, `ProxyJump` bastions,
+  `ControlMaster` multiplexing, non-interactive semantics (`BatchMode`,
+  stdin stealing, double quoting, `--` placement), forwarding, `scp`/
+  `rsync`, `authorized_keys` constraints, and an `sshd` hardening baseline.
+- `references/tmux-automation.md`: the compact rung-4 reference (model and
+  isolation, the race and its two fixes, the fixed-channel `wait-for`
+  pattern, `capture-pane` vs `pipe-pane`, control mode, cleanup, gotchas).
 - `references/terminal-automation-alternatives.md`: the decision matrix and
   deep-dive on direct exec, `setsid`/`nohup`/`disown`, `systemd-run`,
   `script(1)`, `asciinema`, `expect`/`pexpect`, GNU `screen`, `zellij`,
-  `abduco`+`dvtm`, `mosh`, and SSH non-interactive options.
+  `abduco`+`dvtm`, `mosh`, and SSH as a transport alternative.
 - `references/quick-reference.md`: dense cheat tables (parameter expansion,
-  conditionals, redirection, signals, tmux verbs and format variables).
+  conditionals, redirection, signals, SSH automation options, tmux verbs
+  and format variables).
 
 Assets (copy and adapt; they embody every rule above and are ShellCheck
 clean):

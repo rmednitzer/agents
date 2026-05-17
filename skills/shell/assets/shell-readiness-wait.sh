@@ -19,9 +19,21 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-sock=${1:?usage: shell-readiness-wait.sh SOCKET PANE_ID [TIMEOUT]}
-pane=${2:?usage: shell-readiness-wait.sh SOCKET PANE_ID [TIMEOUT]}
+usage() { echo "usage: shell-readiness-wait.sh SOCKET PANE_ID [TIMEOUT]" >&2; }
+
+# Explicit validation so bad usage exits 2 (the documented contract), not
+# the status 1 a ${x:?} abort would give, which the timeout path also uses.
+(( $# >= 2 && $# <= 3 )) || { usage; exit 2; }
+sock=$1
+pane=$2
 timeout_s=${3:-15}
+[[ -n "$sock" && -n "$pane" ]] || { usage; exit 2; }
+# Validate TIMEOUT before any arithmetic: a non-numeric value would
+# otherwise blow up in $(( )) with a raw shell error (status 1).
+[[ "$timeout_s" =~ ^[1-9][0-9]*$ ]] || {
+  echo "TIMEOUT must be a positive integer (got: $timeout_s)" >&2
+  exit 2
+}
 
 command -v tmux >/dev/null 2>&1 || { echo "tmux not found" >&2; exit 2; }
 

@@ -17,7 +17,9 @@ if (( BASH_VERSINFO[0] < 4 )); then
 fi
 
 #--- constants ----------------------------------------------------------------
-SCRIPT_NAME=$(basename -- "${BASH_SOURCE[0]}")
+# Pure parameter expansion: no external `basename` (POSIX basename takes
+# no options, so `basename --` is non-portable), no subshell, no surprise.
+SCRIPT_NAME=${BASH_SOURCE[0]##*/}
 readonly SCRIPT_NAME
 # Not readonly: --verbose lowers it at parse time. Default from the
 # environment, else "info".
