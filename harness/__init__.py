@@ -4,6 +4,13 @@ Public API surface. Workloads import from `harness` only; they should not
 reach into submodules. See CLAUDE.md and docs/adr/ for architecture.
 """
 
+from harness.anthropic_api import (
+    AnthropicBatchProcessor,
+    BatchRequest,
+    BatchResult,
+    BatchStatus,
+    cache_control_system,
+)
 from harness.budgets import ActionBudget, BudgetKind, BudgetTracker
 from harness.composition import compose_contracts
 from harness.contract import (
@@ -69,7 +76,21 @@ from harness.mcp import (
     MCPTransport,
     ToolSpec,
 )
+from harness.openai_api import (
+    OpenAIBatchProcessor,
+    OpenAIBatchRequest,
+    OpenAIBatchResult,
+    OpenAIBatchStatus,
+)
 from harness.otel import OTelSink
+from harness.provenance import (
+    RUN_RECORD_SCHEMA_VERSION,
+    RunOutcome,
+    RunRecord,
+    contract_digest,
+    record_invariant_violations,
+    verify_run_record,
+)
 from harness.recovery import RecoveryDirective, RecoveryHandler, RecoveryOutcome
 from harness.redaction import RedactingSink, Redactor
 from harness.runtime import PydanticAIRuntime, RetryPolicy, Runtime
@@ -77,14 +98,19 @@ from harness.sinks import EventSink, JsonlSink, MemorySink, MultiSink, NullSink
 from harness.tools import ToolCatalog
 
 __all__ = [
+    "RUN_RECORD_SCHEMA_VERSION",
     "AccessDeniedEvent",
     "ActionBudget",
     "ActionRecord",
+    "AnthropicBatchProcessor",
     "ApprovalDenied",
     "ApprovalDeniedEvent",
     "ApprovalGranted",
     "ApprovalInterruption",
     "ApprovalRequested",
+    "BatchRequest",
+    "BatchResult",
+    "BatchStatus",
     "BudgetExceeded",
     "BudgetExceededEvent",
     "BudgetKind",
@@ -119,6 +145,10 @@ __all__ = [
     "MultiSink",
     "NullSink",
     "OTelSink",
+    "OpenAIBatchProcessor",
+    "OpenAIBatchRequest",
+    "OpenAIBatchResult",
+    "OpenAIBatchStatus",
     "PostconditionViolated",
     "PostconditionViolation",
     "PreconditionViolated",
@@ -134,14 +164,20 @@ __all__ = [
     "Redactor",
     "ResumableState",
     "RetryPolicy",
+    "RunOutcome",
+    "RunRecord",
     "Runtime",
     "Severity",
     "SkillDispatched",
     "ToolCatalog",
     "ToolGuard",
     "ToolSpec",
+    "cache_control_system",
     "compose_contracts",
+    "contract_digest",
     "jensen_shannon_divergence",
     "predicate",
+    "record_invariant_violations",
     "run_under_contract",
+    "verify_run_record",
 ]

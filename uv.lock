@@ -30,6 +30,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
+]
 aws = [
     { name = "boto3" },
 ]
@@ -37,11 +40,13 @@ crypto = [
     { name = "cryptography" },
 ]
 dev = [
+    { name = "anthropic" },
     { name = "boto3" },
     { name = "cryptography" },
     { name = "fakeredis" },
     { name = "moto", extra = ["dynamodb", "s3"] },
     { name = "mypy" },
+    { name = "openai" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
     { name = "pytest" },
@@ -50,6 +55,9 @@ dev = [
     { name = "redis" },
     { name = "ruff" },
     { name = "types-pyyaml" },
+]
+openai = [
+    { name = "openai" },
 ]
 otel = [
     { name = "opentelemetry-exporter-otlp-proto-http" },
@@ -61,6 +69,8 @@ redis = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40.0" },
+    { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.40.0" },
     { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.40.0" },
     { name = "boto3", marker = "extra == 'dev'", specifier = ">=1.40.0" },
     { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=43.0.0" },
@@ -69,6 +79,8 @@ requires-dist = [
     { name = "logfire", specifier = ">=4.33.0" },
     { name = "moto", extras = ["s3", "dynamodb"], marker = "extra == 'dev'", specifier = ">=5.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.1.0" },
+    { name = "openai", marker = "extra == 'dev'", specifier = ">=1.50.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.50.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'dev'", specifier = ">=1.30.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'otel'", specifier = ">=1.30.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'dev'", specifier = ">=1.30.0" },
@@ -84,7 +96,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.13" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12.20240917" },
 ]
-provides-extras = ["redis", "aws", "otel", "crypto", "dev"]
+provides-extras = ["redis", "aws", "otel", "crypto", "anthropic", "openai", "dev"]
 
 [[package]]
 name = "aiofile"

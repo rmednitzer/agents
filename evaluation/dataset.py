@@ -28,11 +28,14 @@ __all__ = [
 # The terminal outcome a contract run can reach. "completed" is a clean
 # success; "paused" is an approval interruption (a ResumableState, not
 # a terminal success); "approval_denied" is a rejected required
-# approval; the others name which obligation failed hard.
+# approval; "output_invalid" is a runtime result that fails to parse
+# into the output model; the others name which obligation failed hard.
+# Kept in lockstep with harness.provenance.RunOutcome.
 TrajectoryOutcome = Literal[
     "completed",
     "paused",
     "approval_denied",
+    "output_invalid",
     "precondition",
     "invariant",
     "postcondition",

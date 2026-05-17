@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from evaluation.dataset import DispatchGoldenSet, TrajectoryCase, TrajectoryOutcome
 from evaluation.metrics import hit_rank, mean_reciprocal_rank, precision_at_1
@@ -135,6 +135,13 @@ _EXC_LABEL: tuple[tuple[type[Exception], TrajectoryOutcome], ...] = (
     # approval is rejected; without this it fell through and re-raised,
     # aborting the whole evaluation instead of scoring the case.
     (ApprovalDenied, "approval_denied"),
+    # A runtime result that fails to parse into the output model raises
+    # pydantic ValidationError out of run_under_contract; map it so the
+    # case is scored "output_invalid" (matching RunRecord) instead of
+    # aborting the whole evaluation. Listed last: it is the broadest
+    # type here, and the harness exceptions above are not subclasses of
+    # it, so ordering does not mis-route them.
+    (ValidationError, "output_invalid"),
 )
 
 

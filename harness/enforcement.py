@@ -26,7 +26,7 @@ every new keyword reproduces the exact L1/L2 behaviour):
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from datetime import UTC, datetime
 from typing import Any
@@ -38,6 +38,9 @@ from harness.composition import compose_contracts
 from harness.contract import Contract, Severity
 from harness.drift import DriftMonitor
 from harness.errors import (
+    ApprovalDenied,
+    BudgetExceeded,
+    GovernanceViolation,
     InvariantViolation,
     PostconditionViolation,
     PreconditionViolation,
@@ -54,6 +57,7 @@ from harness.events import (
 from harness.guard import HarnessToolGuard, ToolGuard
 from harness.interruption import ResumableState
 from harness.mcp import MCPServerSpec
+from harness.provenance import RunOutcome, RunRecord, contract_digest
 from harness.recovery import RecoveryHandler, RecoveryOutcome
 from harness.runtime import Runtime
 from harness.sinks import EventSink, NullSink
@@ -80,6 +84,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
     drift_threshold: float | None = None,
     lifecycles: Sequence[AbstractAsyncContextManager[Any]] | None = None,
     parent_span_id: str | None = None,
+    record_sink: Callable[[RunRecord], None] | None = None,
 ) -> OutputT | ResumableState:
     """Execute a workload under contract.
 
@@ -133,6 +138,13 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
             from inside another contract produces a correlated span
             tree instead of flat siblings. None (the default) preserves
             the prior behaviour (events carry ``parent_span_id=None``).
+        record_sink: If provided, a callable invoked exactly once at the
+            run's terminal point with a RunRecord stamping the digest of
+            the (composed) contract that enforced the run, its outcome,
+            and timing (BL-185, ADR 0012). The digest is taken from the
+            live contract object here, so the attestation is bound to
+            what actually ran. None (the default) preserves prior
+            behaviour (no record is produced).
 
     Returns:
         OutputT on successful completion.
@@ -167,6 +179,32 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
     }
 
     active_sink.emit(ContractStarted(timestamp=started_at, **base))
+
+    digest = contract_digest(contract)
+
+    def _emit_record(outcome: RunOutcome) -> None:
+        """Emit the run-provenance record at a terminal point (BL-185).
+
+        No-op unless the caller opted in via ``record_sink``. The digest
+        is bound to the contract object that actually enforced this run
+        (post-composition), not reconstructed afterwards.
+        """
+        if record_sink is None:
+            return
+        now = datetime.now(UTC)
+        record_sink(
+            RunRecord(
+                run_id=trace_id,
+                workload=contract.name,
+                contract_name=contract.name,
+                contract_version=contract.version,
+                contract_digest=digest,
+                outcome=outcome,
+                started_at=started_at.isoformat(),
+                completed_at=now.isoformat(),
+                duration_ms=(now - started_at).total_seconds() * 1000.0,
+            )
+        )
 
     def _record(predicate: str, ok: bool, stage: str) -> None:
         """Feed the drift monitor and alert on a threshold crossing."""
@@ -247,6 +285,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
                 )
             )
             if pred_pre.severity == Severity.HARD:
+                _emit_record("precondition")
                 raise PreconditionViolation(pred_pre.name)
             await _recover(pred_pre.name, "precondition", input)
 
@@ -266,6 +305,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
                 )
             )
             if pred_inv.severity == Severity.HARD:
+                _emit_record("invariant")
                 raise InvariantViolation(pred_inv.name)
             await _recover(pred_inv.name, "invariant", inv_state)
 
@@ -306,17 +346,28 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         }
         if tracker is not None:
             update.update(tracker.snapshot())
+        _emit_record("paused")
         return state.model_copy(update=update)
 
     async def _invoke(*, resume_state: ResumableState | None) -> Any:
-        return await runtime.run(
-            prompt=input.model_dump_json(),
-            deps=deps,
-            budget=tracker,
-            mcp_servers=mcp_servers,
-            guard=active_guard,
-            resume=resume_state,
-        )
+        try:
+            return await runtime.run(
+                prompt=input.model_dump_json(),
+                deps=deps,
+                budget=tracker,
+                mcp_servers=mcp_servers,
+                guard=active_guard,
+                resume=resume_state,
+            )
+        except GovernanceViolation:
+            _emit_record("governance")
+            raise
+        except BudgetExceeded:
+            _emit_record("budget")
+            raise
+        except ApprovalDenied:
+            _emit_record("approval_denied")
+            raise
 
     async with AsyncExitStack() as stack:
         for lifecycle in lifecycles or ():
@@ -361,7 +412,11 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
             if isinstance(result, output_model):
                 output: OutputT = result
             else:
-                output = output_model.model_validate(result)
+                try:
+                    output = output_model.model_validate(result)
+                except ValidationError:
+                    _emit_record("output_invalid")
+                    raise
 
             retry_requested = False
             post_records.clear()
@@ -381,12 +436,14 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
                 )
                 if pred_post.severity == Severity.HARD:
                     _flush_post()
+                    _emit_record("postcondition")
                     raise PostconditionViolation(pred_post.name)
                 outcome = await _recover(pred_post.name, "postcondition", output)
                 if outcome is None or outcome.directive == "continue":
                     continue
                 if outcome.directive == "escalate":
                     _flush_post()
+                    _emit_record("postcondition")
                     raise PostconditionViolation(pred_post.name, "escalated by recovery handler")
                 if outcome.directive == "substitute":
                     # An invalid substitution is ignored; the soft
@@ -421,4 +478,5 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         )
     )
 
+    _emit_record("completed")
     return output

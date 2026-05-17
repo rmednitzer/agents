@@ -5,7 +5,9 @@ Purpose:
     Emit ``WorkloadManifest.model_json_schema()`` to
     ``docs/schema/workload-manifest.json`` so editors can offer
     autocomplete and validation against ``manifest.yaml`` (BL-013,
-    ADR 0007). The skill manifest schema is emitted alongside it.
+    ADR 0007). The skill manifest schema and the run-record schema
+    (``harness.provenance.RunRecord``, ADR 0012) are emitted alongside
+    it; every target is guarded by ``--check``.
 
 Usage:
     python scripts/gen_schema.py            # (re)write the schema files
@@ -29,6 +31,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from harness.provenance import RunRecord  # noqa: E402
 from skills.types import SkillManifest  # noqa: E402
 from workloads.manifest import WorkloadManifest  # noqa: E402
 
@@ -38,6 +41,7 @@ _SCHEMA_DIR = _REPO_ROOT / "docs" / "schema"
 _TARGETS: dict[str, Any] = {
     "workload-manifest.json": WorkloadManifest,
     "skill-manifest.json": SkillManifest,
+    "run-record.json": RunRecord,
 }
 
 
