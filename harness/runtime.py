@@ -505,9 +505,29 @@ class PydanticAIRuntime:
             and policy.circuit_breaker_threshold is not None
             and self._consecutive_failures >= policy.circuit_breaker_threshold
         )
+        # One approval-consumption set for the whole run() call, shared
+        # across retry attempts: an approval consumed on one attempt must
+        # NOT be re-consumable on a retried replay (that would let an
+        # approval-gated tool run again under a single human decision).
+        # With it shared, a retry that re-hits the gated tool finds no
+        # unconsumed approval and re-pauses for a fresh decision.
+        used_approvals: set[str] = set()
+        # End-to-end wall-clock deadline across attempts + backoff: each
+        # attempt is bounded by the *remaining* budget, not a fresh full
+        # timeout, so RetryPolicy cannot turn the wall-clock cap into a
+        # per-attempt allowance discovered only post-hoc.
+        wall_limit = budget.budget.max_wall_clock_seconds if budget is not None else None
+        run_started = time.monotonic()
         attempt = 0
         while True:
-            used_approvals: set[str] = set()
+            if wall_limit is not None:
+                remaining = wall_limit - (time.monotonic() - run_started)
+                if remaining <= 0:
+                    assert budget is not None
+                    budget.check_wall_clock()
+                    raise BudgetExceeded("wall_clock", wall_limit, time.monotonic() - run_started)
+            else:
+                remaining = None
             agent = self._build_agent(
                 tools,
                 mcp_servers,
@@ -523,7 +543,7 @@ class PydanticAIRuntime:
                     return await agent.run(prompt, deps=deps)
 
             try:
-                result = await self._with_watchdog(_invoke(), budget)
+                result = await self._with_watchdog(_invoke(), budget, timeout_override=remaining)
             except _ApprovalPause:
                 return self._resumable(state, prompt)
             except (GovernanceViolation, ApprovalDeniedError):
@@ -551,7 +571,16 @@ class PydanticAIRuntime:
                     and attempt < policy.max_retries
                 ):
                     attempt += 1
-                    await asyncio.sleep(policy.delay_for(attempt))
+                    delay = policy.delay_for(attempt)
+                    if wall_limit is not None:
+                        # Backoff counts against the end-to-end deadline:
+                        # never sleep past it (the loop's top check then
+                        # raises BudgetExceeded on the next iteration).
+                        delay = min(
+                            delay,
+                            max(0.0, wall_limit - (time.monotonic() - run_started)),
+                        )
+                    await asyncio.sleep(delay)
                     continue
                 if policy is not None and policy.circuit_breaker_threshold is not None:
                     self._consecutive_failures += 1
@@ -572,7 +601,13 @@ class PydanticAIRuntime:
             budget.check_wall_clock()
         return result.output
 
-    async def _with_watchdog(self, coro: Any, budget: BudgetTracker | None) -> Any:
+    async def _with_watchdog(
+        self,
+        coro: Any,
+        budget: BudgetTracker | None,
+        *,
+        timeout_override: float | None = None,
+    ) -> Any:
         """Run ``coro`` under an asyncio.wait_for wall-clock watchdog
         (BL-003).
 
@@ -591,9 +626,15 @@ class PydanticAIRuntime:
         where elapsed rounds exactly to the limit and the strict ``>``
         check does not trip; it reports the real measured elapsed.
         """
-        limit = budget.budget.max_wall_clock_seconds if budget is not None else None
+        cap = budget.budget.max_wall_clock_seconds if budget is not None else None
+        # ``timeout_override`` is the wall-clock budget REMAINING for
+        # this attempt (run() bounds each retry by the end-to-end
+        # deadline, not a fresh full cap). None preserves the original
+        # single-attempt behaviour (the full cap).
+        limit = timeout_override if timeout_override is not None else cap
         if limit is None:
             return await coro
+        limit = max(0.0, limit)
         start = time.monotonic()
         try:
             return await asyncio.wait_for(coro, timeout=limit)
@@ -601,7 +642,7 @@ class PydanticAIRuntime:
             assert budget is not None
             elapsed = time.monotonic() - start
             budget.check_wall_clock()
-            raise BudgetExceeded("wall_clock", limit, elapsed) from None
+            raise BudgetExceeded("wall_clock", cap if cap is not None else limit, elapsed) from None
 
     def _resumable(self, state: _GuardState, prompt: str) -> ResumableState:
         assert state.pause is not None
