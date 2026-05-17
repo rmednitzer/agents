@@ -83,6 +83,8 @@ dispatcher = RoutingChainDispatcher(
 
 Cheap-first: keyword matches resolve trivially; a skill-based router handles the gray-area cases via a versioned routing skill; the LLM dispatcher is the last-resort generic catcher. The routing runtime is intentionally a cheap model (Haiku-tier per the operating contract).
 
+Update (2026-05-17): the `dispatcher-skill` routing skill referenced above now ships in-tree at `skills/dispatcher-skill/` (versioned via `metadata.version`), so this composition is runnable as written rather than depending on a skill the caller must supply.
+
 ### 7. The `_example` skill in `skills/_example/`
 
 Ships as the reference skill bundle, exercising the loader, registry, and dispatchers in `tests/`. Demonstrates the SKILL.md format, metadata extensions (lane, triggers), and the absence of resource directories (which is valid per spec).
