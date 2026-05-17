@@ -12,10 +12,12 @@ downstream sink. Both are additive: no existing sink behaviour changes
 unless a caller opts in by wrapping it.
 
 Redaction is structural, not semantic: a key whose name looks sensitive
-is dropped, a value that matches a high-confidence secret shape is
-dropped, and an over-long scalar is clamped. It reduces accidental
-leakage; it is not a guarantee against a caller that deliberately hides
-a secret in an unrecognised field.
+has its value replaced with the placeholder, a value that matches a
+high-confidence secret shape is replaced with the placeholder, and an
+over-long scalar is clamped. The key is kept (so audit still shows the
+field existed) with its value masked. It reduces accidental leakage; it
+is not a guarantee against a caller that deliberately hides a secret in
+an unrecognised field.
 """
 
 from __future__ import annotations
@@ -86,8 +88,8 @@ class Redactor:
     def _scrub(self, value: Any) -> Any:
         if isinstance(value, dict):
             return {k: self._scrub_member(k, v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [self._scrub(v) for v in value]
+        if isinstance(value, list | tuple | set | frozenset):
+            return type(value)(self._scrub(v) for v in value)
         return self._scrub_scalar(value)
 
     def _scrub_member(self, key: Any, value: Any) -> Any:

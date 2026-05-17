@@ -79,18 +79,7 @@ def test_github_source_rejects_tar_path_traversal(tmp_path: Path, monkeypatch: A
             "skills-main/skills/cool/../../../pwned.txt": b"owned",
         }
     )
-
-    class _Resp:
-        def __enter__(self) -> _Resp:
-            return self
-
-        def __exit__(self, *a: object) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return archive
-
-    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Resp())
+    _patch(monkeypatch, archive)
     with pytest.raises(SkillLoadError, match=r"unsafe|escapes"):
         install_skill(GitHubSkillSource(path_prefix="skills"), "cool", tmp_path / "o")
     assert not (tmp_path / "pwned.txt").exists()
@@ -116,18 +105,7 @@ def test_github_source_extracts_subtree(tmp_path: Path, monkeypatch: Any) -> Non
             "skills-main/README.md": b"ignore",
         }
     )
-
-    class _Resp:
-        def __enter__(self) -> _Resp:
-            return self
-
-        def __exit__(self, *a: object) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return archive
-
-    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Resp())
+    _patch(monkeypatch, archive)
     src = GitHubSkillSource(repo="anthropics/skills", ref="main", path_prefix="skills")
     skill = install_skill(src, "cool", tmp_path / "out")
     assert skill.name == "cool"
@@ -136,18 +114,7 @@ def test_github_source_extracts_subtree(tmp_path: Path, monkeypatch: Any) -> Non
 
 def test_github_source_not_found_raises(tmp_path: Path, monkeypatch: Any) -> None:
     archive = _make_tar_gz({"skills-main/README.md": b"x"})
-
-    class _Resp:
-        def __enter__(self) -> _Resp:
-            return self
-
-        def __exit__(self, *a: object) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return archive
-
-    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Resp())
+    _patch(monkeypatch, archive)
     with pytest.raises(SkillLoadError, match="not found"):
         install_skill(GitHubSkillSource(path_prefix="skills"), "nope", tmp_path / "o")
 
@@ -168,8 +135,12 @@ class _FakeResp:
     def getheader(self, name: str) -> str | None:
         return self._cl if name == "Content-Length" else None
 
-    def read(self) -> bytes:
-        return self._data
+    def read(self, amt: int = -1) -> bytes:
+        if amt < 0:
+            chunk, self._data = self._data, b""
+            return chunk
+        chunk, self._data = self._data[:amt], self._data[amt:]
+        return chunk
 
 
 def _patch(monkeypatch: Any, data: bytes, content_length: str | None = None) -> None:

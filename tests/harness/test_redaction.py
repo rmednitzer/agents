@@ -57,6 +57,13 @@ def test_recurses_into_nested_structures() -> None:
     assert out.action_arguments["list"] == [{"token": "[REDACTED]"}, "plain"]
 
 
+def test_recurses_into_tuple_and_set() -> None:
+    e = _governance({"payload": ({"api_key": "x"},), "tags": {"AKIA1234567890ABCDEF", "ok"}})
+    out = Redactor().redact(e)
+    assert out.action_arguments["payload"] == ({"api_key": "[REDACTED]"},)
+    assert out.action_arguments["tags"] == {"[REDACTED]", "ok"}
+
+
 def test_event_without_dict_fields_returned_unchanged() -> None:
     e = ContractStarted(**_BASE)
     out = Redactor().redact(e)

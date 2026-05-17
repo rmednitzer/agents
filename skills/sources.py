@@ -37,6 +37,9 @@ __all__ = [
     "install_skill",
 ]
 
+# Streaming read size for the bounded archive download.
+_DOWNLOAD_CHUNK = 64 * 1024
+
 
 def _safe_name(name: str) -> str:
     """Reject skill names that are not a single, traversal-free path part.
@@ -110,19 +113,20 @@ class GitHubSkillSource:
     for a nested layout). The skill lives at
     ``<path_prefix>/<name>/SKILL.md`` inside the archive.
 
-    Supply-chain note: ``ref`` is resolved as a branch by default
-    (``codeload`` heads URL), so the same ``ref`` can return different
-    bytes over time (force-push, account takeover). For reproducible,
-    tamper-evident installs pass an immutable ``ref`` (a commit SHA or
-    release tag) and a ``sha256`` digest of the expected tarball; a
-    mismatch fails the install. The extraction caps
+    Supply-chain note: ``ref`` may be a branch (the default, ``main``,
+    which is mutable: the same ``ref`` can return different bytes over
+    time via force-push or account takeover), a release tag, or a commit
+    SHA. The generic ``codeload`` archive path resolves all three. For
+    reproducible, tamper-evident installs pass an immutable ``ref`` (a
+    commit SHA or release tag) and a ``sha256`` digest of the expected
+    tarball; a mismatch fails the install. The extraction caps
     (``max_download_bytes``, ``max_members``, ``max_file_bytes``,
     ``max_total_bytes``) bound a hostile or corrupt archive
     (decompression bomb, member flood) since stdlib ``tarfile`` does
     not. Member paths are still validated against traversal/escape.
     """
 
-    _CODELOAD = "https://codeload.github.com/{repo}/tar.gz/refs/heads/{ref}"
+    _CODELOAD = "https://codeload.github.com/{repo}/tar.gz/{ref}"
 
     def __init__(
         self,
@@ -190,12 +194,14 @@ class GitHubSkillSource:
         return target
 
     def _download(self, url: str) -> bytes:
-        """Fetch ``url``, rejecting an over-large body before extraction.
+        """Fetch ``url`` with a hard cap on bytes pulled into memory.
 
-        Honours ``Content-Length`` when the response exposes it, and
-        always re-checks the materialised length so a lying or absent
-        header cannot bypass the cap.
+        ``Content-Length`` is rejected up front when present and over
+        the cap. The body is then read in bounded chunks and the read
+        stops the moment the cap is exceeded, so a missing or lying
+        header cannot make the installer buffer an unbounded response.
         """
+        cap = self._max_download_bytes
         with urllib.request.urlopen(url, timeout=30) as resp:
             getheader = getattr(resp, "getheader", None)
             if callable(getheader):
@@ -205,17 +211,17 @@ class GitHubSkillSource:
                         declared = int(raw)
                     except (TypeError, ValueError):
                         declared = -1
-                    if declared > self._max_download_bytes:
-                        raise SkillLoadError(
-                            url,
-                            f"archive too large ({declared} bytes > {self._max_download_bytes})",
-                        )
-            data: bytes = resp.read()
-        if len(data) > self._max_download_bytes:
-            raise SkillLoadError(
-                url, f"archive too large ({len(data)} bytes > {self._max_download_bytes})"
-            )
-        return data
+                    if declared > cap:
+                        raise SkillLoadError(url, f"archive too large ({declared} bytes > {cap})")
+            buf = bytearray()
+            while True:
+                chunk = resp.read(_DOWNLOAD_CHUNK)
+                if not chunk:
+                    break
+                buf += chunk
+                if len(buf) > cap:
+                    raise SkillLoadError(url, f"archive too large (> {cap} bytes)")
+        return bytes(buf)
 
 
 def install_skill(
