@@ -22,7 +22,7 @@ format:
 	uv run ruff format .
 
 type-check:
-	uv run mypy agents harness memory workloads skills
+	uv run mypy agents harness memory workloads skills evaluation
 
 test:
 	uv run pytest
