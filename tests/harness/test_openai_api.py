@@ -171,6 +171,18 @@ def test_results_fall_back_to_error_file_bytes() -> None:
     assert results[0].error_type == "rate_limit_exceeded"
 
 
+def test_results_combine_output_and_error_files() -> None:
+    out = _ok_line("good", "hi")
+    err = json.dumps({"custom_id": "bad", "error": {"code": "context_length_exceeded"}})
+    batch = _Obj(id="b", status="completed", output_file_id="out", error_file_id="errf")
+    client = _FakeClient(batch, {"out": _TextContent(out), "errf": _TextContent(err)})
+    by_id = {r.custom_id: r for r in OpenAIBatchProcessor(client).results("b")}
+    assert set(by_id) == {"good", "bad"}  # error rows not dropped
+    assert by_id["good"].type == "succeeded"
+    assert by_id["bad"].type == "errored"
+    assert by_id["bad"].error_type == "context_length_exceeded"
+
+
 def test_results_empty_when_no_files() -> None:
     batch = _Obj(id="b", status="expired", output_file_id=None, error_file_id=None)
     assert list(OpenAIBatchProcessor(_FakeClient(batch, {})).results("b")) == []

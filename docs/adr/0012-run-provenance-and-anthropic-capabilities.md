@@ -1,4 +1,4 @@
-# ADR 0012: Run provenance records and optional Anthropic API capabilities
+# ADR 0012: Run provenance records and optional provider batch capabilities (Anthropic, OpenAI)
 
 - Status: Accepted
 - Date: 2026-05-17
@@ -109,8 +109,12 @@ id would be a silent mis-identification, so the caller passes it
 explicitly. Model-level OpenAI already works through the provider-neutral
 `Runtime`; only the bulk surface needed a wrapper.
 
-This is purely additive: new modules and new optional extras. No L1
-Protocol, signature, or import path changed; the `Runtime` Protocol is
+This is purely additive: new modules (`harness/provenance.py`,
+`harness/anthropic_api.py`, `harness/openai_api.py`) and two new
+optional extras (`anthropic`, `openai`). The only change to an existing
+signature is a new keyword-only `record_sink` on `run_under_contract`,
+which defaults to `None` and reproduces prior behaviour exactly; no L1
+import path was removed or changed and the `Runtime` Protocol is
 untouched (batching is a different shape and is intentionally not
 forced into it).
 

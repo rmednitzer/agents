@@ -88,6 +88,7 @@ from harness.provenance import (
     RunOutcome,
     RunRecord,
     contract_digest,
+    record_invariant_violations,
     verify_run_record,
 )
 from harness.recovery import RecoveryDirective, RecoveryHandler, RecoveryOutcome
@@ -176,6 +177,7 @@ __all__ = [
     "contract_digest",
     "jensen_shannon_divergence",
     "predicate",
+    "record_invariant_violations",
     "run_under_contract",
     "verify_run_record",
 ]

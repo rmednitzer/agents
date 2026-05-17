@@ -110,12 +110,29 @@ def test_invalid_digest_shape_fails_model_validation(tmp_path: Path) -> None:
     assert any("does not validate against RunRecord" in e for e in errors)
 
 
-def test_mixed_offset_timestamp_is_a_violation_not_a_crash(tmp_path: Path) -> None:
-    rec = tmp_path / "mixed.run.json"
+def test_naive_timestamp_is_a_utc_violation_not_a_crash(tmp_path: Path) -> None:
+    rec = tmp_path / "naive.run.json"
     _write_record(
         rec,
-        started_at="2026-05-17T00:00:00",  # naive
-        completed_at="2026-05-17T00:00:01+00:00",  # aware
+        started_at="2026-05-17T00:00:00",  # naive: no offset
+        completed_at="2026-05-17T00:00:01+00:00",
     )
     errors = crr._check_record(rec, None)
-    assert any("mixed-offset timestamp" in e for e in errors)
+    assert any("started_at" in e and "not a UTC instant" in e for e in errors)
+
+
+def test_non_utc_offset_is_rejected(tmp_path: Path) -> None:
+    rec = tmp_path / "offset.run.json"
+    _write_record(
+        rec,
+        started_at="2026-05-17T00:00:00+02:00",
+        completed_at="2026-05-17T00:00:01+02:00",
+    )
+    errors = crr._check_record(rec, None)
+    assert sum("not a UTC instant" in e for e in errors) == 2
+
+
+def test_clean_utc_record_has_no_timestamp_violation(tmp_path: Path) -> None:
+    rec = tmp_path / "ok.run.json"
+    _write_record(rec)  # default timestamps carry +00:00
+    assert crr._check_record(rec, None) == []

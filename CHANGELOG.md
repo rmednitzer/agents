@@ -6,8 +6,10 @@ ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 ## [Unreleased] Cross-repo review: run provenance + Anthropic capabilities (2026-05-17)
 
 See [ADR 0012](./docs/adr/0012-run-provenance-and-anthropic-capabilities.md).
-Additive: a new opt-in keyword and two new modules; defaults reproduce
-prior behaviour.
+Additive: a new opt-in `record_sink` keyword on `run_under_contract`,
+three new harness modules (`provenance`, `anthropic_api`, `openai_api`),
+the `scripts/check_run_records.py` gate, and two optional extras
+(`anthropic`, `openai`); defaults reproduce prior behaviour.
 
 ### Added
 

@@ -9,6 +9,7 @@ from harness.provenance import (
     RUN_RECORD_SCHEMA_VERSION,
     RunRecord,
     contract_digest,
+    record_invariant_violations,
     verify_run_record,
 )
 
@@ -46,7 +47,10 @@ def test_digest_is_deterministic() -> None:
     assert contract_digest(_contract()) == contract_digest(_contract())
 
 
-def test_digest_is_predicate_order_independent() -> None:
+def test_digest_is_predicate_order_dependent() -> None:
+    # Declaration order is behaviourally observable (short-circuit on
+    # the first hard failure, per-predicate recovery directives), so a
+    # reorder must change the digest.
     @predicate(name="a", severity=Severity.HARD)
     def _a(s: _In) -> bool:
         return True
@@ -57,7 +61,7 @@ def test_digest_is_predicate_order_independent() -> None:
 
     one = _contract(preconditions=[_a, _b])
     two = _contract(preconditions=[_b, _a])
-    assert contract_digest(one) == contract_digest(two)
+    assert contract_digest(one) != contract_digest(two)
 
 
 def test_digest_changes_with_severity_and_identity() -> None:
@@ -113,3 +117,29 @@ def test_verify_flags_unsupported_schema_version() -> None:
     c = _contract()
     errs = verify_run_record(_record(c, schema_version="0.0.1"), c)
     assert any("schema_version" in e for e in errs)
+
+
+def test_verify_flags_record_invariants() -> None:
+    # verify_run_record must reject exactly what the offline gate
+    # rejects: empty run id, non-UTC timestamps, non-monotonic window.
+    c = _contract()
+    errs = verify_run_record(_record(c, run_id=""), c)
+    assert any("run_id is empty" in e for e in errs)
+
+    errs = verify_run_record(_record(c, started_at="2026-05-17T00:00:00"), c)  # naive, no offset
+    assert any("not a UTC instant" in e for e in errs)
+
+    errs = verify_run_record(
+        _record(
+            c,
+            started_at="2026-05-17T00:00:05+00:00",
+            completed_at="2026-05-17T00:00:00+00:00",
+        ),
+        c,
+    )
+    assert any("non-monotonic run" in e for e in errs)
+
+
+def test_record_invariant_violations_accepts_clean_utc_record() -> None:
+    c = _contract()
+    assert record_invariant_violations(_record(c)) == []

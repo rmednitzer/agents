@@ -235,10 +235,12 @@ class OpenAIBatchProcessor:
     def results(self, batch_id: str) -> Iterator[OpenAIBatchResult]:
         """Yield decoded results. Call only once ``status().ended``.
 
-        On a batch with no ``output_file_id`` (e.g. it failed before
-        producing output) the ``error_file_id`` is decoded instead, so
-        the caller still gets a per-request error trail rather than
-        silence.
+        A partially-failed batch splits its rows across two files:
+        successes in ``output_file_id`` and failures in
+        ``error_file_id``. Both are decoded (output first, then error)
+        so the caller always sees every request; returning after the
+        output file would silently drop the failed rows and make a
+        partial failure look fully successful.
         """
         batch = self._client.batches.retrieve(batch_id)
         output_file_id = getattr(batch, "output_file_id", None)
@@ -262,7 +264,6 @@ class OpenAIBatchProcessor:
                         type="errored",
                         error_type=f"http_{status_code}",
                     )
-            return
 
         if error_file_id:
             content = self._client.files.content(str(error_file_id))

@@ -38,7 +38,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -50,6 +49,7 @@ from pydantic import ValidationError  # noqa: E402
 from harness.provenance import (  # noqa: E402
     SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS,
     RunRecord,
+    record_invariant_violations,
 )
 
 
@@ -83,25 +83,10 @@ def _check_record(path: Path, registry: dict[str, str] | None) -> list[str]:
             f"{sorted(SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS)}"
         ]
 
-    if not record.run_id:
-        errors.append(f"{path}: run_id is empty")
-
-    # TypeError: datetime.fromisoformat yields a naive datetime for an
-    # offset-less timestamp and an aware one for an offset; comparing a
-    # naive and an aware datetime raises TypeError, which must be a
-    # per-file violation, not a crash.
-    try:
-        start = datetime.fromisoformat(record.started_at)
-        end = datetime.fromisoformat(record.completed_at)
-        non_monotonic = end < start
-    except (ValueError, TypeError) as exc:
-        errors.append(f"{path}: unparseable / mixed-offset timestamp: {exc}")
-    else:
-        if non_monotonic:
-            errors.append(
-                f"{path}: completed_at {record.completed_at} is before "
-                f"started_at {record.started_at} (non-monotonic run)"
-            )
+    # Contract-independent invariants (run id, UTC timestamps,
+    # monotonic window) come from the shared helper so this gate and
+    # the in-process verify_run_record never diverge.
+    errors.extend(f"{path}: {m}" for m in record_invariant_violations(record))
 
     if registry is not None:
         key = f"{record.contract_name}@{record.contract_version}"

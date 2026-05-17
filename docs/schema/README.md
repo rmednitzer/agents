@@ -4,6 +4,7 @@ Generated JSON Schema artifacts. Do not edit by hand.
 
 - `workload-manifest.json`: JSON Schema for `manifest.yaml` (`WorkloadManifest`).
 - `skill-manifest.json`: JSON Schema for SKILL.md frontmatter (`SkillManifest`).
+- `run-record.json`: JSON Schema for a persisted run-provenance record (`harness.provenance.RunRecord`, ADR 0012).
 
 Regenerate after changing the models: `make schema` (or
 `python scripts/gen_schema.py`). CI and the test suite run

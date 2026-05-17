@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -44,6 +45,7 @@ __all__ = [
     "RunOutcome",
     "RunRecord",
     "contract_digest",
+    "record_invariant_violations",
     "verify_run_record",
 ]
 
@@ -86,21 +88,24 @@ RunOutcome = Literal[
 (a ``ResumableState``, not a terminal success); ``output_invalid`` is a
 runtime result that fails to parse into the workload's output model;
 the rest name the hard violation / budget exception that ended the run.
-The vocabulary matches ``evaluation.dataset.TrajectoryOutcome`` plus
-``paused`` and ``output_invalid`` so a recorded corpus and the
-trajectory gate speak the same terms.
+This vocabulary is identical to ``evaluation.dataset.TrajectoryOutcome``
+and kept in lockstep with it, so a recorded corpus and the trajectory
+gate speak the same terms.
 """
 
 
 def _predicate_surface(predicates: Any) -> list[list[str]]:
-    """Order-independent ``[name, severity]`` pairs for a predicate list.
+    """``[name, severity]`` pairs in *declaration order*.
 
-    Sorted by ``(name, severity)`` so the digest reflects a contract's
-    behavioural *surface*, not the incidental order predicates were
-    appended in. Two contracts that enforce the same obligations with
-    the same severities digest identically.
+    Order is preserved on purpose: enforcement evaluates each list in
+    declaration order and short-circuits on the first hard failure, and
+    a postcondition ``RecoveryOutcome`` directive (retry / substitute /
+    escalate) acts per predicate as it is reached. Reordering predicates
+    can therefore change the effective run behaviour, so the digest must
+    change too; sorting here would let a behaviour-changing reorder
+    attest identically and weaken the provenance guarantee.
     """
-    return sorted([p.name, str(p.severity)] for p in predicates)
+    return [[p.name, str(p.severity)] for p in predicates]
 
 
 def contract_digest(contract: Contract[Any, Any]) -> str:
@@ -108,8 +113,11 @@ def contract_digest(contract: Contract[Any, Any]) -> str:
 
     The digest covers the contract identity (name, version) and the
     name+severity of every precondition, invariant, postcondition, and
-    governance predicate, plus the sorted ``approval_required`` tool
-    list. It deliberately does NOT cover predicate *implementations*:
+    governance predicate *in declaration order* (order is behaviourally
+    observable, see ``_predicate_surface``), plus the
+    ``approval_required`` tool list sorted (an order-insensitive
+    allowlist). It deliberately does NOT cover predicate
+    *implementations*:
     two builds with the same declared obligations attest equal, and a
     changed obligation set (an added/removed/re-severitied predicate, a
     new approval-gated tool) changes the digest. This is the in-process
@@ -158,6 +166,44 @@ class RunRecord(BaseModel):
     duration_ms: float = Field(ge=0.0)
 
 
+def record_invariant_violations(record: RunRecord) -> list[str]:
+    """Contract-independent invariants every RunRecord must satisfy.
+
+    Shared by ``verify_run_record`` (the in-process API path) and
+    ``scripts/check_run_records.py`` (the offline corpus gate) so the
+    two never disagree about what a sound record is (the consistency
+    the ADR claims). Checks: non-empty ``run_id``; ``started_at`` /
+    ``completed_at`` are UTC instants (``RunRecord`` documents them as
+    UTC, and a zero ``utcoffset`` is the only UTC reading: ``None`` for
+    a naive timestamp, a non-zero ``timedelta`` for any other offset);
+    and a monotonic window (only compared once both are confirmed UTC,
+    which also avoids the naive-vs-aware comparison ``TypeError``).
+    """
+    errors: list[str] = []
+    if not record.run_id:
+        errors.append("run_id is empty")
+    try:
+        start = datetime.fromisoformat(record.started_at)
+        end = datetime.fromisoformat(record.completed_at)
+    except ValueError as exc:
+        errors.append(f"unparseable timestamp: {exc}")
+        return errors
+    for label, ts, raw in (
+        ("started_at", start, record.started_at),
+        ("completed_at", end, record.completed_at),
+    ):
+        if ts.utcoffset() != timedelta(0):
+            errors.append(
+                f"{label} {raw} is not a UTC instant (RunRecord requires UTC, e.g. a +00:00 offset)"
+            )
+    if start.utcoffset() == timedelta(0) and end.utcoffset() == timedelta(0) and end < start:
+        errors.append(
+            f"completed_at {record.completed_at} is before "
+            f"started_at {record.started_at} (non-monotonic run)"
+        )
+    return errors
+
+
 def verify_run_record(record: RunRecord, contract: Contract[Any, Any]) -> list[str]:
     """Return a list of provenance violations for ``record``.
 
@@ -169,9 +215,13 @@ def verify_run_record(record: RunRecord, contract: Contract[Any, Any]) -> list[s
     - the declared ``schema_version`` is one this build supports;
     - the stamped ``contract_digest`` equals the live digest of
       ``contract`` (the run was enforced by the contract it claims);
-    - identity fields agree with ``contract``.
+    - identity fields agree with ``contract``;
+    - the contract-independent record invariants
+      (``record_invariant_violations``: non-empty run id, UTC
+      timestamps, monotonic window) so a caller using this directly
+      accepts exactly what the offline gate accepts.
     """
-    errors: list[str] = []
+    errors: list[str] = list(record_invariant_violations(record))
     if record.schema_version not in SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS:
         errors.append(
             f"schema_version {record.schema_version!r} not in supported set "

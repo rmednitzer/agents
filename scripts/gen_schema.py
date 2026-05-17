@@ -5,7 +5,9 @@ Purpose:
     Emit ``WorkloadManifest.model_json_schema()`` to
     ``docs/schema/workload-manifest.json`` so editors can offer
     autocomplete and validation against ``manifest.yaml`` (BL-013,
-    ADR 0007). The skill manifest schema is emitted alongside it.
+    ADR 0007). The skill manifest schema and the run-record schema
+    (``harness.provenance.RunRecord``, ADR 0012) are emitted alongside
+    it; every target is guarded by ``--check``.
 
 Usage:
     python scripts/gen_schema.py            # (re)write the schema files
