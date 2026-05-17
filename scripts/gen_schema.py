@@ -29,6 +29,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from harness.provenance import RunRecord  # noqa: E402
 from skills.types import SkillManifest  # noqa: E402
 from workloads.manifest import WorkloadManifest  # noqa: E402
 
@@ -38,6 +39,7 @@ _SCHEMA_DIR = _REPO_ROOT / "docs" / "schema"
 _TARGETS: dict[str, Any] = {
     "workload-manifest.json": WorkloadManifest,
     "skill-manifest.json": SkillManifest,
+    "run-record.json": RunRecord,
 }
 
 

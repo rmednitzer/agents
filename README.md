@@ -37,8 +37,14 @@ See [CLAUDE.md](./CLAUDE.md) for repository structure and conventions.
   threshold events, recovery directives, run-scoped lifecycles), action
   budgets (steps/tokens/wall-clock/tool-calls, per-tool quotas, plus a
   cost dimension and per-tool token/wall-clock caps, cumulative across
-  an approval pause), structured OTel-ready events, and Jensen-Shannon
-  distributional drift.
+  an approval pause), structured OTel-ready events, Jensen-Shannon
+  distributional drift, and opt-in self-attesting run-provenance
+  records (`record_sink`, `contract_digest`, `verify_run_record`, the
+  `scripts/check_run_records.py` offline gate).
+- **Anthropic capabilities (optional `anthropic` extra).**
+  `AnthropicBatchProcessor` for Message Batches (async bulk at 50%
+  token price) and `cache_control_system` for prefix-stable prompt
+  caching; lazily imported, the package type-checks without the SDK.
 - **Runtime adapter.** `PydanticAIRuntime` wires the guard and budget
   into the tool-call path: every local *and* MCP tool call passes the
   same guard gate (approve / reject / require-approval), a wall-clock

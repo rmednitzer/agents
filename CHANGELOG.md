@@ -3,6 +3,29 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Cross-repo review: run provenance + Anthropic capabilities (2026-05-17)
+
+See [ADR 0012](./docs/adr/0012-run-provenance-and-anthropic-capabilities.md).
+Additive: a new opt-in keyword and two new modules; defaults reproduce
+prior behaviour.
+
+### Added
+
+- `harness.RunRecord` / `contract_digest` / `verify_run_record` and a
+  `record_sink` keyword on `run_under_contract`: a schema-versioned,
+  self-attesting record stamped at the run's terminal point with the
+  in-process digest of the contract that actually enforced it (not
+  reconstructed from git, the explicit divergence from the `sentinel`
+  provenance approach). `scripts/check_run_records.py` re-validates a
+  persisted corpus with hard errors only (no warn-and-pass tier).
+  `docs/schema/run-record.json` is gen-schema guarded. (`BL-185`,
+  ADR 0012)
+- `harness.AnthropicBatchProcessor` (Message Batches: async bulk at
+  50% token price, dependency-injected client, lazy `from_env`) and
+  `harness.cache_control_system` (prefix-stable prompt-cache block),
+  behind a new optional `anthropic` extra; the module imports and
+  type-checks with the SDK absent. (`BL-186`, ADR 0012)
+
 ## [Unreleased] Third audit + L3 capability wave (2026-05-17)
 
 See [ADR 0011](./docs/adr/0011-third-audit-and-l3-capability-wave.md).

@@ -30,6 +30,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
+]
 aws = [
     { name = "boto3" },
 ]
@@ -37,6 +40,7 @@ crypto = [
     { name = "cryptography" },
 ]
 dev = [
+    { name = "anthropic" },
     { name = "boto3" },
     { name = "cryptography" },
     { name = "fakeredis" },
@@ -61,6 +65,8 @@ redis = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40.0" },
+    { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.40.0" },
     { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.40.0" },
     { name = "boto3", marker = "extra == 'dev'", specifier = ">=1.40.0" },
     { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=43.0.0" },
@@ -84,7 +90,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.13" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12.20240917" },
 ]
-provides-extras = ["redis", "aws", "otel", "crypto", "dev"]
+provides-extras = ["redis", "aws", "otel", "crypto", "anthropic", "dev"]
 
 [[package]]
 name = "aiofile"
