@@ -10,12 +10,24 @@ construction of additional stores.
 Workloads serialize their own data; the store handles raw bytes.
 """
 
-from memory.acl import AccessPolicy, ACLStore, Operation, RoleACL, wrap_acl
+from memory.acl import (
+    AccessPolicy,
+    ACLStore,
+    AttributeACL,
+    AttributeRule,
+    Operation,
+    RoleACL,
+    wrap_acl,
+)
 from memory.dynamodb import DynamoDBStore
 from memory.encryption import (
     EncryptedStore,
+    EnvKeyProvider,
+    FileKeyProvider,
     KeyProvider,
+    RotatingKeyProvider,
     StaticKeyProvider,
+    VersionedKeyProvider,
     wrap_encrypted,
 )
 from memory.errors import AccessDenied, MemoryError, NamespaceViolation
@@ -46,11 +58,15 @@ __all__ = [
     "ACLStore",
     "AccessDenied",
     "AccessPolicy",
+    "AttributeACL",
+    "AttributeRule",
     "BatchMemoryStore",
     "CASMemoryStore",
     "ContentAddressableStore",
     "DynamoDBStore",
     "EncryptedStore",
+    "EnvKeyProvider",
+    "FileKeyProvider",
     "InMemoryStore",
     "KeyProvider",
     "MemoryError",
@@ -60,12 +76,14 @@ __all__ = [
     "Operation",
     "RedisStore",
     "RoleACL",
+    "RotatingKeyProvider",
     "S3Store",
     "SQLiteStore",
     "ScannableStore",
     "StaticKeyProvider",
     "SweepableStore",
     "TTLSweeper",
+    "VersionedKeyProvider",
     "validate_key",
     "validate_namespace_name",
     "wrap_acl",

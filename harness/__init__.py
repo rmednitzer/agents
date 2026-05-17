@@ -25,6 +25,9 @@ from harness.errors import (
     PreconditionViolation,
 )
 from harness.events import (
+    AccessDenied as AccessDeniedEvent,
+)
+from harness.events import (
     ApprovalDenied as ApprovalDeniedEvent,
 )
 from harness.events import (
@@ -74,6 +77,7 @@ from harness.sinks import EventSink, JsonlSink, MemorySink, MultiSink, NullSink
 from harness.tools import ToolCatalog
 
 __all__ = [
+    "AccessDeniedEvent",
     "ActionBudget",
     "ActionRecord",
     "ApprovalDenied",

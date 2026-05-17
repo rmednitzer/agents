@@ -16,17 +16,26 @@ sees ciphertext.
   boundary. Use opaque keys if key confidentiality is required.
 - A fresh 96-bit nonce per write is prepended to the ciphertext.
 
-KeyProvider abstracts key sourcing (static, KMS, env, rotation). The
-provider returns raw 32-byte keys; rotation/versioning is the
-provider's concern.
+KeyProvider abstracts key sourcing. ``StaticKeyProvider``,
+``EnvKeyProvider`` and ``FileKeyProvider`` (BL-111) are single-key,
+dependency-free sources. ``VersionedKeyProvider`` (BL-111) is the
+extension point for rotation and for a KMS: it exposes a *current*
+versioned key for new writes plus historical keys by id for decrypt,
+so rotating does not strand old ciphertext. A KMS-backed provider is a
+few lines satisfying that Protocol with its SDK imported lazily, kept
+out-of-tree by the same no-vendor-binding stance as ADR 0001 (mirrors
+``HashingEmbeddingProvider``, BL-110). ``RotatingKeyProvider`` is the
+in-tree reference implementation.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 from collections.abc import Callable, Mapping, Sequence
-from typing import Protocol, runtime_checkable
+from pathlib import Path
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from memory.store import (
     BatchMemoryStore,
@@ -38,9 +47,19 @@ from memory.store import (
 from memory.types import Namespace
 from memory.validators import validate_key
 
-__all__ = ["EncryptedStore", "KeyProvider", "StaticKeyProvider", "wrap_encrypted"]
+__all__ = [
+    "EncryptedStore",
+    "EnvKeyProvider",
+    "FileKeyProvider",
+    "KeyProvider",
+    "RotatingKeyProvider",
+    "StaticKeyProvider",
+    "VersionedKeyProvider",
+    "wrap_encrypted",
+]
 
 _NONCE_BYTES = 12
+_KeyEncoding = Literal["base64", "hex", "raw"]
 
 
 @runtime_checkable
@@ -55,16 +74,125 @@ class KeyProvider(Protocol):
     def key_for(self, namespace: str) -> bytes: ...
 
 
+@runtime_checkable
+class VersionedKeyProvider(Protocol):
+    """A KeyProvider with rotation/versioning (BL-111).
+
+    ``current_key`` returns ``(key_id, key)`` used to seal new writes;
+    ``key`` resolves a historical version by id so ciphertext written
+    under a previous key still decrypts after a rotation. An
+    EncryptedStore built over a versioned provider stamps the sealing
+    ``key_id`` into the value envelope; one built over a plain
+    KeyProvider keeps the exact prior on-disk format (no envelope), so
+    this is fully additive. A KMS-backed provider implements this
+    Protocol (per-namespace keys, SDK imported lazily) and stays
+    out-of-tree (ADR 0001 no-vendor-binding).
+    """
+
+    def current_key(self, namespace: str) -> tuple[str, bytes]: ...
+
+    def key(self, namespace: str, key_id: str) -> bytes: ...
+
+
+def _validate_key_bytes(key: bytes) -> bytes:
+    if len(key) != 32:
+        raise ValueError("AES-256 key must be exactly 32 bytes")
+    return key
+
+
+def _decode_key(raw: bytes, encoding: _KeyEncoding) -> bytes:
+    if encoding == "raw":
+        return _validate_key_bytes(raw)
+    text = raw.decode().strip()
+    if encoding == "hex":
+        return _validate_key_bytes(bytes.fromhex(text))
+    return _validate_key_bytes(base64.b64decode(text))
+
+
 class StaticKeyProvider:
     """A fixed 32-byte key for every namespace (dev/tests/single-tenant)."""
 
     def __init__(self, key: bytes) -> None:
-        if len(key) != 32:
-            raise ValueError("AES-256 key must be exactly 32 bytes")
-        self._key = key
+        self._key = _validate_key_bytes(key)
 
     def key_for(self, namespace: str) -> bytes:
         return self._key
+
+
+class EnvKeyProvider:
+    """Reads the symmetric key from an environment variable (BL-111).
+
+    ``var`` holds the key, ``encoding`` selects how it is decoded
+    (base64 default, hex, or raw bytes). One key for every namespace,
+    like StaticKeyProvider; the variable is read on each ``key_for`` so
+    a process that re-exports it is picked up. A missing variable is a
+    clear ValueError, not a silent fallback.
+    """
+
+    def __init__(
+        self, var: str = "AGENTS_MEMORY_KEY", *, encoding: _KeyEncoding = "base64"
+    ) -> None:
+        self._var = var
+        self._encoding: _KeyEncoding = encoding
+
+    def key_for(self, namespace: str) -> bytes:
+        raw = os.environ.get(self._var)
+        if raw is None:
+            raise ValueError(f"environment variable {self._var!r} is not set")
+        return _decode_key(raw.encode(), self._encoding)
+
+
+class FileKeyProvider:
+    """Reads the symmetric key from a file (BL-111).
+
+    ``encoding`` selects raw 32 bytes (default), base64, or hex text.
+    The file is read on each ``key_for`` so an out-of-band key roll on
+    disk is picked up without restarting the process.
+    """
+
+    def __init__(self, path: str | Path, *, encoding: _KeyEncoding = "raw") -> None:
+        self._path = Path(path)
+        self._encoding: _KeyEncoding = encoding
+
+    def key_for(self, namespace: str) -> bytes:
+        if not self._path.is_file():
+            raise ValueError(f"key file {str(self._path)!r} does not exist")
+        return _decode_key(self._path.read_bytes(), self._encoding)
+
+
+class RotatingKeyProvider:
+    """In-tree reference VersionedKeyProvider (BL-111).
+
+    Holds an id -> 32-byte-key ring and a current id. ``rotate`` adds a
+    new version and makes it current; prior versions stay resolvable by
+    ``key`` so already-sealed values still decrypt. One ring for every
+    namespace (like StaticKeyProvider); a per-namespace or KMS-backed
+    provider is just another VersionedKeyProvider.
+    """
+
+    def __init__(self, keys: Mapping[str, bytes], current: str) -> None:
+        if not keys:
+            raise ValueError("at least one key version is required")
+        self._keys = {kid: _validate_key_bytes(k) for kid, k in keys.items()}
+        if current not in self._keys:
+            raise ValueError(f"current version {current!r} not in the key ring")
+        self._current = current
+
+    def rotate(self, key_id: str, key: bytes) -> None:
+        """Add ``key_id`` -> ``key`` and make it the current version."""
+        if key_id in self._keys:
+            raise ValueError(f"key version {key_id!r} already exists")
+        self._keys[key_id] = _validate_key_bytes(key)
+        self._current = key_id
+
+    def current_key(self, namespace: str) -> tuple[str, bytes]:
+        return self._current, self._keys[self._current]
+
+    def key(self, namespace: str, key_id: str) -> bytes:
+        try:
+            return self._keys[key_id]
+        except KeyError:
+            raise KeyError(f"unknown key version {key_id!r}") from None
 
 
 class EncryptedStore:
@@ -78,7 +206,9 @@ class EncryptedStore:
 
     name: str = "encrypted"
 
-    def __init__(self, inner: MemoryStore, key_provider: KeyProvider) -> None:
+    def __init__(
+        self, inner: MemoryStore, key_provider: KeyProvider | VersionedKeyProvider
+    ) -> None:
         try:
             from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         except ImportError as exc:  # pragma: no cover - env dependent
@@ -86,7 +216,22 @@ class EncryptedStore:
                 "EncryptedStore requires the 'crypto' extra: pip install 'agents[crypto]'"
             ) from exc
         self._inner = inner
-        self._aes = AESGCM(key_provider.key_for(inner.namespace.name))
+        self._aesgcm = AESGCM
+        self._ns = inner.namespace.name
+        # A versioned provider switches the value format to a key-id
+        # envelope so a rotation does not strand prior ciphertext; a
+        # plain KeyProvider keeps the exact prior on-disk format (BL-111,
+        # additive: omitting a versioned provider is byte-identical to
+        # before).
+        self._versioned = isinstance(key_provider, VersionedKeyProvider)
+        if self._versioned:
+            self._vkp = cast(VersionedKeyProvider, key_provider)
+            self._aes_cache: dict[str, Any] = {}
+        else:
+            # The negative branch of a runtime_checkable Protocol
+            # isinstance does not narrow the union for mypy; in this
+            # branch the provider is the plain (key_for) KeyProvider.
+            self._aes = AESGCM(cast(KeyProvider, key_provider).key_for(self._ns))
 
     @property
     def namespace(self) -> Namespace:
@@ -114,15 +259,43 @@ class EncryptedStore:
     async def list_keys(self, prefix: str = "") -> list[str]:
         return await self._inner.list_keys(prefix)
 
+    def _aes_for(self, key_id: str) -> Any:
+        aes = self._aes_cache.get(key_id)
+        if aes is None:
+            aes = self._aesgcm(self._vkp.key(self._ns, key_id))
+            self._aes_cache[key_id] = aes
+        return aes
+
     def _seal(self, key: str, value: bytes) -> bytes:
         nonce = os.urandom(_NONCE_BYTES)
-        return nonce + self._aes.encrypt(nonce, value, self._aad(key))
+        aad = self._aad(key)
+        if not self._versioned:
+            return nonce + bytes(self._aes.encrypt(nonce, value, aad))
+        # Versioned envelope: 1-byte key-id length, key-id, nonce, ct.
+        # The key id is NOT in the AAD; AAD stays namespace::key so a
+        # value re-sealed under a rotated key still binds to the same
+        # namespace/key. The id only selects the decrypt key.
+        key_id, _ = self._vkp.current_key(self._ns)
+        kid = key_id.encode()
+        if not 0 < len(kid) < 256:
+            raise ValueError("key id must be 1..255 bytes when UTF-8 encoded")
+        aes = self._aes_for(key_id)
+        ct = bytes(aes.encrypt(nonce, value, aad))
+        return bytes([len(kid)]) + kid + nonce + ct
 
     def _unseal(self, key: str, sealed: bytes | None) -> bytes | None:
         if sealed is None:
             return None
-        nonce, ct = sealed[:_NONCE_BYTES], sealed[_NONCE_BYTES:]
-        return bytes(self._aes.decrypt(nonce, ct, self._aad(key)))
+        aad = self._aad(key)
+        if not self._versioned:
+            nonce, ct = sealed[:_NONCE_BYTES], sealed[_NONCE_BYTES:]
+            return bytes(self._aes.decrypt(nonce, ct, aad))
+        n = sealed[0]
+        key_id = sealed[1 : 1 + n].decode()
+        body = sealed[1 + n :]
+        nonce, ct = body[:_NONCE_BYTES], body[_NONCE_BYTES:]
+        aes = self._aes_for(key_id)
+        return bytes(aes.decrypt(nonce, ct, aad))
 
 
 # --- Extension-Protocol forwarding (BL-156) ---------------------------
@@ -201,7 +374,9 @@ class _EncSweepMixin:
         return await self._inner.sweep_expired()
 
 
-def wrap_encrypted(inner: MemoryStore, key_provider: KeyProvider) -> EncryptedStore:
+def wrap_encrypted(
+    inner: MemoryStore, key_provider: KeyProvider | VersionedKeyProvider
+) -> EncryptedStore:
     """EncryptedStore that also forwards the value-safe extension
     Protocols ``inner`` supports (BL-156).
 
@@ -210,7 +385,8 @@ def wrap_encrypted(inner: MemoryStore, key_provider: KeyProvider) -> EncryptedSt
     forwarded: GCM nonce randomisation makes ciphertext-equality CAS
     unrepresentable (see the module note and memory/README.md). Use
     this instead of constructing ``EncryptedStore`` directly over a
-    capability-rich backend.
+    capability-rich backend. A ``VersionedKeyProvider`` (BL-111) is
+    accepted and enables the rotation-safe value envelope.
     """
     mixins: list[type] = []
     if isinstance(inner, BatchMemoryStore):

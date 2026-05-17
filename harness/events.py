@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from harness.contract import Severity
 
 __all__ = [
+    "AccessDenied",
     "ApprovalDenied",
     "ApprovalGranted",
     "ApprovalRequested",
@@ -153,6 +154,23 @@ class MemoryDelete(HarnessEvent):
     namespace: str
     key: str
     existed: bool
+
+
+class AccessDenied(HarnessEvent):
+    """An ACLStore denied a principal an operation on a key (BL-122).
+
+    The observability counterpart of the ``memory.errors.AccessDenied``
+    exception: emitted just before the store raises, so a denied access
+    is auditable through the EventSink, not only visible as a raised
+    exception in the caller. For a ``list`` denial ``key`` is the
+    prefix that was refused.
+    """
+
+    kind: Literal["access_denied"] = "access_denied"
+    namespace: str
+    principal: str
+    operation: str
+    key: str
 
 
 class RecoveryApplied(HarnessEvent):
