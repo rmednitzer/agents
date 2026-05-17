@@ -288,6 +288,78 @@ class SQLiteStore:
             self._audit.delete(key, existed=True)
         return ok
 
+    # --- VersionedMemoryStore (BL-124) --------------------------------
+
+    @staticmethod
+    def _token(value: bytes) -> str:
+        return hashlib.sha256(value).hexdigest()
+
+    async def read_versioned(self, key: str) -> tuple[bytes, str] | None:
+        validate_key(key)
+        async with self._lock:
+            value = await asyncio.to_thread(self._db_get, key)
+        self._audit.read(key, hit=value is not None)
+        if value is None:
+            return None
+        return value, self._token(value)
+
+    async def write_versioned(
+        self,
+        key: str,
+        value: bytes,
+        *,
+        expected_version: str | None = None,
+        ttl_seconds: float | None = None,
+    ) -> str | None:
+        validate_key(key)
+        ttl = self._effective_ttl(ttl_seconds)
+        expires_at = time.time() + ttl if ttl is not None else None
+
+        def _vset() -> bool:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                current = self._db_get(key)
+                live = None if current is None else self._token(current)
+                if live != expected_version:
+                    self._conn.execute("ROLLBACK")
+                    return False
+                self._db_put(key, value, expires_at)
+                self._conn.execute("COMMIT")
+                return True
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
+
+        async with self._lock:
+            ok = await asyncio.to_thread(_vset)
+        if not ok:
+            return None
+        self._audit.write(key, value_bytes=len(value), ttl_seconds=ttl)
+        return self._token(value)
+
+    async def delete_versioned(self, key: str, expected_version: str) -> bool:
+        validate_key(key)
+
+        def _vdel() -> bool:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                current = self._db_get(key)
+                if current is None or self._token(current) != expected_version:
+                    self._conn.execute("ROLLBACK")
+                    return False
+                self._conn.execute(f'DELETE FROM "{self._table}" WHERE key=?', (key,))
+                self._conn.execute("COMMIT")
+                return True
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
+
+        async with self._lock:
+            ok = await asyncio.to_thread(_vdel)
+        if ok:
+            self._audit.delete(key, existed=True)
+        return ok
+
     # --- SweepableStore (BL-080) --------------------------------------
 
     async def sweep_expired(self) -> int:

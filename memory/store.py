@@ -19,6 +19,9 @@ simply does not implement it rather than faking it:
 - ContentAddressableStore: write_content -> sha256 key (BL-083).
 - CASMemoryStore: compare-and-set / compare-and-delete (BL-072).
 - SweepableStore: sweep_expired for the active TTL sweeper (BL-080).
+- SemanticMemoryStore: vector write + similarity query (BL-131).
+- VersionedMemoryStore: MVCC read/write/delete by version token
+  (BL-124).
 
 Audit (BL-040): an adapter MAY accept ``sink`` and
 ``base_event_fields`` at construction and emit MemoryRead / MemoryWrite
@@ -33,6 +36,7 @@ adapters follow.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from memory.types import Namespace
@@ -43,7 +47,10 @@ __all__ = [
     "ContentAddressableStore",
     "MemoryStore",
     "ScannableStore",
+    "SemanticHit",
+    "SemanticMemoryStore",
     "SweepableStore",
+    "VersionedMemoryStore",
 ]
 
 
@@ -161,6 +168,92 @@ class CASMemoryStore(MemoryStore, Protocol):
     ) -> bool: ...
 
     async def compare_and_delete(self, key: str, expected: bytes) -> bool: ...
+
+
+@dataclass(frozen=True)
+class SemanticHit:
+    """One result of a similarity query (BL-131).
+
+    ``score`` is cosine similarity in [-1, 1] (1.0 == identical
+    direction); a non-finite component yields 0.0, the same guard as
+    skills.embeddings.cosine_similarity (BL-159). ``value`` is the
+    stored payload bytes for ``key``.
+    """
+
+    key: str
+    score: float
+    value: bytes
+
+
+@runtime_checkable
+class SemanticMemoryStore(MemoryStore, Protocol):
+    """MemoryStore with vector write + similarity query (BL-131).
+
+    A *separate* extension Protocol (ADR 0004 "don't fake it"): a
+    backend implements it only if it can index embeddings, others do
+    not. ``write_semantic`` stores ``value`` under ``key`` exactly like
+    ``write`` and additionally indexes the embedding of ``text``;
+    ``query_semantic`` embeds the query and returns up to ``k`` live
+    hits ranked by descending cosine similarity. Expired keys are
+    excluded (same TTL semantics as the core surface). The embedding
+    model is the implementation's concern (it takes an Embedder), so
+    the framework binds no vendor (ADR 0001), reusing the BL-110
+    HashingEmbeddingProvider as the dependency-free default.
+    """
+
+    async def write_semantic(
+        self,
+        key: str,
+        value: bytes,
+        *,
+        text: str,
+        ttl_seconds: float | None = None,
+    ) -> None: ...
+
+    async def query_semantic(self, text: str, *, k: int = 5) -> list[SemanticHit]: ...
+
+
+@runtime_checkable
+class VersionedMemoryStore(MemoryStore, Protocol):
+    """MVCC version-token concurrency, beyond CAS (BL-124, extends BL-072).
+
+    A *separate* extension Protocol (ADR 0004 "don't fake it"). The
+    version token is the SHA-256 of the stored value, so it is
+    path-independent: any write that changes the value (via write,
+    mset, compare_and_set, write_versioned, ...) changes the token, and
+    identical content yields an identical token (content-version
+    semantics; an ABA write of identical bytes is intentionally a
+    no-conflict, the standard model). This lets a reader read a token,
+    do work, and commit only if the value has not changed underneath
+    it, without holding a lock.
+
+    - ``read_versioned`` returns ``(value, token)`` or None (absent or
+      expired, like ``read``).
+    - ``write_versioned`` commits iff the live token equals
+      ``expected_version`` (``None`` means "must be absent"); returns
+      the new token on success or ``None`` on a version conflict.
+    - ``delete_versioned`` deletes iff the live token equals
+      ``expected_version``; returns whether it deleted.
+
+    Multi-key transactions where the backend supports them are the
+    documented remainder (the BL-072 scoping: Protocol + reference
+    first, per-adapter breadth later). The token is over the stored
+    bytes, so (like CAS) it is not forwarded through EncryptedStore: a
+    per-write random GCM nonce makes the ciphertext token unstable.
+    """
+
+    async def read_versioned(self, key: str) -> tuple[bytes, str] | None: ...
+
+    async def write_versioned(
+        self,
+        key: str,
+        value: bytes,
+        *,
+        expected_version: str | None = None,
+        ttl_seconds: float | None = None,
+    ) -> str | None: ...
+
+    async def delete_versioned(self, key: str, expected_version: str) -> bool: ...
 
 
 @runtime_checkable

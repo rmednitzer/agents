@@ -34,6 +34,7 @@ from memory.errors import AccessDenied, MemoryError, NamespaceViolation
 from memory.inmemory import InMemoryStore
 from memory.redis import RedisStore
 from memory.s3 import S3Store
+from memory.semantic import Embedder, InMemorySemanticStore
 from memory.sqlite import SQLiteStore
 from memory.store import (
     BatchMemoryStore,
@@ -41,7 +42,10 @@ from memory.store import (
     ContentAddressableStore,
     MemoryStore,
     ScannableStore,
+    SemanticHit,
+    SemanticMemoryStore,
     SweepableStore,
+    VersionedMemoryStore,
 )
 from memory.sweep import TTLSweeper
 from memory.types import Namespace
@@ -64,9 +68,11 @@ __all__ = [
     "CASMemoryStore",
     "ContentAddressableStore",
     "DynamoDBStore",
+    "Embedder",
     "EncryptedStore",
     "EnvKeyProvider",
     "FileKeyProvider",
+    "InMemorySemanticStore",
     "InMemoryStore",
     "KeyProvider",
     "MemoryError",
@@ -80,10 +86,13 @@ __all__ = [
     "S3Store",
     "SQLiteStore",
     "ScannableStore",
+    "SemanticHit",
+    "SemanticMemoryStore",
     "StaticKeyProvider",
     "SweepableStore",
     "TTLSweeper",
     "VersionedKeyProvider",
+    "VersionedMemoryStore",
     "validate_key",
     "validate_namespace_name",
     "wrap_acl",
