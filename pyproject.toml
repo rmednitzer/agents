@@ -56,6 +56,13 @@ crypto = [
 anthropic = [
     "anthropic>=0.40.0",
 ]
+# OpenAI Batch API capability (BL-187). harness.openai_api lazily
+# imports the SDK in from_env and is decoupled from it via a Protocol,
+# so the module imports and type-checks regardless of the SDK
+# (ADR 0007 / ADR 0012).
+openai = [
+    "openai>=1.50.0",
+]
 dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
@@ -72,6 +79,7 @@ dev = [
     "opentelemetry-exporter-otlp-proto-http>=1.30.0",
     "cryptography>=43.0.0",
     "anthropic>=0.40.0",
+    "openai>=1.50.0",
 ]
 
 [project.urls]
@@ -109,7 +117,7 @@ plugins = ["pydantic.mypy"]
 # not the SDK is installed (the lazy import in harness.anthropic_api is
 # wrapped behind a Protocol; the same boundary treatment as the other
 # optional backends).
-module = ["boto3.*", "botocore.*", "fakeredis.*", "anthropic.*"]
+module = ["boto3.*", "botocore.*", "fakeredis.*", "anthropic.*", "openai.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

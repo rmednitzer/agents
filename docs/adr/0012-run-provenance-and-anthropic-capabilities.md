@@ -96,7 +96,20 @@ its own change:
   cached system block, with the silent-invalidator constraint
   documented at the call site.
 
-This is purely additive: a new module and a new optional extra. No L1
+`harness/openai_api.py` adds the OpenAI counterpart, `OpenAIBatchProcessor`
+(`BL-187`), behind an `openai` extra with the same conventions. It is
+deliberately not a copy: the OpenAI Batch API uploads a JSONL request
+file, creates a batch referencing the file id, and produces a JSONL
+output (and separate error) file, so the submit/results implementation
+is genuinely different. There is no `cache_control` analogue (OpenAI
+prompt caching is automatic), so nothing mirrors `cache_control_system`.
+`OpenAIBatchRequest` has no default `model`: this code cannot verify
+current OpenAI model identifiers against a trusted source, and a guessed
+id would be a silent mis-identification, so the caller passes it
+explicitly. Model-level OpenAI already works through the provider-neutral
+`Runtime`; only the bulk surface needed a wrapper.
+
+This is purely additive: new modules and new optional extras. No L1
 Protocol, signature, or import path changed; the `Runtime` Protocol is
 untouched (batching is a different shape and is intentionally not
 forced into it).

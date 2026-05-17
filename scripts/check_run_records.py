@@ -137,7 +137,10 @@ def main() -> int:
     if args.registry:
         try:
             registry = json.loads(Path(args.registry).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        # ValueError covers JSONDecodeError and UnicodeDecodeError, so a
+        # corrupt registry is the documented invocation failure (exit 2),
+        # not a traceback (parity with the per-record read path).
+        except (OSError, ValueError) as exc:
             print(f"error: cannot read registry {args.registry}: {exc}", file=sys.stderr)
             return 2
         if not isinstance(registry, dict):

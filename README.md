@@ -41,10 +41,12 @@ See [CLAUDE.md](./CLAUDE.md) for repository structure and conventions.
   distributional drift, and opt-in self-attesting run-provenance
   records (`record_sink`, `contract_digest`, `verify_run_record`, the
   `scripts/check_run_records.py` offline gate).
-- **Anthropic capabilities (optional `anthropic` extra).**
-  `AnthropicBatchProcessor` for Message Batches (async bulk at 50%
-  token price) and `cache_control_system` for prefix-stable prompt
-  caching; lazily imported, the package type-checks without the SDK.
+- **Provider batch capabilities (optional extras).**
+  `AnthropicBatchProcessor` (Message Batches) and
+  `cache_control_system` (prefix-stable prompt caching) under the
+  `anthropic` extra; `OpenAIBatchProcessor` (OpenAI Batch API) under
+  the `openai` extra. Async bulk at roughly 50% token price; lazily
+  imported, the package type-checks without either SDK.
 - **Runtime adapter.** `PydanticAIRuntime` wires the guard and budget
   into the tool-call path: every local *and* MCP tool call passes the
   same guard gate (approve / reject / require-approval), a wall-clock

@@ -25,6 +25,11 @@ prior behaviour.
   `harness.cache_control_system` (prefix-stable prompt-cache block),
   behind a new optional `anthropic` extra; the module imports and
   type-checks with the SDK absent. (`BL-186`, ADR 0012)
+- `harness.OpenAIBatchProcessor`: the OpenAI counterpart (JSONL
+  upload, batch create, JSONL output/error decode), behind a new
+  optional `openai` extra, same injected-client + lazy `from_env`
+  design. `OpenAIBatchRequest.model` is required (no guessed default).
+  (`BL-187`, ADR 0012)
 
 ## [Unreleased] Third audit + L3 capability wave (2026-05-17)
 

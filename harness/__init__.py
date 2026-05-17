@@ -76,6 +76,12 @@ from harness.mcp import (
     MCPTransport,
     ToolSpec,
 )
+from harness.openai_api import (
+    OpenAIBatchProcessor,
+    OpenAIBatchRequest,
+    OpenAIBatchResult,
+    OpenAIBatchStatus,
+)
 from harness.otel import OTelSink
 from harness.provenance import (
     RUN_RECORD_SCHEMA_VERSION,
@@ -138,6 +144,10 @@ __all__ = [
     "MultiSink",
     "NullSink",
     "OTelSink",
+    "OpenAIBatchProcessor",
+    "OpenAIBatchRequest",
+    "OpenAIBatchResult",
+    "OpenAIBatchStatus",
     "PostconditionViolated",
     "PostconditionViolation",
     "PreconditionViolated",
