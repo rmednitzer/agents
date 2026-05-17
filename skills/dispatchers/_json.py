@@ -12,18 +12,21 @@ error.
 
 from __future__ import annotations
 
-import heapq
 import json
 
 __all__ = ["first_json_array"]
 
-# Upper bound on how many balanced spans first_json_array will parse.
-# A legitimate top-level array always has the smallest opening index so
-# it is candidate #1; this cap only bounds work on adversarial input
-# (a deeply nested or stray-bracket-heavy blob from an untrusted model
-# or MCP tool). Past the cap, extraction degrades to the documented
-# parse-error fallback rather than doing unbounded work.
-_MAX_CANDIDATES = 64
+# The DoS bound is on parse *work*, not candidate *count*. A single
+# oversized span (a deeply nested blob, the O(n^2) trap) is skipped by
+# an O(1) length check without ever being sliced or parsed; the total
+# bytes actually handed to json.loads is capped. Bounding the count
+# instead would wrongly reject a valid array that legitimately appears
+# after many small leading bracket fragments (e.g. repeated "[note]"
+# preamble) while still being cheap to scan. A real top-level
+# dispatch array is a few KB; these bounds are far above that and only
+# bite adversarial input.
+_MAX_CANDIDATE_BYTES = 64 * 1024
+_MAX_TOTAL_PARSE_BYTES = 1024 * 1024
 
 
 def _balanced_spans(text: str) -> list[tuple[int, int]]:
@@ -85,31 +88,41 @@ def first_json_array(text: str) -> str | None:
 
     Spans are tried in opening-bracket order, so the earliest/outermost
     array is preferred (a real top-level array is always first). The
-    first span that ``json.loads`` parses to a ``list`` is returned; if
-    none of the first ``_MAX_CANDIDATES`` parse, the earliest balanced
-    span is returned so the caller's own ``json.loads`` raises its
-    existing, contextual error. A pathologically deep span that makes
-    the stdlib decoder exceed the recursion limit is treated like a
-    parse error (it is malformed input, not a framework fault), so
-    ``dispatch`` still degrades to its DispatchError contract rather
-    than letting ``RecursionError`` escape.
+    first span that ``json.loads`` parses to a ``list`` is returned. A
+    span larger than ``_MAX_CANDIDATE_BYTES`` is skipped by an O(1)
+    length check (the deeply-nested O(n^2) trap, never sliced/parsed),
+    and the total bytes parsed is capped at ``_MAX_TOTAL_PARSE_BYTES``;
+    every small span is still tried, so a valid array that legitimately
+    follows many small leading bracket fragments is found. If none
+    parse, the earliest balanced span is returned so the caller's own
+    ``json.loads`` raises its existing, contextual error. A
+    pathologically deep span that makes the stdlib decoder exceed the
+    recursion limit is treated like a parse error (malformed input, not
+    a framework fault), so ``dispatch`` still degrades to its
+    DispatchError contract rather than letting ``RecursionError``
+    escape.
     """
     spans = _balanced_spans(text)
     if not spans:
         return None
-    # Only the _MAX_CANDIDATES smallest-opening spans are ever parsed,
-    # so select exactly those: heapq.nsmallest is O(n log k) with k
-    # constant, keeping an adversarial O(n)-span blob linear instead of
-    # the O(n log n) a full spans.sort() would cost (the DoS bound
-    # BL-173 intends). nsmallest returns them in ascending order, so
-    # candidates[0] is still the earliest/outermost span.
-    candidates = heapq.nsmallest(_MAX_CANDIDATES, spans)
-    for opened, end in candidates:
+    # Opening-bracket order. The sort is O(n log n) over index-pair
+    # tuples on bounded model/tool output (microseconds), not the DoS
+    # vector: the original O(n^2) was per-candidate byte
+    # materialisation/parse of nested giants, now bounded by the O(1)
+    # size skip and the cumulative parse budget below.
+    spans.sort()
+    budget = _MAX_TOTAL_PARSE_BYTES
+    for opened, end in spans:
+        size = end - opened
+        if size > _MAX_CANDIDATE_BYTES:
+            continue
+        if budget < size:
+            break
+        budget -= size
         candidate = text[opened:end]
         try:
             if isinstance(json.loads(candidate), list):
                 return candidate
         except (json.JSONDecodeError, RecursionError):
             continue
-    first = candidates[0]
-    return text[first[0] : first[1]]
+    return text[spans[0][0] : spans[0][1]]

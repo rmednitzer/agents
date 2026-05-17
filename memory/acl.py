@@ -38,6 +38,7 @@ from memory.store import (
     MemoryStore,
     ScannableStore,
     SweepableStore,
+    VersionedMemoryStore,
 )
 from memory.types import Namespace
 from memory.validators import validate_key
@@ -305,6 +306,38 @@ class _ACLSweepMixin:
         return await self._inner.sweep_expired()
 
 
+class _ACLVersionedMixin:
+    # BL-124 MVCC forwarded through ACL (BL-156): ACL does not transform
+    # bytes, so the content-hash version token is preserved. Gated like
+    # the core methods (read/write/delete).
+    _inner: VersionedMemoryStore
+    _guard: Callable[[Operation, str], None]
+
+    async def read_versioned(self, key: str) -> tuple[bytes, str] | None:
+        validate_key(key)
+        self._guard("read", key)
+        return await self._inner.read_versioned(key)
+
+    async def write_versioned(
+        self,
+        key: str,
+        value: bytes,
+        *,
+        expected_version: str | None = None,
+        ttl_seconds: float | None = None,
+    ) -> str | None:
+        validate_key(key)
+        self._guard("write", key)
+        return await self._inner.write_versioned(
+            key, value, expected_version=expected_version, ttl_seconds=ttl_seconds
+        )
+
+    async def delete_versioned(self, key: str, expected_version: str) -> bool:
+        validate_key(key)
+        self._guard("delete", key)
+        return await self._inner.delete_versioned(key, expected_version)
+
+
 def wrap_acl(
     inner: MemoryStore,
     policy: AccessPolicy,
@@ -318,11 +351,14 @@ def wrap_acl(
 
     Returns a plain ``ACLStore`` when ``inner`` is core-only, or an
     ``ACLStore`` subclass mixing in batch / scan / content-addressing /
-    CAS / sweep forwarding for exactly the Protocols ``inner`` satisfies,
-    so ``isinstance`` stays truthful. Use this instead of constructing
-    ``ACLStore`` directly when the backend is capability-rich.
-    ``sink`` / ``base_event_fields`` (BL-122) are forwarded so a denial
-    is audited; omitting them preserves the silent default.
+    CAS / sweep / versioned forwarding for exactly the Protocols
+    ``inner`` satisfies, so ``isinstance`` stays truthful. Use this
+    instead of constructing ``ACLStore`` directly when the backend is
+    capability-rich. ``sink`` / ``base_event_fields`` (BL-122) are
+    forwarded so a denial is audited; omitting them preserves the
+    silent default. (SemanticMemoryStore is intentionally not forwarded:
+    ACL-gating a similarity query has no single principal-scoped key;
+    see ADR 0011 and memory/README.md.)
     """
     mixins: list[type] = []
     if isinstance(inner, BatchMemoryStore):
@@ -335,6 +371,8 @@ def wrap_acl(
         mixins.append(_ACLCASMixin)
     if isinstance(inner, SweepableStore):
         mixins.append(_ACLSweepMixin)
+    if isinstance(inner, VersionedMemoryStore):
+        mixins.append(_ACLVersionedMixin)
     if not mixins:
         return ACLStore(inner, policy, principal, sink=sink, base_event_fields=base_event_fields)
     cls = type("ACLStore", (ACLStore, *mixins), {})

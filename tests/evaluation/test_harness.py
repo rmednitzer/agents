@@ -137,3 +137,38 @@ async def test_evaluate_trajectory_classifies_outcomes() -> None:
     assert by_name["mismatch"].actual == "precondition"
     assert not by_name["mismatch"].passed
     assert report.accuracy == pytest.approx(2 / 3)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_trajectory_classifies_paused_run() -> None:
+    """An approval pause returns a ResumableState (no exception); it
+    must be scored "paused", not silently "completed" (Codex P2)."""
+    from harness.interruption import ResumableState
+
+    class _PausingStub:
+        name = "pausing"
+
+        async def run(self, prompt: str, **kw: Any) -> Any:
+            return ResumableState(
+                contract_name="c",
+                contract_version="1",
+                workload="w",
+                input_payload={},
+                trace_id="t",
+            )
+
+        def stream(self, prompt: str, **kw: Any) -> AsyncIterator[Any]:
+            raise NotImplementedError
+
+    contract: Contract[_In, _Out] = Contract(name="c", version="1")
+    cases = [
+        TrajectoryCase(name="paused", input_payload={"ok": True}, expected="paused"),
+        TrajectoryCase(name="want-complete", input_payload={"ok": True}, expected="completed"),
+    ]
+    report = await evaluate_trajectory(_PausingStub(), contract, _In, _Out, cases)
+    by_name = {r.name: r for r in report.results}
+    assert by_name["paused"].actual == "paused"
+    assert by_name["paused"].passed
+    assert by_name["want-complete"].actual == "paused"
+    assert not by_name["want-complete"].passed
+    assert report.accuracy == pytest.approx(0.5)

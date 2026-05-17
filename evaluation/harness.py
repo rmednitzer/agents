@@ -27,6 +27,7 @@ from harness.errors import (
     PostconditionViolation,
     PreconditionViolation,
 )
+from harness.interruption import ResumableState
 from harness.runtime import Runtime
 from skills.dispatcher import Dispatcher
 
@@ -149,12 +150,17 @@ async def evaluate_trajectory[InputT: BaseModel, OutputT: BaseModel](
     for case in cases:
         actual: TrajectoryOutcome = "completed"
         try:
-            await run_under_contract(
+            outcome = await run_under_contract(
                 runtime=runtime,
                 contract=contract,
                 input=input_model.model_validate(case.input_payload),
                 output_model=output_model,
             )
+            # run_under_contract returns a ResumableState (no exception)
+            # when an approval-gated run pauses; that is NOT a terminal
+            # success, so it must not be scored as "completed".
+            if isinstance(outcome, ResumableState):
+                actual = "paused"
         except Exception as exc:
             actual = next(
                 (label for cls, label in _EXC_LABEL if isinstance(exc, cls)),

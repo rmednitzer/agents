@@ -155,6 +155,16 @@ def test_valid_array_before_deep_bomb_is_found_fast() -> None:
     assert json.loads(result) == [{"skill_name": "ok"}]
 
 
+def test_valid_array_after_many_small_fragments_is_found() -> None:
+    """The DoS bound is on parse bytes, not candidate count: a valid
+    array after far more than 64 small leading bracket fragments is
+    still found, not rejected by a count cap (Codex P2)."""
+    payload = "[note] " * 500 + '[{"skill_name": "deep"}]'
+    result = first_json_array(payload)
+    assert result is not None
+    assert json.loads(result) == [{"skill_name": "deep"}]
+
+
 def test_first_json_array_never_raises_recursion_error() -> None:
     """A pathologically deep array degrades to the documented fallback,
     it does not let RecursionError escape the extractor."""

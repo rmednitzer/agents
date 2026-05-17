@@ -138,11 +138,16 @@ class InMemorySemanticStore:
         hits: list[SemanticHit] = []
         for key in list(self._vectors):
             value = await self._inner.read(key)
-            if value is None:
-                # Expired or deleted out from under the index; drop it.
+            # Read the vector via .get(), not [key]: another coroutine
+            # may have run write()/delete() (popping the vector) while
+            # this one was suspended at the await above. A concurrently
+            # de-indexed key is simply skipped, not a KeyError that
+            # aborts the whole query.
+            vector = self._vectors.get(key)
+            if value is None or vector is None:
                 self._vectors.pop(key, None)
                 continue
-            hits.append(SemanticHit(key=key, score=_cosine(query, self._vectors[key]), value=value))
+            hits.append(SemanticHit(key=key, score=_cosine(query, vector), value=value))
         # Descending similarity; ties broken by key for determinism.
         hits.sort(key=lambda h: (-h.score, h.key))
         return hits[:k]

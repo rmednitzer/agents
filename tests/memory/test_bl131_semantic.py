@@ -97,6 +97,33 @@ async def test_plain_write_invalidates_stale_vector() -> None:
     assert await s.read("k") == b"new"
 
 
+@pytest.mark.asyncio
+async def test_query_survives_concurrent_vector_removal() -> None:
+    """A write()/delete() that pops a vector while query_semantic is
+    suspended at its await must not raise KeyError (Codex P1)."""
+    s = _store()
+    await s.write_semantic("a", b"A", text="alpha topic")
+    await s.write_semantic("b", b"B", text="beta topic")
+    await s.write_semantic("c", b"C", text="gamma topic")
+
+    inner_read = s._inner.read  # type: ignore[attr-defined]
+    popped = {"done": False}
+
+    async def _racy_read(key: str) -> bytes | None:
+        # Simulate another coroutine de-indexing a not-yet-visited key
+        # mid-iteration (the exact interleave the .get() fix guards).
+        if not popped["done"]:
+            popped["done"] = True
+            s._vectors.pop("c", None)  # type: ignore[attr-defined]
+        return await inner_read(key)
+
+    s._inner.read = _racy_read  # type: ignore[attr-defined]
+    hits = await s.query_semantic("alpha beta gamma", k=5)
+    keys = {h.key for h in hits}
+    assert "c" not in keys  # concurrently de-indexed, cleanly skipped
+    assert keys <= {"a", "b"}
+
+
 def test_cosine_guards_non_finite() -> None:
     assert _cosine([0.0, 0.0], [1.0, 1.0]) == 0.0
     assert _cosine([float("nan"), 1.0], [1.0, 1.0]) == 0.0

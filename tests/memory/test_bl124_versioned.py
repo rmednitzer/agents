@@ -94,6 +94,36 @@ async def test_delete_versioned_matches_token(store: VersionedMemoryStore) -> No
 
 
 @pytest.mark.asyncio
+async def test_wrap_acl_forwards_versioned_protocol() -> None:
+    """wrap_acl over a versioned backend keeps a truthful isinstance and
+    gates the versioned methods (Codex P2; BL-156 contract)."""
+    from memory.acl import RoleACL, wrap_acl
+    from memory.errors import AccessDenied
+
+    inner = InMemoryStore(_ns())
+    policy = RoleACL(
+        roles={"admin": "rw", "bob": "ro"},
+        grants={"rw": {"read", "write", "delete"}, "ro": {"read"}},
+    )
+    admin = wrap_acl(inner, policy, "admin")
+    assert isinstance(admin, VersionedMemoryStore)
+    tok = await admin.write_versioned("k", b"v1")
+    assert tok is not None
+    rv = await admin.read_versioned("k")
+    assert rv is not None
+    assert rv[0] == b"v1"
+    assert await admin.delete_versioned("k", rv[1]) is True
+
+    await admin.write_versioned("k", b"v2")
+    reader = wrap_acl(inner, policy, "bob")
+    assert isinstance(reader, VersionedMemoryStore)
+    got = await reader.read_versioned("k")
+    assert got is not None
+    with pytest.raises(AccessDenied):
+        await reader.write_versioned("k", b"nope", expected_version=got[1])
+
+
+@pytest.mark.asyncio
 async def test_identical_content_is_no_conflict_aba(
     store: VersionedMemoryStore,
 ) -> None:

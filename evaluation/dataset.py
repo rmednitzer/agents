@@ -26,9 +26,11 @@ __all__ = [
 ]
 
 # The terminal outcome a contract run can reach. "completed" is a clean
-# success; the others name which obligation failed hard.
+# success; "paused" is an approval interruption (a ResumableState, not
+# a terminal success); the others name which obligation failed hard.
 TrajectoryOutcome = Literal[
     "completed",
+    "paused",
     "precondition",
     "invariant",
     "postcondition",
