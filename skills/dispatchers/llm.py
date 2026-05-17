@@ -80,6 +80,13 @@ class LLMDispatcher:
             data = json.loads(json_payload)
         except json.JSONDecodeError as exc:
             raise DispatchError(f"LLM response JSON is malformed: {exc}") from exc
+        except RecursionError as exc:
+            # first_json_array caps how many spans it parses, so a
+            # pathologically deep blob from an untrusted model/MCP tool
+            # can reach here as the parse-error fallback. Surface the
+            # DispatchError contract instead of letting RecursionError
+            # escape and abort a RoutingChainDispatcher fallback.
+            raise DispatchError("LLM response JSON nesting is too deep") from exc
         if not isinstance(data, list):
             raise DispatchError("LLM response root must be a JSON array")
 

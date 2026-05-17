@@ -3,10 +3,11 @@
 A greedy ``\\[.*\\]`` regex spans the first ``[`` to the *last* ``]``,
 so any extra bracketed text in model output (prose, a second example,
 a stray ``]``) makes ``json.loads`` fail even when a valid array is
-present. ``first_json_array`` instead scans for a *balanced* top-level
-array, ignoring brackets inside JSON string literals, and returns the
-first such span that parses as a list (falling back to the first
-balanced span so the caller still emits its own parse error).
+present. ``first_json_array`` instead scans for a *balanced* array,
+ignoring brackets inside JSON string literals, and returns the first
+such span (by opening position) that parses as a list, falling back to
+the earliest balanced span so the caller still emits its own parse
+error.
 """
 
 from __future__ import annotations
@@ -15,26 +16,37 @@ import json
 
 __all__ = ["first_json_array"]
 
+# Upper bound on how many balanced spans first_json_array will parse.
+# A legitimate top-level array always has the smallest opening index so
+# it is candidate #1; this cap only bounds work on adversarial input
+# (a deeply nested or stray-bracket-heavy blob from an untrusted model
+# or MCP tool). Past the cap, extraction degrades to the documented
+# parse-error fallback rather than doing unbounded work.
+_MAX_CANDIDATES = 64
 
-def _balanced_spans(text: str) -> list[str]:
-    """Every bracket-balanced ``[...]`` span, by opening-bracket order.
 
-    Single linear pass with an explicit stack of open-``[`` indices:
-    each character is visited once, so adversarial output (e.g. a
-    megabyte of ``[``) cannot make extraction quadratic, while an
-    unmatched ``[`` or ``]`` in prose no longer suppresses a later valid
-    array: the stack still matches the real array's own brackets, and a
-    stray ``]`` outside any span is ignored, not underflowed. Spans are
-    returned ordered by their opening bracket, matching the pre-rewrite
-    per-candidate scan, so ``first_json_array`` still prefers the
-    earliest/outermost array. String state is tracked only inside a
-    span (stack non-empty), so an unmatched ``"`` in leading prose
-    cannot desync parsing. A rarer compound fault (an unmatched ``[``
-    *and* an unmatched ``"`` both in prose before the array) degrades to
-    the documented None / parse-error fallback rather than reintroducing
-    the O(n^2) per-``[`` restart.
+def _balanced_spans(text: str) -> list[tuple[int, int]]:
+    """Balanced ``[...]`` spans as ``(open_idx, end_idx_exclusive)`` pairs.
+
+    Single linear pass with a stack of open-``[`` indices: each
+    character is visited once and only an O(1) index pair is recorded
+    per closing bracket, so adversarial output cannot make extraction
+    super-linear. Recording the matched substring eagerly on every
+    nested ``]`` (the prior code) re-materialised O(depth) growing
+    slices, so a nested ``[[[...]]]`` model blob was O(n^2) in time and
+    memory (a decompression-bomb analogue on untrusted dispatcher
+    input); index pairs are O(1) each, and ``first_json_array`` slices
+    at most ``_MAX_CANDIDATES`` of them lazily.
+
+    The stack (not a flat depth counter) is what lets an array nested
+    inside an *unmatched* prose ``[`` still be recovered: the inner
+    array's own brackets still balance on the stack and produce a pair
+    even though the outer ``[`` never closes. A stray ``]`` at depth 0
+    is ignored (not underflowed), and string state is tracked only
+    inside a span so an unmatched ``"`` in leading prose cannot desync
+    parsing.
     """
-    spans: list[tuple[int, str]] = []
+    spans: list[tuple[int, int]] = []
     stack: list[int] = []
     in_str = False
     esc = False
@@ -60,28 +72,36 @@ def _balanced_spans(text: str) -> list[str]:
             stack.append(idx)
         elif ch == "]":
             opened = stack.pop()
-            spans.append((opened, text[opened : idx + 1]))
+            spans.append((opened, idx + 1))
             if not stack:
                 in_str = False
                 esc = False
-    spans.sort(key=lambda s: s[0])
-    return [span for _, span in spans]
+    return spans
 
 
 def first_json_array(text: str) -> str | None:
     """Return the first balanced JSON array substring, or None.
 
-    Prefers the first span that ``json.loads`` parses to a ``list``; if
-    none parse, returns the first balanced span so the caller's own
-    ``json.loads`` raises its existing, contextual error.
+    Spans are tried in opening-bracket order, so the earliest/outermost
+    array is preferred (a real top-level array is always first). The
+    first span that ``json.loads`` parses to a ``list`` is returned; if
+    none of the first ``_MAX_CANDIDATES`` parse, the earliest balanced
+    span is returned so the caller's own ``json.loads`` raises its
+    existing, contextual error. A pathologically deep span that makes
+    the stdlib decoder exceed the recursion limit is treated like a
+    parse error (it is malformed input, not a framework fault), so
+    ``dispatch`` still degrades to its DispatchError contract rather
+    than letting ``RecursionError`` escape.
     """
     spans = _balanced_spans(text)
     if not spans:
         return None
-    for span in spans:
+    spans.sort()  # by opening index, then end: earliest/outermost first
+    for opened, end in spans[:_MAX_CANDIDATES]:
+        candidate = text[opened:end]
         try:
-            if isinstance(json.loads(span), list):
-                return span
-        except json.JSONDecodeError:
+            if isinstance(json.loads(candidate), list):
+                return candidate
+        except (json.JSONDecodeError, RecursionError):
             continue
-    return spans[0]
+    return text[spans[0][0] : spans[0][1]]

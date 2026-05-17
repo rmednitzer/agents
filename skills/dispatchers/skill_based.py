@@ -102,6 +102,11 @@ class SkillBasedDispatcher:
             data = json.loads(payload)
         except json.JSONDecodeError as exc:
             raise DispatchError(f"skill-based dispatcher JSON malformed: {exc}") from exc
+        except RecursionError as exc:
+            # Pathologically deep blob past first_json_array's candidate
+            # cap reaches here as the parse-error fallback; keep the
+            # DispatchError contract instead of escaping RecursionError.
+            raise DispatchError("skill-based dispatcher JSON nesting is too deep") from exc
         if not isinstance(data, list):
             raise DispatchError("response root must be a JSON array")
 

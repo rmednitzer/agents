@@ -65,9 +65,26 @@ class RetryPolicy:
     the caller classifies). Contract-terminal outcomes are never
     retried: GovernanceViolation, ApprovalDenied, BudgetExceeded, the
     internal approval pause, and cancellation propagate on the first
-    occurrence regardless of ``retry_on``. Budget counters are shared
-    across attempts (the tracker is constructed once by the harness), so
-    retries cannot be used to evade a budget.
+    occurrence regardless of ``retry_on``.
+
+    Budget interaction across attempts (the tracker is constructed once
+    by the harness and shared by every attempt):
+
+    - Wall-clock is bounded end to end: ``run`` derives each attempt's
+      remaining timeout from the original deadline and counts backoff
+      against it, so retries cannot turn the cap into a per-attempt
+      allowance.
+    - Tool-call / per-tool quotas are fed live from the gate as each
+      call is proposed, so a failed attempt's tool calls still count.
+    - Token and step usage is charged from the *final* attempt's
+      ``result.usage`` once the run succeeds. PydanticAI raises without
+      exposing partial usage on a failed ``agent.run()``, so a failed
+      attempt's model round-trips are not counted against
+      ``max_tokens`` / ``max_steps``. A retried run can therefore exceed
+      those two dimensions by the failed legs' usage; bound a retrying
+      run with the wall-clock or tool-call dimension if a hard token
+      ceiling matters. Closing this needs upstream partial-usage on the
+      exception path (tracked, ``LIMITATIONS.md``).
 
     ``circuit_breaker_threshold`` trips a per-instance breaker after that
     many consecutive fully-failed calls (a call that exhausted its

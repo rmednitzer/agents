@@ -151,6 +151,11 @@ class SQLiteStore:
     async def mset(self, items: Mapping[str, bytes], *, ttl_seconds: float | None = None) -> None:
         for k in items:
             validate_key(k)
+        if not items:
+            # An empty batch is a no-op; opening BEGIN IMMEDIATE would
+            # take the database write lock to do nothing (needless
+            # contention against concurrent writers).
+            return
         ttl = self._effective_ttl(ttl_seconds)
         expires_at = time.time() + ttl if ttl is not None else None
 
@@ -178,6 +183,8 @@ class SQLiteStore:
     async def mdelete(self, keys: Sequence[str]) -> None:
         for k in keys:
             validate_key(k)
+        if not keys:
+            return
 
         def _bulk_delete() -> dict[str, bool]:
             self._conn.execute("BEGIN IMMEDIATE")
