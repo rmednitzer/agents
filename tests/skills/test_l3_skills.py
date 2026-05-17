@@ -275,3 +275,20 @@ def test_marketplace_extracts_flat_tarball(tmp_path: Path, monkeypatch: Any) -> 
     src = MarketplaceSkillSource("https://skills.example/{name}.tar.gz")
     skill = install_skill(src, "cool", tmp_path / "o")
     assert skill.name == "cool"
+
+
+def test_local_source_preserves_executable_bit(tmp_path: Path) -> None:
+    """A shipped executable script keeps its execute bit (Codex P2)."""
+    import os
+    import stat
+
+    root = tmp_path / "r"
+    skill = _write_skill(root, "tool")
+    (skill / "scripts").mkdir()
+    script = skill / "scripts" / "run.sh"
+    script.write_text("#!/bin/sh\necho hi\n")
+    script.chmod(0o755)
+    install_skill(LocalSkillSource(root), "tool", tmp_path / "out")
+    out = tmp_path / "out" / "tool" / "scripts" / "run.sh"
+    assert out.is_file()
+    assert stat.S_IMODE(os.stat(out).st_mode) & 0o111  # execute bit kept

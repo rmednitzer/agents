@@ -20,7 +20,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import io
+import os
 import shutil
+import stat
 import tarfile
 import urllib.request
 from collections.abc import Callable
@@ -248,6 +250,12 @@ class LocalSkillSource:
             out = target / rel
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_bytes(path.read_bytes())
+            # Preserve the source permission bits: a skill that ships an
+            # executable asset (scripts/*.sh invoked directly) must keep
+            # its execute bit, which write_bytes (umask default) drops.
+            # The symlink check above already ran, so stat() here reads
+            # a confirmed regular file's own mode.
+            os.chmod(out, stat.S_IMODE(path.stat().st_mode))
         return target
 
 

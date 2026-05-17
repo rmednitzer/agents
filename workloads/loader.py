@@ -240,8 +240,12 @@ def load_workload_from_entry_point(
     match = next((ep for ep in eps if ep.name == name), None)
     if match is None:
         raise WorkloadNotFound(name, f"no entry point {name!r} in group {group!r}")
+    # An entry-point value is ``module`` or ``module:attr[.subattr]``;
+    # only the module part is importable. importlib.metadata.EntryPoint
+    # exposes ``.module``; fall back to parsing for a plain double.
+    target_module = getattr(match, "module", None) or match.value.split(":", 1)[0].strip()
     try:
-        module = importlib.import_module(match.value)
+        module = importlib.import_module(target_module)
     except ModuleNotFoundError as exc:
         # For a dotted target ``foo.bar``, a missing ``foo`` reports
         # exc.name == "foo" (the top-level package), not the full
@@ -252,17 +256,17 @@ def load_workload_from_entry_point(
         # surface for honest triage, not mislabel as "not found"
         # (parity with the in-tree load_workload).
         missing = exc.name
-        if missing is None or match.value == missing or match.value.startswith(missing + "."):
-            raise WorkloadNotFound(name, f"entry-point target {match.value!r}: {exc}") from exc
+        if missing is None or target_module == missing or target_module.startswith(missing + "."):
+            raise WorkloadNotFound(name, f"entry-point target {target_module!r}: {exc}") from exc
         raise
 
     mod_file = getattr(module, "__file__", None)
     if mod_file is None:
-        raise WorkloadNotFound(name, f"entry-point target {match.value!r} has no __file__")
+        raise WorkloadNotFound(name, f"entry-point target {target_module!r} has no __file__")
     package_path = Path(mod_file).parent
 
     def _import(submodule: str) -> ModuleType | None:
-        target = f"{match.value}.{submodule}"
+        target = f"{target_module}.{submodule}"
         try:
             return importlib.import_module(target)
         except ModuleNotFoundError as exc:

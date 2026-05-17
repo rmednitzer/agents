@@ -107,3 +107,38 @@ def test_missing_dotted_target_is_workload_not_found(
     )
     with pytest.raises(WorkloadNotFound, match="entry-point target"):
         load_workload_from_entry_point("ep")
+
+
+def test_entry_point_value_with_attr_suffix_resolves_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``module:attr`` entry-point value imports the module part.
+
+    The importable target is the module, not the raw ``module:attr``
+    value (Codex review: attribute-suffixed registrations were rejected).
+    """
+    _installed_pkg(tmp_path, "attr_wl", "attr_wl")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(
+        "importlib.metadata.entry_points",
+        lambda *, group: [_EP("attr_wl", "attr_wl:main")],
+    )
+    lw = load_workload_from_entry_point("attr_wl")
+    assert lw.manifest.name == "attr_wl"
+
+
+def test_entry_point_prefers_metadata_module_attribute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real EntryPoint exposes ``.module``; the loader uses it."""
+    _installed_pkg(tmp_path, "mod_wl", "mod_wl")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    class _EPWithModule:
+        name = "mod_wl"
+        value = "mod_wl:main"
+        module = "mod_wl"
+
+    monkeypatch.setattr("importlib.metadata.entry_points", lambda *, group: [_EPWithModule()])
+    lw = load_workload_from_entry_point("mod_wl")
+    assert lw.manifest.name == "mod_wl"
