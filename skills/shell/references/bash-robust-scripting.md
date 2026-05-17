@@ -180,8 +180,8 @@ hard error.
 
 ## 8. Timeouts: bound everything that can hang
 
-Any network call, any wait on another process, any `wait-for`, anything
-that can block forever, gets a `timeout`:
+Any network call, any wait on another process, any blocking read,
+anything that can block forever, gets a `timeout`:
 
 ```bash
 rc=0
@@ -248,7 +248,7 @@ require() {  # require CMD...
   done
   (( missing )) && die "install the missing dependencies and retry"
 }
-require curl jq tmux
+require curl jq rsync
 ```
 
 Also assert the Bash version if you use version-specific features

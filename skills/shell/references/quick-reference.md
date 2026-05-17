@@ -1,4 +1,4 @@
-# Shell and tmux quick reference
+# Shell and SSH quick reference
 
 Dense lookup tables. Everything here is stated and explained in the other
 references; this is the at-a-glance form.
@@ -94,47 +94,6 @@ Inside `[[ ]]`, `<` and `>` compare strings. For numbers always use
 Trap `INT`/`TERM`, convert to a clean exit so the `EXIT` trap still runs.
 `KILL` and `STOP` cannot be trapped.
 
-## tmux: server, address, lifecycle
-
-| Action | Command |
-|---|---|
-| Private server, detached session | `tmux -L S -f /dev/null new-session -d -s w -x 220 -y 50` |
-| Print new object's IDs | add `-P -F '#{session_id} #{window_id} #{pane_id}'` |
-| Get a pane id later | `tmux -L S display-message -p -t w '#{pane_id}'` |
-| Exists? (idempotent start) | `tmux -L S has-session -t w 2>/dev/null \|\| ...` |
-| Run program as the pane (no shell race) | `tmux -L S new-session -d -s w 'exec prog'` |
-| Send literal text safely | `tmux -L S send-keys -l -- "$txt"` then `... Enter` |
-| Clear a half-typed line | `tmux -L S send-keys -t %P C-u` |
-| Snapshot incl. scrollback | `tmux -L S capture-pane -p -S - -t %P` |
-| Stream all output to a file | `tmux -L S pipe-pane -o -t %P "cat >>f"` |
-| Signal a wait channel | `tmux -L S wait-for -S chan` |
-| Block on a channel (bound it) | `timeout 600 tmux -L S wait-for chan` |
-| Keep a dead pane to read it | `tmux -L S set -t %P remain-on-exit on` |
-| Set start dir / env | `new-session -c "$PWD" -e "K=v"` |
-| Tear down the server | `tmux -L S kill-server 2>/dev/null \|\| true` |
-
-## tmux: completion plus exit status (the pattern)
-
-```bash
-ch="done-$$"; rc=$(mktemp)
-tmux -L "$S" send-keys -t "$P" "cmd args; echo \$? > $rc; tmux -L $S wait-for -S $ch" Enter
-st=0; timeout 600 tmux -L "$S" wait-for "$ch" || st=$?   # no '!': $? stays real
-out=$(tmux -L "$S" capture-pane -p -S - -t "$P"); status=$(< "$rc")
-```
-
-Fixed channel plus `$?` in a file: `wait-for` needs the exact channel name
-in advance, so encoding the code into it (`$ch-$?`) only wakes for one
-value and a failing command hangs to the timeout. `wait-for` has no native
-timeout, so it is always wrapped in `timeout`.
-
-## tmux: useful format variables
-
-`#{session_id}` `#{window_id}` `#{pane_id}` `#{pane_pid}`
-`#{pane_current_command}` `#{pane_current_path}` `#{pane_dead}`
-`#{pane_dead_status}` `#{history_size}` `#{client_tty}`. List with
-`tmux -L S list-panes -F '...'`; keep `-F` scoped to the object the list
-command enumerates.
-
 ## SSH automation
 
 ```bash
@@ -170,7 +129,8 @@ hashed (`HashKnownHosts yes`) means use `ssh-keygen -F`/`-R`, not grep.
 |---|---|
 | Output + exit code, foreground | direct exec, capture `$?` |
 | Durable, no TTY | `systemd-run --user` (or `setsid` + `.rc` file) |
-| Prompt then response | `expect` / `pexpect` |
-| Needs TTY or human attaches | tmux (private socket, the pattern above) |
+| Prompt/response, or program needs a TTY | `expect` / `pexpect` |
+| PTY needed but no interaction | `script -qec 'cmd' /dev/null` / `unbuffer` |
+| Detach/reattach for a human | `systemd-run --pty` / `screen` / `abduco` |
 | Record for a human | `script -c` / `asciinema` |
 | Remote command, no PTY | `ssh -T -o BatchMode=yes host cmd` (no `--` after host) |

@@ -8,8 +8,10 @@ ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 ### Added
 
 - `skills/shell/`: a skill for authoring robust, safe Bash and running
-  commands reliably on local and remote machines (SSH-first; tmux as the
-  rung-4 fallback). Ships references and ShellCheck-clean assets.
+  commands reliably on local and remote machines (SSH-first; a decision
+  ladder of direct exec, `setsid`/`systemd-run`, and `expect`, with no
+  screen-scraping rung). Ships references and a ShellCheck-clean
+  Bash skeleton asset.
 - `skills/dispatcher-skill/`: the versioned routing skill whose body is
   the dispatch prompt for `SkillBasedDispatcher`. Makes the recommended
   default dispatcher composition in ADR 0006 runnable as written
