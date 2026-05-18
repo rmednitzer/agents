@@ -72,7 +72,7 @@ dev = [
     "types-PyYAML>=6.0.12.20260518",
     # Backends + test doubles so CI exercises every adapter.
     "redis>=7.4.0",
-    "fakeredis>=2.20.0",
+    "fakeredis>=2.35.1",
     "boto3>=1.43.9",
     "moto[s3,dynamodb]>=5.0.0",
     "opentelemetry-sdk>=1.30.0",
