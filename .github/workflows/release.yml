@@ -54,7 +54,7 @@ jobs:
           uvx cyclonedx-py requirements sbom-requirements.txt --output-format JSON --outfile dist/sbom.cdx.json
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/*"
 
