@@ -33,7 +33,7 @@ dependencies = [
 # Production memory backends. Lazily imported; the core works without
 # them. Install the extra to use the adapter (ADR 0007).
 redis = [
-    "redis>=6.0.0",
+    "redis>=7.4.0",
 ]
 aws = [
     "boto3>=1.43.9",
@@ -71,7 +71,7 @@ dev = [
     "mypy>=2.1.0",
     "types-PyYAML>=6.0.12.20240917",
     # Backends + test doubles so CI exercises every adapter.
-    "redis>=6.0.0",
+    "redis>=7.4.0",
     "fakeredis>=2.20.0",
     "boto3>=1.43.9",
     "moto[s3,dynamodb]>=5.0.0",
