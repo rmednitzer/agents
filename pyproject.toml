@@ -69,7 +69,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.15.13",
     "mypy>=2.1.0",
-    "types-PyYAML>=6.0.12.20240917",
+    "types-PyYAML>=6.0.12.20260518",
     # Backends + test doubles so CI exercises every adapter.
     "redis>=6.0.0",
     "fakeredis>=2.20.0",
