@@ -54,7 +54,7 @@ jobs:
       - run: uv python install ${{ matrix.python }}
       - run: uv sync --all-extras --python ${{ matrix.python }}
       - run: uv run --python ${{ matrix.python }} pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov=evaluation --cov-report=term-missing --cov-report=xml --cov-fail-under=94
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-xml-${{ matrix.python }}
           path: coverage.xml
