@@ -3,6 +3,51 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Fifth code audit: additive hardening (2026-05-19)
+
+See [ADR 0013](./docs/adr/0013-fifth-code-audit.md). A fifth in-depth
+audit targeting the classes the prior audits fixed pointwise and the
+paths the recent major dependency bumps exercise. Additive with
+regression tests; defaults reproduce prior behaviour for every
+non-adversarial input.
+
+### Fixed
+
+- `InMemoryStore` / `SQLiteStore` `list_keys` and `scan` now use the
+  same `now <= expires_at` live boundary as `read` / `sweep_expired`;
+  a key at the exact expiry instant that `read` still returns is no
+  longer missing from a listing for one tick (the read-vs-CAS boundary
+  class, unfixed for the listing paths of the in-tree reference
+  adapters; BL-168's fix comment, which wrongly asserted agreement, is
+  corrected). (`BL-188`, ADR 0013)
+- `OpenAIBatchProcessor.results` surfaces a structured `error.code`
+  for an output-file row with `response: null` and an `error`
+  (previously yielded an uninformative `http_None`, dropping the
+  diagnostic on a billing-relevant bulk path). (`BL-189`, ADR 0013)
+- `_balanced_spans` caps the recorded span list at `_MAX_SPANS`, so a
+  bracket-heavy untrusted body cannot amplify into an unbounded list of
+  index pairs (a memory axis the BL-173/182 parse-work bounds did not
+  cover); overflow degrades to the existing malformed-input contract.
+  (`BL-191`, ADR 0013)
+- `scripts/check_run_records.py` validates `--registry` values as
+  canonical lowercase 64-hex at load; a non-canonical registry is now
+  a clear invocation failure (exit 2) naming the bad keys instead of
+  making the gate silently unsatisfiable. (`BL-192`, ADR 0013)
+
+### Security
+
+- `LocalSkillSource.fetch` clears `dest/<name>` through the shared
+  symlink-safe `_prepare_install_dir` (defence in depth and a clean
+  `SkillLoadError` instead of an unhandled `OSError` on a pre-existing
+  symlink; the BL-172 "twin", finally propagated). Not an escape;
+  consistency / robustness hardening. (`BL-190`, ADR 0013)
+
+### Documentation
+
+- ADR 0013 added; the ADR index gains the missing `0012` row and the
+  new `0013` row; `docs/backlog.md` tracks `BL-188`-`BL-192`; CLAUDE.md
+  ADR enumeration extended to `0012`/`0013`.
+
 ## [Unreleased] Cross-repo review: run provenance + Anthropic capabilities (2026-05-17)
 
 See [ADR 0012](./docs/adr/0012-run-provenance-and-anthropic-capabilities.md).

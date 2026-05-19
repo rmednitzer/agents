@@ -183,6 +183,41 @@ def test_results_combine_output_and_error_files() -> None:
     assert by_id["bad"].error_type == "context_length_exceeded"
 
 
+def test_output_file_null_response_uses_structured_error_code() -> None:
+    """BL-189: a request-level failure can land in the *output* file with
+    ``response: null`` and a structured ``error`` (distinct from the
+    error-file rows). The processor must surface that error code, not a
+    diagnostically-useless ``http_None``.
+    """
+    body = "\n".join(
+        [
+            _ok_line("ok", "hello"),
+            json.dumps(
+                {
+                    "custom_id": "internal",
+                    "response": None,
+                    "error": {"code": "internal_error", "message": "boom"},
+                }
+            ),
+            # response absent entirely + structured error.
+            json.dumps({"custom_id": "absent", "error": {"code": "server_error"}}),
+            # No response and no error: still a deterministic label.
+            json.dumps({"custom_id": "blank"}),
+        ]
+    )
+    batch = _Obj(id="b", status="completed", output_file_id="out", error_file_id=None)
+    client = _FakeClient(batch, {"out": _TextContent(body)})
+    by_id = {r.custom_id: r for r in OpenAIBatchProcessor(client).results("b")}
+    assert by_id["ok"].type == "succeeded"
+    assert by_id["internal"].type == "errored"
+    assert by_id["internal"].error_type == "internal_error"
+    assert by_id["absent"].error_type == "server_error"
+    # No structured error: falls back to the http_<status> label, never
+    # crashes or drops the row.
+    assert by_id["blank"].type == "errored"
+    assert by_id["blank"].error_type == "http_None"
+
+
 def test_results_empty_when_no_files() -> None:
     batch = _Obj(id="b", status="expired", output_file_id=None, error_file_id=None)
     assert list(OpenAIBatchProcessor(_FakeClient(batch, {})).results("b")) == []

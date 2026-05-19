@@ -17,6 +17,8 @@ a later ADR supersedes an earlier one rather than editing it.
 | [0009](./0009-code-audit-hardening.md) | Code audit, additive hardening, errata | Accepted | The full-audit fixes, the tracked gaps, ADR 0005/0006 errata. |
 | [0010](./0010-l3-default-path-wiring-and-audit-wave.md) | L3 default-path wiring, audit follow-ups, governance maturity | Accepted | `BL-100`-`104` wiring, `BL-154/156/157/161` follow-ups, cost/retry/structured-reject, REUSE/release, the dispatcher-count erratum. |
 | [0011](./0011-third-audit-and-l3-capability-wave.md) | Third code audit, L3 capability wave | Accepted | `BL-172`-`180` (third-audit fixes); `BL-111` key providers, `BL-122` ABAC + audited denial, `BL-124` MVCC tokens, `BL-130` evaluation gate, `BL-131` semantic memory. |
+| [0012](./0012-run-provenance-and-anthropic-capabilities.md) | Run provenance records, optional provider batch capabilities | Accepted | `BL-185` run-provenance records + offline gate, `BL-186`/`187` Anthropic/OpenAI batch + prompt-cache helpers. |
+| [0013](./0013-fifth-code-audit.md) | Fifth code audit, additive hardening | Accepted | `BL-188` read-vs-listing expiry boundary, `BL-189` OpenAI batch error label, `BL-190` LocalSkillSource symlink-safe clear, `BL-191` JSON span-list memory ceiling, `BL-192` provenance-gate registry validation. |
 
 See [docs/backlog.md](../backlog.md) for the line-item tracker and
 [CLAUDE.md](../../CLAUDE.md) for when a change needs a new ADR.

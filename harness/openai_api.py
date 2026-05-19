@@ -259,10 +259,21 @@ class OpenAIBatchProcessor:
                         text=_text_of(response.get("body")),
                     )
                 else:
+                    # A request-level failure can land in the output
+                    # file with ``response: null`` and a structured
+                    # ``error`` (distinct from the error-file rows). Use
+                    # that error code when present so the diagnostic is
+                    # not lost as a bare ``http_None``.
+                    error = line.get("error") or {}
+                    error_type = (
+                        str(error.get("code", "unknown"))
+                        if error
+                        else f"http_{status_code}"
+                    )
                     yield OpenAIBatchResult(
                         custom_id=custom_id,
                         type="errored",
-                        error_type=f"http_{status_code}",
+                        error_type=error_type,
                     )
 
         if error_file_id:

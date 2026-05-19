@@ -135,7 +135,7 @@ class SQLiteStore:
         async with self._lock:
             rows = await asyncio.to_thread(self._db_live_keys)
         now = time.time()
-        return sorted(k for k, exp in rows if (exp is None or exp > now) and k.startswith(prefix))
+        return sorted(k for k, exp in rows if (exp is None or now <= exp) and k.startswith(prefix))
 
     # --- BatchMemoryStore (BL-081) ------------------------------------
 
@@ -218,7 +218,7 @@ class SQLiteStore:
         candidates = sorted(
             k
             for k, exp in rows
-            if (exp is None or exp > now) and k.startswith(prefix) and (cursor == "" or k > cursor)
+            if (exp is None or now <= exp) and k.startswith(prefix) and (cursor == "" or k > cursor)
         )
         page = candidates[:count]
         next_cursor = page[-1] if len(candidates) > count else ""
@@ -365,9 +365,11 @@ class SQLiteStore:
     async def sweep_expired(self) -> int:
         def _sweep() -> int:
             # Strict ``<`` matches read()/list_keys()/scan() which treat
-            # an entry live until ``now > expires_at``. ``<=`` here swept
-            # an entry the readers still considered live at the exact
-            # expiry instant (audit A6: read vs sweep boundary).
+            # an entry live until ``now > expires_at`` (live at the exact
+            # expiry instant). ``<=`` here swept an entry the readers
+            # still considered live at that instant (audit A6: read vs
+            # sweep boundary; list_keys/scan aligned to the same
+            # ``now <= exp`` live boundary in the same class fix).
             cur = self._conn.execute(
                 f'DELETE FROM "{self._table}" WHERE expires_at IS NOT NULL AND expires_at < ?',
                 (time.time(),),

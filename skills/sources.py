@@ -260,9 +260,13 @@ class LocalSkillSource:
         src = self._root / name
         if not (src / "SKILL.md").is_file():
             raise SkillLoadError(str(src), "no SKILL.md at source")
-        target = dest / name
-        if target.exists():
-            shutil.rmtree(target)
+        # Clear via the shared symlink-safe helper (the network sources'
+        # path): a bare ``shutil.rmtree`` on a pre-existing
+        # ``dest/<name>`` symlink raises an unhandled OSError instead of
+        # a clean SkillLoadError, and BL-172 named LocalSkillSource the
+        # twin of that clearing hole but only hardened the network
+        # sources. One audited clear for every source.
+        target = _prepare_install_dir(dest, name)
         # Copy regular files only. The default shutil.copytree
         # dereferences symlinks, so a crafted local mirror with
         # ``references/x -> ~/.ssh/id_rsa`` would copy the secret's
