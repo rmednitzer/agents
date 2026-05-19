@@ -266,9 +266,7 @@ class OpenAIBatchProcessor:
                     # not lost as a bare ``http_None``.
                     error = line.get("error") or {}
                     error_type = (
-                        str(error.get("code", "unknown"))
-                        if error
-                        else f"http_{status_code}"
+                        str(error.get("code", "unknown")) if error else f"http_{status_code}"
                     )
                     yield OpenAIBatchResult(
                         custom_id=custom_id,

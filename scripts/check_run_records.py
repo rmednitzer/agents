@@ -146,11 +146,7 @@ def main() -> int:
         # unsatisfiable and reports a nonsensical "digest 123" message
         # instead of naming the malformed registry entry (a
         # config-trust-boundary failure, exit 2).
-        bad = [
-            k
-            for k, v in registry.items()
-            if not (isinstance(v, str) and _DIGEST_RE.match(v))
-        ]
+        bad = [k for k, v in registry.items() if not (isinstance(v, str) and _DIGEST_RE.match(v))]
         if bad:
             print(
                 f"error: registry {args.registry} has non-canonical digest "

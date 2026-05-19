@@ -276,9 +276,7 @@ def test_local_source_preexisting_symlink_does_not_escape(tmp_path: Path) -> Non
 
     registry = tmp_path / "registry"
     (registry / "cool").mkdir(parents=True)
-    (registry / "cool" / "SKILL.md").write_text(
-        _SKILL_MD.format(n="cool"), encoding="utf-8"
-    )
+    (registry / "cool" / "SKILL.md").write_text(_SKILL_MD.format(n="cool"), encoding="utf-8")
 
     dest = tmp_path / "installed"
     dest.mkdir()
