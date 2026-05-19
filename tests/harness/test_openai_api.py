@@ -203,6 +203,11 @@ def test_output_file_null_response_uses_structured_error_code() -> None:
             json.dumps({"custom_id": "absent", "error": {"code": "server_error"}}),
             # No response and no error: still a deterministic label.
             json.dumps({"custom_id": "blank"}),
+            # error present but code null / empty / non-string: must
+            # fall back to http_<status>, not surface "None" / "" / "5".
+            json.dumps({"custom_id": "nullcode", "error": {"code": None}}),
+            json.dumps({"custom_id": "emptycode", "error": {"code": ""}}),
+            json.dumps({"custom_id": "intcode", "error": {"code": 5}}),
         ]
     )
     batch = _Obj(id="b", status="completed", output_file_id="out", error_file_id=None)
@@ -216,6 +221,10 @@ def test_output_file_null_response_uses_structured_error_code() -> None:
     # crashes or drops the row.
     assert by_id["blank"].type == "errored"
     assert by_id["blank"].error_type == "http_None"
+    # A falsey / non-string code is treated as absent (Copilot review).
+    for cid in ("nullcode", "emptycode", "intcode"):
+        assert by_id[cid].type == "errored"
+        assert by_id[cid].error_type == "http_None"
 
 
 def test_results_empty_when_no_files() -> None:
