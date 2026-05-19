@@ -208,6 +208,11 @@ def test_output_file_null_response_uses_structured_error_code() -> None:
             json.dumps({"custom_id": "nullcode", "error": {"code": None}}),
             json.dumps({"custom_id": "emptycode", "error": {"code": ""}}),
             json.dumps({"custom_id": "intcode", "error": {"code": 5}}),
+            # error is a truthy NON-dict (malformed JSONL): must not
+            # raise AttributeError and abort results(), dropping every
+            # subsequent row (Codex P2 review).
+            json.dumps({"custom_id": "strerr", "error": "boom"}),
+            json.dumps({"custom_id": "after", "error": {"code": "still_seen"}}),
         ]
     )
     batch = _Obj(id="b", status="completed", output_file_id="out", error_file_id=None)
@@ -225,6 +230,11 @@ def test_output_file_null_response_uses_structured_error_code() -> None:
     for cid in ("nullcode", "emptycode", "intcode"):
         assert by_id[cid].type == "errored"
         assert by_id[cid].error_type == "http_None"
+    # A truthy non-dict error must not crash results() and must not
+    # drop the rows after it (Codex P2).
+    assert by_id["strerr"].type == "errored"
+    assert by_id["strerr"].error_type == "http_None"
+    assert by_id["after"].error_type == "still_seen"
 
 
 def test_results_empty_when_no_files() -> None:
