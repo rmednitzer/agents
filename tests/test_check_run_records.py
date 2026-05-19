@@ -45,7 +45,51 @@ def test_non_dict_registry_returns_invocation_failure(
     assert crr.main() == 2
 
 
-def test_empty_corpus_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "value",
+    [
+        123,  # JSON number
+        None,  # explicit null
+        ["a" * 64],  # list
+        "A" * 64,  # uppercase hex (model normalises to lowercase)
+        "z" * 64,  # right length, non-hex
+        "abc",  # too short
+    ],
+)
+def test_non_canonical_registry_value_is_invocation_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: object
+) -> None:
+    """BL-192: a registry value that is not a canonical lowercase
+    64-hex digest makes the gate silently unsatisfiable (it can never
+    equal a model-normalised digest). It must be a clear invocation
+    failure (exit 2) naming the bad key, not a confusing per-record
+    'does not match the registry digest 123' message.
+    """
+    (tmp_path / "a.run.json").write_text("{}")
+    reg = tmp_path / "reg.json"
+    reg.write_text(json.dumps({"wl@1.0.0": value}))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["check_run_records", str(tmp_path), "--registry", str(reg)],
+    )
+    assert crr.main() == 2
+
+
+def test_canonical_registry_value_is_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A well-formed lowercase 64-hex registry still passes the gate."""
+    _write_record(tmp_path / "a.run.json")
+    reg = tmp_path / "reg.json"
+    reg.write_text(json.dumps({"wl@1.0.0": "b" * 64}))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["check_run_records", str(tmp_path), "--registry", str(reg)],
+    )
+    # 'b'*64 is canonical, so we get past the registry gate; the record
+    # then fails on the digest *content* mismatch (a hard error, exit 1)
+    # -- proving the canonical value was accepted, not rejected at parse.
+    assert crr.main() == 1
     monkeypatch.setattr("sys.argv", ["check_run_records", str(tmp_path)])
     assert crr.main() == 0
 

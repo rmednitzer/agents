@@ -28,6 +28,18 @@ __all__ = ["first_json_array"]
 _MAX_CANDIDATE_BYTES = 64 * 1024
 _MAX_TOTAL_PARSE_BYTES = 1024 * 1024
 
+# The parse-work bounds above cap bytes handed to ``json.loads``, but
+# ``_balanced_spans`` materialises one ``(open, end)`` int-pair per
+# closing bracket *before* ``first_json_array`` runs, so a body that is
+# mostly brackets (``"[]" * n``) costs O(n) span tuples (~120 B each, a
+# ~30x amplification over the source text) regardless of the parse
+# budget: a memory-amplification axis the count-vs-work reasoning above
+# does not cover. This hard ceiling bounds that list. A real dispatch
+# array has a handful of brackets; exceeding this is adversarial and
+# correctly degrades to the malformed-input / DispatchError contract
+# (the same posture as the oversized-span and RecursionError paths).
+_MAX_SPANS = 65536
+
 
 def _balanced_spans(text: str) -> list[tuple[int, int]]:
     """Balanced ``[...]`` spans as ``(open_idx, end_idx_exclusive)`` pairs.
@@ -41,7 +53,9 @@ def _balanced_spans(text: str) -> list[tuple[int, int]]:
     memory (a decompression-bomb analogue on untrusted dispatcher
     input); index pairs are O(1) each, and ``first_json_array`` slices
     only spans within ``_MAX_CANDIDATE_BYTES`` / a cumulative
-    ``_MAX_TOTAL_PARSE_BYTES`` budget, lazily.
+    ``_MAX_TOTAL_PARSE_BYTES`` budget, lazily. The recorded list itself
+    is capped at ``_MAX_SPANS`` (a memory ceiling for a bracket-heavy
+    body; see the constant's note).
 
     The stack (not a flat depth counter) is what lets an array nested
     inside an *unmatched* prose ``[`` still be recovered: the inner
@@ -77,7 +91,8 @@ def _balanced_spans(text: str) -> list[tuple[int, int]]:
             stack.append(idx)
         elif ch == "]":
             opened = stack.pop()
-            spans.append((opened, idx + 1))
+            if len(spans) < _MAX_SPANS:
+                spans.append((opened, idx + 1))
             if not stack:
                 in_str = False
                 esc = False

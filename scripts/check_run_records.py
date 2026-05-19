@@ -37,8 +37,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+
+_DIGEST_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -132,6 +135,23 @@ def main() -> int:
             print(
                 f"error: registry {args.registry} is not a JSON object "
                 f"(expected 'name@version' -> digest mapping)",
+                file=sys.stderr,
+            )
+            return 2
+        # Validate every value is a canonical lowercase 64-hex digest,
+        # mirroring the RunRecord model's own ``contract_digest``
+        # strictness. Without this a non-canonical registry (uppercase
+        # hex, a JSON number, an explicit null) never equals a
+        # model-normalised digest, so the gate is silently
+        # unsatisfiable and reports a nonsensical "digest 123" message
+        # instead of naming the malformed registry entry (a
+        # config-trust-boundary failure, exit 2).
+        bad = [k for k, v in registry.items() if not (isinstance(v, str) and _DIGEST_RE.match(v))]
+        if bad:
+            print(
+                f"error: registry {args.registry} has non-canonical digest "
+                f"value(s) for key(s) {sorted(bad)!r} (expected lowercase "
+                f"64-hex sha256)",
                 file=sys.stderr,
             )
             return 2

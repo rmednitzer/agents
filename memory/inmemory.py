@@ -120,7 +120,7 @@ class InMemoryStore:
             live = [
                 k
                 for k, entry in self._data.items()
-                if entry.expires_at is None or entry.expires_at > now
+                if entry.expires_at is None or now <= entry.expires_at
             ]
             return sorted(k for k in live if k.startswith(prefix))
 
@@ -180,7 +180,7 @@ class InMemoryStore:
             candidates = sorted(
                 k
                 for k, entry in self._data.items()
-                if (entry.expires_at is None or entry.expires_at > now)
+                if (entry.expires_at is None or now <= entry.expires_at)
                 and k.startswith(prefix)
                 and (cursor == "" or k > cursor)
             )

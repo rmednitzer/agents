@@ -6,6 +6,11 @@
   read-vs-CAS boundary class BL-157/BL-168 fixed elsewhere.
 - BL-178: SQLite ``mset``/``mdelete`` of an empty batch is a no-op and
   does not take the database write lock.
+- BL-188: ``InMemoryStore`` / ``SQLiteStore`` ``list_keys`` and
+  ``scan`` use the same ``now <= exp`` live boundary as ``read`` /
+  ``sweep_expired``; an entry at the exact expiry instant that ``read``
+  still returns must not be missing from a listing (the read-vs-listing
+  twin of the BL-157/168/177 read-vs-CAS boundary class).
 """
 
 from __future__ import annotations
@@ -121,3 +126,55 @@ async def test_dynamodb_cas_expired_row_is_absent(rec_client: _RecordingClient) 
     assert await store.read("k") is None
     # An expired row is absent: a value-match CAS must fail.
     assert await store.compare_and_set("k", b"v", b"v2") is False
+
+
+# --- BL-188: read-vs-listing expiry boundary parity ------------------
+
+import memory.inmemory as _inmem_mod  # noqa: E402
+import memory.sqlite as _sqlite_mod  # noqa: E402
+from memory.inmemory import InMemoryStore  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_inmemory_listing_agrees_with_read_at_expiry_instant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(_inmem_mod.time, "time", lambda: clock["t"])
+    store = InMemoryStore(_ns())
+    await store.write("k", b"v", ttl_seconds=10)  # expires_at == 1010
+
+    clock["t"] = 1010.0  # the exact expiry instant: read treats it live
+    assert await store.read("k") == b"v"
+    assert "k" in await store.list_keys()
+    _, page = await store.scan()
+    assert "k" in page
+
+    clock["t"] = 1010.001  # just past expiry: gone everywhere
+    assert await store.read("k") is None
+    assert await store.list_keys() == []
+    assert (await store.scan())[1] == []
+
+
+@pytest.mark.asyncio
+async def test_sqlite_listing_agrees_with_read_at_expiry_instant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = {"t": 2000.0}
+    monkeypatch.setattr(_sqlite_mod.time, "time", lambda: clock["t"])
+    store = SQLiteStore(_ns())
+    try:
+        await store.write("k", b"v", ttl_seconds=10)  # expires_at == 2010
+
+        clock["t"] = 2010.0  # exact expiry instant: read treats it live
+        assert await store.read("k") == b"v"
+        assert "k" in await store.list_keys()
+        _, page = await store.scan()
+        assert "k" in page
+
+        clock["t"] = 2010.001  # just past expiry: gone everywhere
+        assert await store.read("k") is None
+        assert await store.list_keys() == []
+        assert (await store.scan())[1] == []
+    finally:
+        store.close()

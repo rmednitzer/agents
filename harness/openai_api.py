@@ -156,6 +156,20 @@ def _text_of(body: Any) -> str | None:
     return content if isinstance(content, str) and content else None
 
 
+def _error_code(line: dict[str, Any], fallback: str) -> str:
+    """Structured error code from a result line, else ``fallback``.
+
+    A row can carry ``error: {...}`` but with ``code`` null, empty, or a
+    non-string (the API is not contractually a string here); only a
+    non-empty string code is a usable label, otherwise the caller's
+    fallback (``http_<status>`` / ``unknown``) is more diagnostic than a
+    literal ``"None"`` / ``""``.
+    """
+    error = line.get("error")
+    code = error.get("code") if isinstance(error, dict) else None
+    return code if isinstance(code, str) and code else fallback
+
+
 def _decode_lines(payload: Any) -> Iterator[dict[str, Any]]:
     """Yield parsed JSON objects from a JSONL file payload.
 
@@ -259,20 +273,24 @@ class OpenAIBatchProcessor:
                         text=_text_of(response.get("body")),
                     )
                 else:
+                    # A request-level failure can land in the output
+                    # file with ``response: null`` and a structured
+                    # ``error`` (distinct from the error-file rows). Use
+                    # that error code when present so the diagnostic is
+                    # not lost as a bare ``http_None``.
                     yield OpenAIBatchResult(
                         custom_id=custom_id,
                         type="errored",
-                        error_type=f"http_{status_code}",
+                        error_type=_error_code(line, f"http_{status_code}"),
                     )
 
         if error_file_id:
             content = self._client.files.content(str(error_file_id))
             for line in _decode_lines(content):
-                error = line.get("error") or {}
                 yield OpenAIBatchResult(
                     custom_id=str(line.get("custom_id", "")),
                     type="errored",
-                    error_type=str(error.get("code", "unknown")),
+                    error_type=_error_code(line, "unknown"),
                 )
 
     def cancel(self, batch_id: str) -> str:

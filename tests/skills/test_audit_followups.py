@@ -5,6 +5,15 @@
   of the BL-169 LocalSkillSource symlink hole).
 - BL-173: ``_balanced_spans`` stays linear on deeply nested model
   output and ``first_json_array`` never lets ``RecursionError`` escape.
+- BL-190: ``LocalSkillSource.fetch`` clears a pre-existing
+  ``dest/<name>`` symlink via the shared symlink-safe
+  ``_prepare_install_dir`` (a clean SkillLoadError, not an unhandled
+  OSError), the same hardened clear the network sources use (BL-172's
+  "twin", finally propagated).
+- BL-191: ``_balanced_spans`` caps the recorded span list at
+  ``_MAX_SPANS`` so a bracket-heavy body (``"[]" * n``) cannot
+  amplify into an unbounded list of index pairs (a memory axis the
+  BL-173/182 parse-work bounds do not cover).
 """
 
 from __future__ import annotations
@@ -18,8 +27,14 @@ from typing import Any
 
 import pytest
 
+from skills.dispatchers import _json as _json_mod
 from skills.dispatchers._json import first_json_array
-from skills.sources import GitHubSkillSource, MarketplaceSkillSource, install_skill
+from skills.sources import (
+    GitHubSkillSource,
+    LocalSkillSource,
+    MarketplaceSkillSource,
+    install_skill,
+)
 
 _SKILL_MD = "---\nname: {n}\ndescription: A test skill bundle for {n}.\n---\nBody.\n"
 
@@ -240,3 +255,80 @@ def test_deep_nesting_surfaces_dispatch_error() -> None:
     dispatcher = LLMDispatcher(registry, _DeepRuntime())
     with pytest.raises(DispatchError):
         asyncio.run(dispatcher.dispatch("anything"))
+
+
+# --- BL-190: LocalSkillSource symlink-safe clear ----------------------
+
+
+def test_local_source_preexisting_symlink_does_not_escape(tmp_path: Path) -> None:
+    """A ``dest/<name>`` symlink to an outside dir is cleared, not followed.
+
+    The old bare ``shutil.rmtree`` on the symlink raised an unhandled
+    OSError (rmtree refuses a symlink) and never cleared it, leaving the
+    write path pointing through the link. Routing through
+    ``_prepare_install_dir`` unlinks the link itself, so the outside
+    tree is untouched and the bundle installs inside ``dest``.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_text("UNTOUCHED")
+
+    registry = tmp_path / "registry"
+    (registry / "cool").mkdir(parents=True)
+    (registry / "cool" / "SKILL.md").write_text(_SKILL_MD.format(n="cool"), encoding="utf-8")
+
+    dest = tmp_path / "installed"
+    dest.mkdir()
+    (dest / "cool").symlink_to(outside, target_is_directory=True)
+
+    skill = install_skill(LocalSkillSource(registry), "cool", dest)
+
+    assert secret.read_text() == "UNTOUCHED"
+    assert sorted(p.name for p in outside.iterdir()) == ["secret.txt"]
+    assert skill.name == "cool"
+    target = dest / "cool"
+    assert target.is_dir()
+    assert not target.is_symlink()
+    assert (target / "SKILL.md").is_file()
+
+
+def test_local_source_clears_preexisting_regular_dir(tmp_path: Path) -> None:
+    """The hardened clear still replaces a normal stale install."""
+    registry = tmp_path / "r"
+    (registry / "s").mkdir(parents=True)
+    (registry / "s" / "SKILL.md").write_text(_SKILL_MD.format(n="s"), encoding="utf-8")
+    dest = tmp_path / "d"
+    install_skill(LocalSkillSource(registry), "s", dest)
+    stale = dest / "s" / "stale.txt"
+    stale.write_text("old")
+    skill = install_skill(LocalSkillSource(registry), "s", dest)
+    assert not stale.exists()
+    assert skill.name == "s"
+    assert (dest / "s" / "SKILL.md").is_file()
+
+
+# --- BL-191: span-list memory ceiling ---------------------------------
+
+
+def test_balanced_spans_caps_recorded_span_list() -> None:
+    """A bracket-heavy body cannot amplify into an unbounded span list."""
+    n = _json_mod._MAX_SPANS * 4
+    spans = _json_mod._balanced_spans("[]" * n)
+    assert len(spans) == _json_mod._MAX_SPANS
+
+
+def test_first_json_array_unaffected_by_span_cap_for_real_input() -> None:
+    """The cap never bites a real top-level array (always candidate one)."""
+    text = 'prose [{"skill_name": "deployer", "confidence": 0.9}] more prose'
+    assert json.loads(first_json_array(text) or "") == [
+        {"skill_name": "deployer", "confidence": 0.9}
+    ]
+
+
+def test_first_json_array_bracket_flood_stays_bounded_and_correct() -> None:
+    # A huge "[]" flood returns the first balanced array fast (it parses
+    # to a list) without materialising one span per pair past the cap.
+    start = time.monotonic()
+    assert first_json_array("[]" * (_json_mod._MAX_SPANS * 4)) == "[]"
+    assert time.monotonic() - start < 10.0
