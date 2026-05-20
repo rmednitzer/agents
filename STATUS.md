@@ -1,7 +1,7 @@
 # Status
 
 Maturity of the repository and its documents. Updated when a phase
-opens or closes. Last reviewed: 2026-05-17.
+opens or closes. Last reviewed: 2026-05-20.
 
 ## Maturity taxonomy
 
@@ -21,6 +21,9 @@ opens or closes. Last reviewed: 2026-05-17.
 | L3 Tier 1-2 | Cost/per-tool budgets, retry policy, structured soft-reject, concrete embedding provider, entry-point + CLI extensions | stable | ADR 0010 |
 | L3 Tier 3-4 | Governance (REUSE), release lifecycle and operations | stable | ADR 0010 |
 | L3 capability wave | Key providers + rotation (`BL-111`), attribute-based ACL + audited denial (`BL-122`), MVCC version tokens (`BL-124`), semantic memory (`BL-131`), the evaluation gate (`BL-130`), the third-audit fixes (`BL-172`-`BL-178`), additive | stable | ADR 0011 |
+| Run provenance + provider batch capabilities | `RunRecord` + `contract_digest` + offline gate (`BL-185`), `AnthropicBatchProcessor` + prompt-cache helper (`BL-186`), `OpenAIBatchProcessor` (`BL-187`), additive | stable | ADR 0012 |
+| Fifth code audit | Read-vs-listing expiry boundary (`BL-188`), OpenAI batch error diagnostic (`BL-189`), `LocalSkillSource` symlink-safe clear (`BL-190`), JSON span-list memory ceiling (`BL-191`), provenance-gate registry validation (`BL-192`), additive | stable | ADR 0013 |
+| Approval-resume argument binding (`BL-193`) | Stale approval for the same tool with different arguments no longer satisfies a new call on resume; the resolved-decision lookup binds by the full `(tool, arguments)` tuple, additive | stable | PR #46 (`a511760`), ADR 0013 follow-up |
 | L3 open | Live-model workload, memory compaction/tiering, true OTel spans, prompt caching, true preemption, non-replay resume, multi-key transactions | planned | `docs/backlog.md` (`BL-120`, `BL-135`, `BL-113`/`138`, `BL-132`/`171`, `BL-155`, `BL-114`, `BL-180`) |
 
 ## Document maturity
@@ -28,7 +31,7 @@ opens or closes. Last reviewed: 2026-05-17.
 | Document | Maturity |
 | --- | --- |
 | `CLAUDE.md`, `README.md`, component `README.md` | stable |
-| `docs/adr/0001`-`0011` | stable (Accepted) |
+| `docs/adr/0001`-`0013` | stable (Accepted) |
 | `docs/releasing.md` | stable |
 | `docs/backlog.md` | living tracker |
 | `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE` section (in `CONTRIBUTING.md`) | stable |
