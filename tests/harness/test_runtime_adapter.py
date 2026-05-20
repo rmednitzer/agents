@@ -8,6 +8,7 @@ quota). All deterministic and network-free via TestModel/FunctionModel.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -24,7 +25,7 @@ from harness.errors import (
     HarnessError,
 )
 from harness.guard import GuardDecision, GuardResponse, HarnessToolGuard
-from harness.interruption import ResumableState
+from harness.interruption import ApprovalInterruption, ResumableState
 from harness.mcp import MCPServerSpec, MCPTransport
 from harness.runtime import (
     PydanticAIRuntime,
@@ -274,6 +275,40 @@ async def test_gate_require_approval_pauses_then_denies() -> None:
     with pytest.raises(_ApprovalPause):
         await _run_gate(guard, None, name="risky", state=state)
     assert state.pause is not None
+
+
+@pytest.mark.asyncio
+async def test_gate_resume_does_not_reuse_stale_approval_for_new_arguments() -> None:
+    guard = _Guard(
+        GuardResponse(
+            decision=GuardDecision.REQUIRE_APPROVAL,
+            interruption_id="current-interruption",
+        )
+    )
+    stale = ApprovalInterruption(
+        id="prior-interruption",
+        created_at=datetime.now(UTC),
+        tool="risky",
+        arguments={"path": "approved.txt"},
+        decision="approved",
+    )
+    resume = ResumableState(
+        contract_name="c",
+        contract_version="1.0",
+        workload="c",
+        input_payload={},
+        trace_id="t",
+        pending_approvals=[stale],
+    )
+    with pytest.raises(_ApprovalPause):
+        await _run_gate(
+            guard,
+            None,
+            name="risky",
+            arguments={"path": "victim.txt"},
+            resume=resume,
+            state=_GuardState(),
+        )
 
 
 def test_mcp_toolset_receives_process_tool_call() -> None:
