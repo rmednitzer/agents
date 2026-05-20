@@ -3,6 +3,30 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] CI gate hardening: dependency-audit env + disputed pyjwt CVE (2026-05-20)
+
+A CI-policy fix folded into PR #47: the `dependency-audit` job started
+failing on every run (including `main`) once `uvx pip-audit` defaulted
+its dry-run env to Python 3.11. Build-pipeline change only; no code
+or library surface affected.
+
+### CI
+
+- `.github/workflows/ci.yml`: the `dependency-audit` job now invokes
+  `uvx --python 3.12 pip-audit ...`, matching the project's
+  `requires-python = ">=3.12"`. Without the pin, uvx picked 3.11 and
+  the marker `python_version < "3.12"` on `backports.tarfile` (a
+  transitive of `jaraco-context`) became true, pulling an unpinned
+  `>=` constraint that pip refuses under `--require-hashes`. The audit
+  env must match what is actually installed. (`BL-194`)
+- Same step adds `--ignore-vuln PYSEC-2025-183` (CVE-2025-45768) with
+  an inline rationale: a maintainer-disputed advisory against `pyjwt`
+  with no fix version published, reachable here only as a deep
+  transitive (`mcp` -> `pydantic-ai-slim` -> `pydantic-ai`); no JWT
+  code path is exercised. Revisit trigger documented in the workflow
+  comment (advisory withdrawal, replacement CVE, or a hardened pyjwt
+  default). (`BL-194`)
+
 ## [Unreleased] Approval-resume argument binding (2026-05-20)
 
 PR #46 (`a511760`). A post-ADR-0013 security fix to the runtime

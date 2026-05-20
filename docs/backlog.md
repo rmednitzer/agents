@@ -338,6 +338,15 @@ Same conventions and ID discipline; `BL-1xx` range.
 
 - `BL-193` [resolved] [S] On resume, `_resolved_decision` matched a pending approval by `tool` only, so a stale approval for `risky({"path": "approved.txt"})` satisfied a new `risky({"path": "victim.txt"})` call (the default `HarnessToolGuard` issues a fresh `interruption_id` per check, so the id alone is not a stable cross-pause handle). The lookup now binds by the full `(tool, arguments)` tuple, mirroring `ApprovalInterruption.arguments`; the test `tests/harness/test_runtime_adapter.py::test_gate_resume_does_not_reuse_stale_approval_for_new_arguments` exercises the boundary. Authorization-boundary fix (`SECURITY.md` "Untrusted content and prompt injection"); additive to the L1 Protocols (a strictly narrower match condition; the prior behaviour was incorrectly accepting). (ADR 0002, ADR 0003, ADR 0007, ADR 0013)
 
+## Dependency-audit gate hardening (2026-05-20)
+
+A CI-policy fix folded into PR #47: the `dependency-audit` job started
+failing on every run (including `main`) once `uvx pip-audit` resolved
+its dry-run env to Python 3.11 by default. Same conventions and ID
+discipline; `BL-1xx` range.
+
+- `BL-194` [resolved] [XS] The `dependency-audit` job in `.github/workflows/ci.yml` invoked `uvx pip-audit --strict ... -r audit-requirements.txt`. uvx picks Python 3.11 unless pinned, so the marker `python_version < "3.12"` on `backports.tarfile` (a transitive of `jaraco-context==6.1.2`, in turn pulled by the `keyring` chain) became true and demanded an unpinned `>=1.1.1` install that pip refuses under `--require-hashes`. The audit env now matches the project (`uvx --python 3.12 pip-audit ...`), so the marker is false and the gate runs to completion. The same step also ignores `PYSEC-2025-183` (CVE-2025-45768), a maintainer-disputed advisory against `pyjwt` (the maintainer rejects it as an application-level concern: pyjwt accepts a short symmetric key, but the application chooses the key length; no fix version is published). `pyjwt` is only reachable here as `mcp` -> `pydantic-ai-slim` -> `pydantic-ai` transitively; no JWT path is exercised. The CI step carries the rationale and a revisit trigger (withdrawal, replacement advisory, or a hardened pyjwt default). (ADR 0008, ADR 0010)
+
 ## Sources consulted
 
 Primary sources cross-checked before the `BL-130`-`BL-153` edits.
