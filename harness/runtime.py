@@ -227,13 +227,26 @@ def _tool_name(tool: Any) -> str:
 def _resolved_decision(
     resume: ResumableState | None,
     tool: str,
+    arguments: dict[str, Any],
     used: set[str],
 ) -> ApprovalInterruption | None:
-    """First not-yet-consumed resolved approval for ``tool`` in ``resume``."""
+    """First not-yet-consumed resolved approval matching this proposal.
+
+    Binding is by the (tool, arguments) tuple: a stale approval for the
+    same tool with different arguments must not satisfy a new call. The
+    default ``HarnessToolGuard`` mints a fresh ``interruption_id`` for
+    every check, so the id is not a stable cross-pause handle and cannot
+    be used as the binding key on its own.
+    """
     if resume is None:
         return None
     for ai in resume.pending_approvals:
-        if ai.tool == tool and ai.id not in used and ai.decision != "pending":
+        if (
+            ai.tool == tool
+            and ai.arguments == arguments
+            and ai.id not in used
+            and ai.decision != "pending"
+        ):
             used.add(ai.id)
             return ai
     return None
@@ -276,7 +289,7 @@ async def _gate(
                 raise ModelRetry(f"blocked by governance: {reason}")
             return f"[blocked: {reason}]"
         if response.decision == GuardDecision.REQUIRE_APPROVAL:
-            decided = _resolved_decision(resume, name, used_approvals)
+            decided = _resolved_decision(resume, name, arguments, used_approvals)
             if decided is None:
                 interruption = ApprovalInterruption(
                     id=response.interruption_id or uuid.uuid4().hex,
