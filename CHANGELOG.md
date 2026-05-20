@@ -3,6 +3,28 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Approval-resume argument binding (2026-05-20)
+
+PR #46 (`a511760`). A post-ADR-0013 security fix to the runtime
+adapter's approval-resume path: a stale resolved approval for one set
+of arguments could satisfy a different call to the same tool on
+resume. Additive (the new match condition is a strict narrowing of the
+prior over-permissive one); regression test added.
+
+### Security
+
+- `harness.runtime._resolved_decision` now binds an in-progress
+  approval lookup by the full `(tool, arguments)` tuple, not by `tool`
+  alone: an approval previously granted for
+  `risky({"path": "approved.txt"})` no longer authorises a fresh
+  `risky({"path": "victim.txt"})` after a pause. The default
+  `HarnessToolGuard` mints a new `interruption_id` per check, so the
+  id is not a stable cross-pause binding key on its own; the docstring
+  records this. Regression test:
+  `tests/harness/test_runtime_adapter.py::test_gate_resume_does_not_reuse_stale_approval_for_new_arguments`.
+  Authorization-boundary fix on the L1 / L2 approval-resume path
+  (`BL-001`, `BL-002`). (`BL-193`)
+
 ## [Unreleased] Fifth code audit: additive hardening (2026-05-19)
 
 See [ADR 0013](./docs/adr/0013-fifth-code-audit.md). A fifth in-depth

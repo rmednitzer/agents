@@ -325,6 +325,19 @@ discipline; `BL-1xx` range. Resolution reference: ADR 0013 and branch
 - `BL-191` [resolved] [S] `_balanced_spans` materialised one `(open, end)` int-pair per closing bracket *before* `first_json_array` ran, so a bracket-heavy untrusted body (`"[]" * n`) cost an O(n) span list (~120 B/pair, ~30x amplification over the source) regardless of the BL-173/182 parse-work budget, and the eager list defeated the fast first-candidate return. A new memory axis the count-vs-work reasoning did not cover. A hard `_MAX_SPANS` ceiling (65536, far above any legitimate dispatch response) now bounds the list; overflow degrades to the existing malformed-input / DispatchError contract (the oversized-span / RecursionError posture). (ADR 0006, ADR 0009, ADR 0013)
 - `BL-192` [resolved] [XS] `scripts/check_run_records.py` validated the `--registry` payload was a JSON object but never its values; a non-canonical registry (a JSON number, explicit `null`, uppercase hex) can never equal a model-normalised `contract_digest`, so the gate was silently unsatisfiable and reported a nonsensical "does not match the registry digest 123" per-record message. It already failed closed (no forgery bypass) but unactionably. Registry values are now validated as canonical lowercase 64-hex at load (mirroring the per-record model strictness); a malformed registry is the documented invocation failure (exit 2) naming the offending keys. (ADR 0012, ADR 0013)
 
+## ADR 0013 follow-up: approval-resume argument binding (2026-05-20)
+
+A single post-audit security fix in PR #46 (`a511760`), discovered after
+ADR 0013 landed. The default `HarnessToolGuard` mints a fresh
+`interruption_id` per check, so the id is not a stable cross-pause
+handle; binding by `tool` alone let a resolved approval for one set of
+arguments satisfy a *different* call to the same tool on resume. The
+fix tightens the binding to the full `(tool, arguments)` tuple, with a
+regression test (`test_gate_resume_does_not_reuse_stale_approval_for_new_arguments`).
+Same conventions and ID discipline; `BL-1xx` range.
+
+- `BL-193` [resolved] [S] On resume, `_resolved_decision` matched a pending approval by `tool` only, so a stale approval for `risky({"path": "approved.txt"})` satisfied a new `risky({"path": "victim.txt"})` call (the default `HarnessToolGuard` issues a fresh `interruption_id` per check, so the id alone is not a stable cross-pause handle). The lookup now binds by the full `(tool, arguments)` tuple, mirroring `ApprovalInterruption.arguments`; the test `tests/harness/test_runtime_adapter.py::test_gate_resume_does_not_reuse_stale_approval_for_new_arguments` exercises the boundary. Authorization-boundary fix (`SECURITY.md` "Untrusted content and prompt injection"); additive to the L1 Protocols (a strictly narrower match condition; the prior behaviour was incorrectly accepting). (ADR 0002, ADR 0003, ADR 0007, ADR 0013)
+
 ## Sources consulted
 
 Primary sources cross-checked before the `BL-130`-`BL-153` edits.
