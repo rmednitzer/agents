@@ -52,7 +52,9 @@ from memory.redis import BoundedRedisStore, RedisStore  # noqa: E402
 def _store(**kwargs: object) -> BoundedRedisStore:
     client = fakeredis.aioredis.FakeRedis()
     return BoundedRedisStore(
-        Namespace(name="cap", workload="w"), client=client, **kwargs  # type: ignore[arg-type]
+        Namespace(name="cap", workload="w"),
+        client=client,
+        **kwargs,  # type: ignore[arg-type]
     )
 
 
