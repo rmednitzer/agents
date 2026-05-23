@@ -54,6 +54,30 @@ behaviour is unchanged for every existing caller.
 - `docs/schema/skill-manifest.json` is unchanged; no manifest-level
   surface changed.
 
+### Documentation
+
+- `docs/runbook.md`: post-ADR-0016 sweep. The "ready" set in section
+  4.1 drops the now-resolved `BL-133` row; the open-backlog listing
+  in 4.2 mirrors that change. Section 1's "most recent ADRs" hint
+  bumps to (`0014`, `0015`, `0016`); section 2.5's audit-ADR
+  template recommendation bumps to ADR 0015 (the latest audit
+  template); the audit-wave-cadence enumeration on line 31 bumps to
+  `0009-0015`. The Phase G sweep checks in section 8 now cite today's
+  state: the README check is `0016` + `BL-133`, the CLAUDE check is
+  `0007`-`0016`, the STATUS check is `0001-0016`, the SECURITY
+  check cites the BL-133 skill execution isolation hardening, and
+  the ADR-immutability row covers `0001`-`0016`.
+- `SECURITY.md` "Skill contracts" bullet: the in-tree opt-in second
+  isolation tier is now named explicitly. The bullet calls out
+  `InProcessSkillContractExecutor` (default, backward-compatible),
+  the `SubprocessSkillContractExecutor` `resource.setrlimit` caps
+  (CPU, address space, open files on POSIX), and the
+  length-prefixed parent->child pickle / child->parent JSON IPC
+  framing that prevents a malicious bundle from RCEing the parent
+  (`BL-133`, ADR 0016). Capability isolation (container / seccomp)
+  is restated as the out-of-tree extension point, parallel to the
+  CLAUDE.md wording.
+
 ## [Unreleased] ADR 0015 deferred close (BL-209-BL-211, 2026-05-23)
 
 The three items ADR 0015 flagged as deferred (M3 / M6 / H5 in the
