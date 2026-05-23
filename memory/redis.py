@@ -24,6 +24,7 @@ Design:
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from typing import Any
 
 from memory._audit import MemoryAudit
@@ -303,8 +304,8 @@ class RedisStore:
     async def transact(
         self,
         *,
-        writes: dict[str, TxnWrite] | None = None,
-        deletes: dict[str, TxnDelete] | None = None,
+        writes: Mapping[str, TxnWrite] | None = None,
+        deletes: Mapping[str, TxnDelete] | None = None,
     ) -> dict[str, str] | None:
         writes_d = dict(writes or {})
         deletes_d = dict(deletes or {})

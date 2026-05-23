@@ -29,6 +29,7 @@ import base64
 import hashlib
 import json
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from memory._audit import MemoryAudit
@@ -451,8 +452,8 @@ class DynamoDBStore:
     async def transact(
         self,
         *,
-        writes: dict[str, TxnWrite] | None = None,
-        deletes: dict[str, TxnDelete] | None = None,
+        writes: Mapping[str, TxnWrite] | None = None,
+        deletes: Mapping[str, TxnDelete] | None = None,
     ) -> dict[str, str] | None:
         writes_d = dict(writes or {})
         deletes_d = dict(deletes or {})
@@ -517,15 +518,30 @@ class DynamoDBStore:
         except ClientError as exc:
             if exc.response.get("Error", {}).get("Code") == "TransactionCanceledException":
                 # A per-item ConditionalCheckFailed cancels the whole
-                # transaction (the BL-180 no-op contract). Other cancel
-                # codes (capacity exceeded, throttle,
-                # ItemCollectionSizeLimitExceeded, ...) are infrastructure
-                # errors and must propagate so the caller does NOT emit
-                # success audit for dropped writes.
-                reasons = exc.response.get("CancellationReasons", [])
-                if reasons and all(
-                    r.get("Code") in ("ConditionalCheckFailed", "None") for r in reasons
-                ):
+                # transaction (the BL-180 no-op contract). Discriminate
+                # by *whitelisting* the infrastructure cancellation codes
+                # that must propagate (capacity, throttle, validation,
+                # transaction conflict, item-collection-size-limit) and
+                # treating everything else (ConditionalCheckFailed, the
+                # marker string ``"None"`` for non-failing items in a
+                # mixed batch, an actually-null ``Code``, or a missing /
+                # absent ``CancellationReasons`` field that some SDK
+                # versions omit) as the documented no-op signal. This
+                # is a strict narrowing of the prior accept-list check:
+                # a real precondition miss is now still a no-op when
+                # ``CancellationReasons`` is absent (P1 review fix on
+                # PR #50) and is also a no-op when AWS records the
+                # non-failing items' ``Code`` as null rather than
+                # ``"None"``.
+                _INFRA_CODES = {
+                    "ItemCollectionSizeLimitExceeded",
+                    "TransactionConflict",
+                    "ProvisionedThroughputExceeded",
+                    "ThrottlingError",
+                    "ValidationError",
+                }
+                reasons = exc.response.get("CancellationReasons", []) or []
+                if not any(r.get("Code") in _INFRA_CODES for r in reasons):
                     return None
             raise
         out: dict[str, str] = {}

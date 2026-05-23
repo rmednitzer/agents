@@ -240,11 +240,21 @@ class VersionedMemoryStore(MemoryStore, Protocol):
     - ``delete_versioned`` deletes iff the live token equals
       ``expected_version``; returns whether it deleted.
 
-    Multi-key transactions where the backend supports them are the
-    documented remainder (the BL-072 scoping: Protocol + reference
-    first, per-adapter breadth later). The token is over the stored
-    bytes, so (like CAS) it is not forwarded through EncryptedStore: a
-    per-write random GCM nonce makes the ciphertext token unstable.
+    Best-effort give-up (BL-072 convention): on a backend that uses
+    optimistic concurrency under the hood (Redis WATCH/MULTI), a hot
+    key under sustained external contention may exhaust the bounded
+    retry budget; ``write_versioned`` and ``delete_versioned`` then
+    return ``None`` / ``False`` so a stuck retry loop cannot wedge the
+    caller. The token surface alone does not let a caller distinguish
+    a real version mismatch from contention exhaustion (matching
+    ``compare_and_set``'s ``False`` return); a caller that needs that
+    distinction should re-read the live token and decide.
+
+    Multi-key transactions are now in scope as the separate
+    ``TransactionalMemoryStore`` Protocol (BL-180), not part of this
+    Protocol. The token is over the stored bytes, so (like CAS) it is
+    not forwarded through EncryptedStore: a per-write random GCM
+    nonce makes the ciphertext token unstable.
     """
 
     async def read_versioned(self, key: str) -> tuple[bytes, str] | None: ...
@@ -323,6 +333,14 @@ class TransactionalMemoryStore(MemoryStore, Protocol):
 
     A key cannot appear in both ``writes`` and ``deletes``; the
     intersection is rejected at the contract boundary as a caller bug.
+
+    Best-effort give-up (BL-072 convention): an optimistic-concurrency
+    backend (Redis WATCH/MULTI) may exhaust its bounded retry budget on
+    sustained external contention; ``transact`` then returns ``None``
+    so a stuck retry loop cannot wedge the caller. The return surface
+    alone does not let a caller distinguish a real precondition failure
+    from contention exhaustion; a caller that needs the distinction
+    should re-read live tokens via ``read_versioned`` and decide.
     """
 
     async def transact(
@@ -336,7 +354,8 @@ class TransactionalMemoryStore(MemoryStore, Protocol):
         Returns ``{key: new_token}`` for each written key on success, or
         ``None`` on any precondition failure (no partial application).
         An empty transaction (``writes`` and ``deletes`` both empty / None)
-        returns an empty dict.
+        returns an empty dict. See the class docstring for the
+        best-effort give-up on retry-budget exhaustion.
         """
         ...
 
