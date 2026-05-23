@@ -75,13 +75,17 @@ write plus similarity query, reusing the `HashingEmbeddingProvider`
 embedder is a deterministic lexical baseline, not a semantic model (a
 model-quality embedder satisfies the same `Embedder` Protocol and is
 the workload's choice, out-of-tree by the ADR 0001 stance). The
-sweeper's size-bound half landed as `BL-212`: the
-`BoundedSweepableStore` extension Protocol on `InMemoryStore` plus
+sweeper's size-bound half landed as `BL-212` (InMemoryStore reference)
+and extends to the durable single-host adapter as `BL-213`
+(SQLiteStore): the `BoundedSweepableStore` extension Protocol plus
 `TTLSweeper(max_keys=...)` enforces a keyspace cap beyond age-only
 expiry, so a write-rate-driven workload no longer grows unbounded on
-the in-tree reference. There is still no summarisation or tiering,
-the durable adapters do not implement `BoundedSweepableStore` or
-`SemanticMemoryStore`, and an LRU policy (versus the shipped
+either backend. There is still no summarisation or tiering, the
+remaining durable adapters (`RedisStore`, `DynamoDBStore`, `S3Store`)
+do not yet implement `BoundedSweepableStore` (none has a native
+insertion-order column the way SQLite's rowid does; each needs an
+auxiliary index or scan-based approach), the durable adapters do not
+implement `SemanticMemoryStore`, and an LRU policy (versus the shipped
 insertion-order FIFO) is not in-tree. Implication: in-tree
 just-in-time retrieval and size-bounded reclamation work for a
 single process; long-horizon compaction, summarisation, and a
