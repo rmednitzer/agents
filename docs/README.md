@@ -6,6 +6,7 @@ ADRs live under `docs/adr/` (see the [ADR index](./adr/README.md)) and follow th
 
 Repository-level status and scope: [STATUS.md](../STATUS.md) (phase and document maturity), [LIMITATIONS.md](../LIMITATIONS.md) (scope boundaries and known gaps), [CHANGELOG.md](../CHANGELOG.md) (material changes by phase).
 
+- `runbook.md`: the maintenance runbook (audit, review, enhance, validate, extend; the per-`.md` sweep procedure; the cycle calendar).
 - `runtime-providers.md`: how a workload selects a model and how `PydanticAIRuntime` reaches the Anthropic or OpenAI API (credentials, the `Runtime` boundary, testing without keys).
 - `releasing.md`: the versioning and release policy, the tag-triggered release workflow, and operational notes (deploy, rollback, per-backend memory backup/restore).
 - `backlog.md`: the line-item tracker. L2 (BL-001 .. BL-090, all resolved at merge commit `af1df9d`) and L3 (BL-1xx; the default-path-wiring wave, the L3 capability wave, the run-provenance + batch capabilities, and the fifth-audit fixes resolved per ADR 0010 / 0011 / 0012 / 0013, plus the post-audit `BL-193` approval-resume argument-binding fix; the rest pending), with per-item status; the source of truth for what shipped and where.
