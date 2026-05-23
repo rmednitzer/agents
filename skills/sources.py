@@ -27,7 +27,7 @@ import tarfile
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from skills.errors import SkillLoadError
 from skills.loader import discover_skill
@@ -447,7 +447,12 @@ class MarketplaceSkillSource:
 
 
 def install_skill(
-    source: SkillSource, name: str, dest: Path, *, allow_contract: bool = False
+    source: SkillSource,
+    name: str,
+    dest: Path,
+    *,
+    allow_contract: bool = False,
+    executor: Any | None = None,
 ) -> Skill:
     """Fetch ``name`` via ``source`` into ``dest`` and validate it.
 
@@ -461,7 +466,15 @@ def install_skill(
     you trust (e.g. a checksum-verified ``GitHubSkillSource`` pinned to
     an immutable ref). This is a deliberate secure default for the
     network boundary; the L1 ``discover_skill`` default is unchanged.
+
+    ``executor`` (`BL-133`, ADR 0016) is the optional
+    ``SkillContractExecutor`` used by ``Skill.contract()`` when
+    ``allow_contract=True``. Defaults to None (in-process). Pass a
+    ``SubprocessSkillContractExecutor`` to opt into crash + rlimit
+    isolation when accepting opted-in contracts from a source that is
+    trusted enough to run but not enough to share an interpreter
+    with the harness.
     """
     dest.mkdir(parents=True, exist_ok=True)
     bundle = source.fetch(name, dest)
-    return discover_skill(bundle, allow_contract=allow_contract)
+    return discover_skill(bundle, allow_contract=allow_contract, executor=executor)

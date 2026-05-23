@@ -125,3 +125,13 @@ minversion = "8.0"
 addopts = ["-ra", "--strict-markers", "--strict-config"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+# `skills/_executor_child.py` is the subprocess entry point for
+# SubprocessSkillContractExecutor (BL-133, ADR 0016). It runs in a
+# spawned child interpreter under pytest, so the parent's pytest-cov
+# never sees its execution; the BL-133 tests exercise it
+# functionally (load + evaluate + error boundaries all round-trip
+# through it). Coverage of the child is enforced by behavioural
+# regression tests, not by line counting in the parent.
+omit = ["skills/_executor_child.py"]

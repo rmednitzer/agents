@@ -6,7 +6,7 @@ This is a runbook, not a roadmap. The roadmap lives in [`docs/backlog.md`](./bac
 
 Audience: a maintainer or contributor opening a fresh PR cycle, an auditor preparing the next in-depth code audit, or a Claude agent running `/ultrareview` or the `code-review` skill against the working tree.
 
-Last reviewed: 2026-05-23 (ADR 0015 sixth audit landed: `BL-197`-`208`; next audit slot is ADR 0016).
+Last reviewed: 2026-05-23 (ADR 0016 `BL-133` skill execution isolation landed; next audit slot is ADR 0017).
 
 ## 0. Conventions this runbook respects
 
@@ -32,7 +32,7 @@ Open in order, top to bottom:
 
 ## 2. Phase A: audit
 
-The repo's audit cadence is in `docs/backlog.md`: ADR 0009 (first), ADR 0010 (second), ADR 0011 (third), ADR 0013 (fifth), ADR 0015 (sixth). A "fourth" audit pass was folded into the cross-repo review in ADR 0012 (run-provenance + provider-batch capabilities). ADR 0014 is the BL-180 capability ADR (durable Versioned + new Transactional Protocol). The next audit slot is ADR 0016.
+The repo's audit cadence is in `docs/backlog.md`: ADR 0009 (first), ADR 0010 (second), ADR 0011 (third), ADR 0013 (fifth), ADR 0015 (sixth). A "fourth" audit pass was folded into the cross-repo review in ADR 0012 (run-provenance + provider-batch capabilities). ADR 0014 is the BL-180 capability ADR (durable Versioned + new Transactional Protocol). ADR 0016 is the BL-133 capability ADR (skill execution isolation). The next audit slot is ADR 0017.
 
 ### 2.1 Plan the audit
 
