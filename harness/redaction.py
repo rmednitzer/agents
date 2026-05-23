@@ -60,11 +60,19 @@ class Redactor:
     dropped. ``value_patterns`` match value strings that are dropped
     regardless of their key. ``max_value_chars`` clamps any longer
     scalar string (defends log-flooding and trims embedded blobs).
+    ``max_depth`` (`BL-200`) caps the recursion into nested containers
+    so a cyclic or pathologically nested payload (e.g., a workload's
+    ``state_snapshot`` that carries a self-referential dict) cannot
+    crash the audit path with ``RecursionError``; an over-deep
+    container is replaced with the placeholder. Defaults match
+    typical event-payload depth (small, finite) and the
+    audit-path-must-not-crash stance of `BL-167`.
     """
 
     key_pattern: re.Pattern[str] = _DEFAULT_KEY_PATTERN
     value_patterns: tuple[re.Pattern[str], ...] = _DEFAULT_VALUE_PATTERNS
     max_value_chars: int = 4096
+    max_depth: int = 64
     placeholder: str = "[REDACTED]"
 
     def redact(self, event: HarnessEvent) -> HarnessEvent:
@@ -81,32 +89,39 @@ class Redactor:
         update: dict[str, Any] = {}
         for name in type(event).model_fields:
             value = getattr(event, name)
-            scrubbed = self._scrub(value)
+            scrubbed = self._scrub(value, depth=0)
             if scrubbed != value:
                 update[name] = scrubbed
         if not update:
             return event
         return event.model_copy(update=update)
 
-    def _scrub(self, value: Any) -> Any:
+    def _scrub(self, value: Any, *, depth: int) -> Any:
+        # Recursion cap (BL-200, audit path must not crash): an
+        # over-deep container is replaced with the placeholder. Cycles
+        # (a dict that holds a reference to itself) eventually exceed
+        # depth, so the cap also covers cycle detection without a
+        # separate visited set.
+        if depth > self.max_depth:
+            return self.placeholder
         if isinstance(value, dict):
-            return {k: self._scrub_member(k, v) for k, v in value.items()}
+            return {k: self._scrub_member(k, v, depth=depth + 1) for k, v in value.items()}
         if isinstance(value, list | tuple):
             # Rebuild as a plain list/tuple. A tuple subclass such as a
             # namedtuple has an arity-sensitive constructor, so
             # type(value)(<generator>) would raise; degrading to the
             # builtin is safe for a sink-bound sanitised copy.
-            items = [self._scrub(v) for v in value]
+            items = [self._scrub(v, depth=depth + 1) for v in value]
             return tuple(items) if isinstance(value, tuple) else items
         if isinstance(value, set | frozenset):
-            scrubbed = [self._scrub(v) for v in value]
+            scrubbed = [self._scrub(v, depth=depth + 1) for v in value]
             return frozenset(scrubbed) if isinstance(value, frozenset) else set(scrubbed)
         return self._scrub_scalar(value)
 
-    def _scrub_member(self, key: Any, value: Any) -> Any:
+    def _scrub_member(self, key: Any, value: Any, *, depth: int) -> Any:
         if isinstance(key, str) and self.key_pattern.search(key):
             return self.placeholder
-        return self._scrub(value)
+        return self._scrub(value, depth=depth)
 
     def _scrub_scalar(self, value: Any) -> Any:
         if not isinstance(value, str):

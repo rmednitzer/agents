@@ -69,7 +69,10 @@ class InMemoryStore:
         return self._namespace
 
     def _effective_ttl(self, ttl_seconds: float | None) -> float | None:
-        return ttl_seconds if ttl_seconds is not None else self._namespace.retention_seconds
+        # Delegate to Namespace.resolve_ttl (BL-197) so the finite /
+        # positive validation is applied once at the adapter boundary,
+        # not five times across the adapters.
+        return self._namespace.resolve_ttl(ttl_seconds)
 
     def _live_value(self, key: str, now: float) -> bytes | None:
         """Return the value if present and unexpired, dropping it if expired.

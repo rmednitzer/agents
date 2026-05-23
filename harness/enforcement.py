@@ -160,6 +160,19 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         GovernanceViolation: A hard governance predicate failed.
         ValueError: A resume state has unresolved pending approvals.
     """
+    # Resume validation runs FIRST (BL-203, BL-167 class extension):
+    # an unresolved approval is a caller-shape error that does not
+    # depend on the contract / sink / trace_id, so raising it AFTER
+    # emitting ``ContractStarted`` produced an orphan event in every
+    # downstream sink with no matching terminal event and no
+    # RunRecord (the run-provenance gate). Moving the check above
+    # the first emit guarantees that any run that emits
+    # ``ContractStarted`` also emits a terminal event.
+    if resume is not None:
+        _unresolved = [ai for ai in resume.pending_approvals if ai.decision == "pending"]
+        if _unresolved:
+            raise ValueError(f"Cannot resume: {len(_unresolved)} approvals still pending")
+
     active_sink: EventSink = sink if sink is not None else NullSink()
 
     if skill_contracts:
@@ -264,11 +277,6 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
             )
         )
         return outcome
-
-    if resume is not None:
-        unresolved = [ai for ai in resume.pending_approvals if ai.decision == "pending"]
-        if unresolved:
-            raise ValueError(f"Cannot resume: {len(unresolved)} approvals still pending")
 
     # 1. Preconditions
     for pred_pre in contract.preconditions:

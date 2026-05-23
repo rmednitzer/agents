@@ -243,6 +243,30 @@ class BudgetTracker:
         elapsed = (datetime.now(UTC) - self._started_at).total_seconds()
         self._check("wall_clock", elapsed, self._budget.max_wall_clock_seconds)
 
+    def emit_wall_clock_exceeded(self, elapsed: float) -> None:
+        """Emit a `BudgetExceededEvent` for the wall_clock kind (`BL-202`).
+
+        Used by the runtime's end-to-end-deadline fallback path: when
+        the outer loop or the watchdog raises `BudgetExceeded` at the
+        exact boundary instant where the tracker's strict `>` check
+        does not trip, the bare raise was unpaired in the EventSink
+        stream (BL-167 + BL-189 class extension: audit-vs-raise
+        parity). This method emits the event so every wall-clock
+        terminal raise has a matching event in the audit stream.
+        """
+        limit = self._budget.max_wall_clock_seconds
+        if limit is None or not self._base:
+            return
+        self._sink.emit(
+            BudgetExceededEvent(
+                timestamp=datetime.now(UTC),
+                budget_kind="wall_clock",
+                limit=float(limit),
+                consumed=elapsed,
+                **self._base,
+            )
+        )
+
     def remaining(self, kind: BudgetKind) -> float:
         """Return remaining budget for the given kind.
 

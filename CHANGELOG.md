@@ -3,6 +3,108 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Sixth code audit (ADR 0015, BL-197-BL-208, 2026-05-23)
+
+Twelve additive findings spread across `memory/`, `harness/`,
+`skills/`, and `evaluation/`. Each is a class extension of a prior
+audit fix (BL-159 / BL-167 / BL-178 / BL-189 / BL-191 / BL-193 /
+BL-195) or a novel diagnostic-gap finding. Default behaviour is
+unchanged for every valid input; the strict narrowings reject
+inputs that previously silently mis-behaved.
+
+### Added
+
+- `Namespace.resolve_ttl(ttl_seconds)` (`BL-197`): one method, one
+  validation (finite + positive) for both the namespace default and
+  per-call TTL. Each adapter's `_ttl` / `_effective_ttl` now delegates
+  here; the five-way duplication identified as M5 in the audit triage
+  is closed.
+- `BudgetTracker.emit_wall_clock_exceeded(elapsed)` (`BL-202`): the
+  runtime's boundary-fallback path emits a `BudgetExceededEvent`
+  before the bare raise so every wall-clock terminal raise pairs
+  with the audit stream.
+- `Redactor.max_depth: int = 64` field (`BL-200`): recursion cap on
+  the audit-redaction walker so a cyclic or pathologically deep
+  payload cannot crash the audit path.
+- `SkillRegistry.routable()` (`BL-208`): filters out
+  `lane == "routing"` meta-skills; every dispatcher that iterates
+  the registry now uses it.
+- `TTLSweeper.failures_total` / `last_error` (`BL-199`): operator-
+  visible counters for the sweeper's failure resilience.
+- ADR 0015 (`docs/adr/0015-sixth-code-audit.md`): the sixth-audit
+  cross-cutting decisions.
+- New regression test suites: `tests/memory/test_bl197_bl198_bl199_audit6.py`,
+  `tests/harness/test_bl200_bl201_bl202_bl203_audit6.py`,
+  `tests/skills/test_bl204_bl205_bl207_bl208_audit6.py`,
+  `tests/evaluation/test_bl206_audit6.py` (45 new tests total).
+
+### Fixed
+
+- `Namespace` rejects non-finite `retention_seconds` (NaN / +inf)
+  and (via `resolve_ttl`) non-finite per-call `ttl_seconds`
+  (`BL-197`, Copilot BL-195 follow-up).
+- `RedisStore.mset` short-circuits on an empty batch
+  (`BL-198`, BL-178 class extension; parity with
+  `RedisStore.mdelete` and `SQLiteStore.mset`).
+- `TTLSweeper._run` catches transient `sweep_expired` exceptions
+  instead of letting them silently kill the loop (`BL-199`,
+  BL-189 class extension).
+- `Redactor._scrub` enforces a depth cap so a cyclic or
+  pathologically deep payload returns the placeholder instead of
+  crashing the emit chain (`BL-200`, audit-path-must-not-crash
+  invariant extended).
+- `harness.openai_api._decode_lines` yields a placeholder dict for a
+  malformed JSONL row (non-dict or undecodable) so iteration
+  continues to completion (`BL-201`, BL-189 class extension).
+- The runtime emits `BudgetExceededEvent` on the wall-clock
+  boundary-fallback path before the bare raise, so every terminal
+  raise has a matching audit event (`BL-202`, BL-189 / BL-167
+  class extension).
+- `run_under_contract` validates the resume state's pending
+  approvals BEFORE emitting `ContractStarted`, so an unresolved
+  resume cannot leave an orphan event in the audit stream
+  (`BL-203`, BL-167 class extension).
+- `parse_skill_md` translates PyYAML's `RecursionError` into the
+  documented `SkillManifestError` (`BL-204`, BL-173 / BL-191 class
+  extension on the manifest-parse leg).
+- `MultiDispatcher.__init__` rejects NaN / inf / negative weights
+  at the API boundary (`BL-205`, BL-159 NaN-clamp class
+  extension).
+- `evaluate_trajectory` runs the input-payload validation outside
+  the contract try/except, so a fixture error raises as a
+  fixture-layer `ValidationError` instead of being mislabelled
+  ``output_invalid`` (`BL-206`).
+- `InstrumentedDispatcher.dispatch` uses `try/finally` so a
+  failing inner dispatch still records stats and emits
+  `DispatchObserved` (`BL-207`, BL-189 / BL-167 class extension).
+- `KeywordDispatcher` / `EmbeddingDispatcher` / `LLMDispatcher`
+  exclude routing-lane meta-skills from their candidate pool, so
+  the `dispatcher-skill` (and any operator-installed routing
+  meta-skill) cannot be returned as a task recommendation
+  (`BL-208`).
+
+### Changed
+
+- Each memory adapter's `_ttl` / `_effective_ttl` helper is now a
+  thin delegate to `Namespace.resolve_ttl`. Same call sites; the
+  validation now happens at the namespace boundary instead of
+  passing through to `expires_at = NaN`.
+- `Namespace.retention_seconds` docstring now documents the
+  finite-positive contract; the regenerated
+  `docs/schema/workload-manifest.json` reflects the new wording.
+- `wrap_encrypted` is unchanged; the `BL-196` opt-in multi-key
+  fallback is unaffected by this wave.
+
+### Documentation
+
+- ADR 0015 added; `docs/adr/README.md` index extended.
+- `STATUS.md` phase tracking row added; `Last reviewed` date
+  bumped to 2026-05-23.
+- `docs/backlog.md`: new section "Sixth code audit (ADR 0015,
+  2026-05-23)" with `BL-197`-`BL-208`.
+- `docs/runbook.md`: `Last reviewed` date updated to reflect the
+  ADR 0015 audit pass.
+
 ## [Unreleased] BL-196: opt-in multi-key legacy fallback on EncryptedStore (2026-05-23)
 
 Runbook 7.4 candidate 4 (the EncryptedStore legacy migration class).

@@ -174,17 +174,36 @@ def _decode_lines(payload: Any) -> Iterator[dict[str, Any]]:
     """Yield parsed JSON objects from a JSONL file payload.
 
     The SDK's ``files.content`` returns a binary-response wrapper; read
-    its text (``.text``, else ``.read()``). Blank lines are skipped;
-    each non-blank line must be a JSON object.
+    its text (``.text``, else ``.read()``). Blank lines are skipped.
+
+    A malformed line (JSON-undecodable or JSON-valid but not an object,
+    e.g., a bare ``null`` / number / array / string) is yielded as a
+    placeholder dict carrying the raw text for diagnostics, so the
+    consumer's existing errored-row branch surfaces the malformed line
+    rather than crashing the iteration (`BL-201`, BL-189 class
+    extension). The placeholder has no ``custom_id`` / ``response`` /
+    ``error`` keys, so the consumer's ``line.get(...)`` calls return
+    their defaults and the row lands in the errored branch with a
+    diagnostic ``http_None`` plus the raw text under the placeholder
+    keys (consumer-visible if it inspects them).
     """
     text = getattr(payload, "text", None)
     if text is None:
         raw = payload.read()
         text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
-    for line in text.splitlines():
-        line = line.strip()
-        if line:
-            yield json.loads(line)
+    for line_text in text.splitlines():
+        line_text = line_text.strip()
+        if not line_text:
+            continue
+        try:
+            obj = json.loads(line_text)
+        except json.JSONDecodeError:
+            yield {"_malformed": True, "_raw": line_text[:120]}
+            continue
+        if isinstance(obj, dict):
+            yield obj
+        else:
+            yield {"_malformed": True, "_raw": str(obj)[:120]}
 
 
 class OpenAIBatchProcessor:

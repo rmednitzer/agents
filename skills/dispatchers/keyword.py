@@ -44,7 +44,10 @@ class KeywordDispatcher:
         query_tokens = set(_TOKEN_PATTERN.findall(query_lower))
 
         scored: list[tuple[float, Skill, str]] = []
-        for skill in self._registry.all():
+        # routable() excludes routing-lane meta-skills (BL-208), so the
+        # ``dispatcher-skill`` (and any operator-installed routing
+        # meta-skill) is not returned as a task recommendation.
+        for skill in self._registry.routable():
             score = 0.0
             hit_triggers: list[str] = []
             for trigger in skill.triggers:

@@ -161,11 +161,18 @@ async def evaluate_trajectory[InputT: BaseModel, OutputT: BaseModel](
     results: list[TrajectoryResult] = []
     for case in cases:
         actual: TrajectoryOutcome = "completed"
+        # Input validation runs OUTSIDE the contract try/except (`BL-206`):
+        # a malformed `input_payload` is a test-fixture error, not a
+        # contract output failure; mapping `ValidationError` to
+        # ``output_invalid`` inside the same try labelled fixture errors
+        # as contract regressions and would silently green-light a case
+        # that never reached the contract.
+        validated_input = input_model.model_validate(case.input_payload)
         try:
             outcome = await run_under_contract(
                 runtime=runtime,
                 contract=contract,
-                input=input_model.model_validate(case.input_payload),
+                input=validated_input,
                 output_model=output_model,
             )
             # run_under_contract returns a ResumableState (no exception)

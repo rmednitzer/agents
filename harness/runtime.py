@@ -555,7 +555,15 @@ class PydanticAIRuntime:
                 if remaining <= 0:
                     assert budget is not None
                     budget.check_wall_clock()
-                    raise BudgetExceeded("wall_clock", wall_limit, time.monotonic() - run_started)
+                    # Boundary fallback (BL-202, BL-189 / BL-167 audit
+                    # parity): at the exact instant where the tracker's
+                    # strict `>` does not trip but the runtime decides
+                    # to terminate, emit the event manually so the
+                    # bare raise still pairs with a BudgetExceededEvent
+                    # in the audit stream.
+                    elapsed = time.monotonic() - run_started
+                    budget.emit_wall_clock_exceeded(elapsed)
+                    raise BudgetExceeded("wall_clock", wall_limit, elapsed)
             else:
                 remaining = None
             agent = self._build_agent(
@@ -672,6 +680,11 @@ class PydanticAIRuntime:
             assert budget is not None
             elapsed = time.monotonic() - start
             budget.check_wall_clock()
+            # Boundary fallback (BL-202): the wait_for timer can fire
+            # when the tracker's datetime accounting has not yet
+            # ticked past the cap. Emit so the bare raise still pairs
+            # with the audit stream (BL-189 / BL-167 class).
+            budget.emit_wall_clock_exceeded(elapsed)
             raise BudgetExceeded("wall_clock", cap if cap is not None else limit, elapsed) from None
 
     def _resumable(self, state: _GuardState, prompt: str) -> ResumableState:

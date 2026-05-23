@@ -199,7 +199,7 @@
       "type": "string"
     },
     "Namespace": {
-      "description": "A memory namespace.\n\nAttributes:\n    name: Namespace identifier. Validated against\n        NAMESPACE_NAME_PATTERN at construction.\n    workload: Name of the workload that owns this namespace. Used\n        for event correlation and audit; not enforced at the store\n        level (the store is already namespace-bound).\n    retention_seconds: Default TTL applied to writes that do not\n        specify an explicit ttl_seconds. None means writes persist\n        until deleted.",
+      "description": "A memory namespace.\n\nAttributes:\n    name: Namespace identifier. Validated against\n        NAMESPACE_NAME_PATTERN at construction.\n    workload: Name of the workload that owns this namespace. Used\n        for event correlation and audit; not enforced at the store\n        level (the store is already namespace-bound).\n    retention_seconds: Default TTL applied to writes that do not\n        specify an explicit ttl_seconds. None means writes persist\n        until deleted. Must be a finite positive float when set\n        (`BL-197`): NaN / +inf are rejected at the construction\n        boundary so an anomalous TTL cannot silently propagate to\n        ``expires_at = now + NaN/inf`` and disable expiration via\n        the BL-195 helpers (which preserved the prior bug-for-bug\n        non-finite-is-live semantics; this validator is the longer-\n        term fix the Copilot review on PR #51 suggested).",
       "properties": {
         "name": {
           "title": "Name",

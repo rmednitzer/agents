@@ -84,7 +84,8 @@ class DynamoDBStore:
         return f"{self._pfx}{key}"
 
     def _ttl(self, ttl_seconds: float | None) -> float | None:
-        return ttl_seconds if ttl_seconds is not None else self._namespace.retention_seconds
+        # Delegate to Namespace.resolve_ttl (BL-197).
+        return self._namespace.resolve_ttl(ttl_seconds)
 
     def _live_item(self, key: str) -> Any:
         resp = self._db.get_item(

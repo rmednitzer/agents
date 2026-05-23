@@ -71,7 +71,8 @@ class S3Store:
         return f"{self._prefix}{key}"
 
     def _ttl(self, ttl_seconds: float | None) -> float | None:
-        return ttl_seconds if ttl_seconds is not None else self._namespace.retention_seconds
+        # Delegate to Namespace.resolve_ttl (BL-197).
+        return self._namespace.resolve_ttl(ttl_seconds)
 
     def _get_live(self, key: str) -> bytes | None:
         """Return value if present and unexpired; delete it if expired.
