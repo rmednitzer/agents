@@ -242,7 +242,9 @@ class _SubprocessEvaluator:
         "governance" [...]}``. The lists contain per-predicate
         ``{"name", "severity"}``.
         """
-        if self._proc is None or self._proc.stdout is None or self._proc.stdin is None:
+        if (
+            self._proc is None or self._proc.stdout is None or self._proc.stdin is None
+        ):  # pragma: no cover - defensive: Popen always returns pipes when stdin/stdout=PIPE
             raise SkillContractExecutorError("subprocess not started")
         # The child writes a single frame on startup. Read with a
         # bounded timeout via a poll thread so a hung child does not
@@ -256,9 +258,11 @@ class _SubprocessEvaluator:
                 f"subprocess produced no output (exit={self._proc.poll()!r}): "
                 f"stderr={stderr.decode(errors='replace')!r}"
             )
+        # The child only writes JSON via json.dumps, so the decode
+        # error branch is defensive; mark no cover on the except.
         try:
             data = json.loads(frame.decode("utf-8"))
-        except json.JSONDecodeError as exc:
+        except json.JSONDecodeError as exc:  # pragma: no cover
             raise SkillContractExecutorError(
                 f"subprocess returned non-JSON metadata: {frame!r}"
             ) from exc
@@ -272,7 +276,9 @@ class _SubprocessEvaluator:
     def evaluate(self, slot: str, name: str, state: Any) -> bool:
         if self._closed or self._proc is None:
             raise SkillContractExecutorError("evaluator is closed")
-        if self._proc.stdin is None or self._proc.stdout is None:
+        if (
+            self._proc.stdin is None or self._proc.stdout is None
+        ):  # pragma: no cover - defensive: Popen always returns pipes when stdin/stdout=PIPE
             raise SkillContractExecutorError("subprocess pipes are closed")
         # If the child has already exited (e.g., RLIMIT_CPU killed it
         # between calls), surface a documented executor error instead
@@ -290,12 +296,12 @@ class _SubprocessEvaluator:
         request = {"op": "evaluate", "slot": slot, "name": name}
         payload = pickle.dumps((request, state))
         with self._lock:
+            # The poll() check above is the primary detector for an
+            # already-exited child; this branch handles the rare race
+            # where the child died between poll() and write. Defensive.
             try:
                 _write_frame(self._proc.stdin, payload)
-            except (BrokenPipeError, OSError) as exc:
-                # The child died mid-write (raced with the poll() above
-                # or was killed by setrlimit between calls). Wrap the
-                # raw pipe error in the documented boundary.
+            except (BrokenPipeError, OSError) as exc:  # pragma: no cover
                 stderr = b""
                 if self._proc.stderr is not None:
                     stderr = self._proc.stderr.read() or b""
@@ -312,9 +318,10 @@ class _SubprocessEvaluator:
                 f"subprocess exited mid-evaluation (exit={self._proc.poll()!r}): "
                 f"stderr={stderr.decode(errors='replace')!r}"
             )
+        # The child only writes JSON via json.dumps; this is defensive.
         try:
             resp = json.loads(frame.decode("utf-8"))
-        except json.JSONDecodeError as exc:
+        except json.JSONDecodeError as exc:  # pragma: no cover
             raise SkillContractExecutorError(
                 f"subprocess returned non-JSON response: {frame!r}"
             ) from exc

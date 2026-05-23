@@ -134,6 +134,15 @@ sys.exit(1)
 """
 
 
+_HANGS_ON_IMPORT = """\
+# Blocks forever during import. The subprocess executor's
+# `timeout_seconds` cap on `load_metadata` kills the child and raises.
+import time
+while True:
+    time.sleep(60)
+"""
+
+
 _RAISING_PREDICATE_CONTRACT = """\
 from pydantic import BaseModel
 from harness.contract import Contract, Severity, predicate
@@ -413,6 +422,65 @@ def test_subprocess_lifecycle_closes_child_on_gc(tmp_path: Path) -> None:
             break
         _time.sleep(0.05)
     assert proc.poll() is not None, "subprocess did not exit after Contract GC"
+
+
+def test_subprocess_predicate_after_child_killed_surfaces_error(tmp_path: Path) -> None:
+    """If the subprocess is killed between predicate calls (e.g.,
+    rlimit kicked in asynchronously), the next predicate call surfaces
+    `SkillContractExecutorError` via the new `poll()` check rather
+    than leaking BrokenPipeError."""
+    skill_dir = _write_skill_bundle(tmp_path, "sub-proc-killed", contract_py=_SIMPLE_CONTRACT)
+    executor = SubprocessSkillContractExecutor(timeout_seconds=10.0)
+    skill = discover_skill(skill_dir, executor=executor)
+    contract = skill.contract()
+    assert contract is not None
+    proxy = contract.preconditions[0]
+    evaluator = proxy._evaluator
+    proc = evaluator._proc
+    assert proc is not None
+    # First call succeeds normally.
+    assert proxy(_IpcState(n=1)) is True
+    # Kill the subprocess externally; the next predicate call should
+    # see a non-None poll() and raise the documented boundary error.
+    proc.kill()
+    proc.wait(timeout=2.0)
+    with pytest.raises(SkillContractExecutorError, match="already exited"):
+        proxy(_IpcState(n=1))
+
+
+def test_subprocess_load_timeout_surfaces_executor_error(tmp_path: Path) -> None:
+    """A contract.py that hangs during import hits the
+    `timeout_seconds` cap on `load_metadata`; the parent kills the
+    child and raises `SkillContractExecutorError`."""
+    skill_dir = _write_skill_bundle(tmp_path, "sub-proc-hang", contract_py=_HANGS_ON_IMPORT)
+    executor = SubprocessSkillContractExecutor(timeout_seconds=0.5)
+    skill = discover_skill(skill_dir, executor=executor)
+    with pytest.raises(SkillContractExecutorError, match="timed out"):
+        skill.contract()
+
+
+def test_subprocess_explicit_close_is_idempotent(tmp_path: Path) -> None:
+    """Calling `close()` directly on the evaluator works and is safe
+    to repeat. Exercises the explicit-teardown path the lifecycle
+    finalize hook also uses."""
+    skill_dir = _write_skill_bundle(tmp_path, "sub-proc-close", contract_py=_SIMPLE_CONTRACT)
+    executor = SubprocessSkillContractExecutor(timeout_seconds=10.0)
+    skill = discover_skill(skill_dir, executor=executor)
+    contract = skill.contract()
+    assert contract is not None
+    proxy = contract.preconditions[0]
+    evaluator = proxy._evaluator
+    proc = evaluator._proc
+    assert proc is not None
+    assert proc.poll() is None
+    # First close shuts it down.
+    evaluator.close()
+    assert evaluator._closed is True
+    # Repeat is a no-op (no raise).
+    evaluator.close()
+    # Calling a predicate after close raises the documented boundary.
+    with pytest.raises(SkillContractExecutorError, match="closed"):
+        proxy(_IpcState(n=1))
 
 
 # Quiet ruff F401.
