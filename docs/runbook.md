@@ -44,12 +44,14 @@ The repo's audit cadence is in `docs/backlog.md`: ADR 0009 (first), ADR 0010 (se
 ### 2.2 Run the static surface
 
 ```bash
-make check                        # ruff (E,W,F,I,B,C4,UP,RUF,SIM,PT) + mypy strict + pytest at 94%
-make schema                       # regenerate JSON Schema, then diff against committed
+make check                        # ruff check (E,W,F,I,B,C4,UP,RUF,SIM,PT) + mypy strict + pytest
+uv run ruff format --check .      # CI runs this inside the lint job; make check does not
+uvx reuse lint                    # REUSE 3.x compliance (BL-152); CI runs this inside the lint job
+make schema                       # regenerate JSON Schema, then diff against committed (the test suite also gates this via tests/workloads/test_schema.py)
 uv run python scripts/eval.py     # the BL-130 evaluation gate (P@1 / MRR == 1.0)
-uvx reuse lint                    # REUSE 3.x compliance (BL-152)
 uv export --frozen --all-extras --no-emit-project --format requirements-txt -o /tmp/audit.txt
 uvx --python 3.12 pip-audit --strict --progress-spinner=off --ignore-vuln PYSEC-2025-183 -r /tmp/audit.txt
+uv run pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov=evaluation --cov-fail-under=94   # CI's test job enforces 94%; make check does not
 ```
 
 A green local run is the precondition. Anything that does not pass locally cannot be an audit finding (it is a CI bug; file before the audit).
@@ -146,9 +148,9 @@ For an item with no upstream dependency (the "ready" set today: `BL-120`, `BL-11
 2. Design the surface. Write the new Protocol or the new optional keyword before any implementation. Surface it in the module docstring; an L3 keyword is read once, supported forever.
 3. Build behind a flag. The default reproduces prior control flow and exceptions byte-for-byte. Run the existing suite green before adding the new tests.
 4. Add tests in the order: unit (`tests/<area>/`), integration (`tests/<area>/test_*_integration.py` if present), then a regression test for the boundary.
-5. Update the green gate: extend `mypy` / `pytest` paths if the module is new (`make type-check` covers `agents harness memory workloads skills evaluation`; a new top-level component is added here).
+5. Update the green gate when adding a new top-level component: the mypy package list in `Makefile` `type-check` (today `agents harness memory workloads skills evaluation`) and the `--cov=...` list in `.github/workflows/ci.yml`'s `test` job. Pytest discovery is already set via `testpaths = ["tests"]` in `pyproject.toml` and does not need a path edit.
 6. Update the docs in the same PR: the area `README.md`, the ADR (if cross-cutting), the `[Unreleased]` CHANGELOG, the backlog `[resolved]` line.
-7. Open the PR. CI runs the eight gates; `ci-success` is the one required context.
+7. Open the PR. CI runs the six jobs (`lint`, `type-check`, `test`, `dependency-audit`, `evaluation`, `ci-success`); `ci-success` is the one required context.
 
 ### 4.3 Item-level workflow with an upstream dependency
 
@@ -173,24 +175,29 @@ This work unblocks the credentialed half of `LIMITATIONS.md` L6 (the eval-gate-v
 
 ### 5.1 The green-gate set
 
-The eight CI jobs (the local equivalents are after the colon):
+The CI jobs in `.github/workflows/ci.yml` and what each one runs:
 
-1. `lint` (`uv run ruff check . && uv run ruff format --check .`).
-2. `lint`'s REUSE step (`uvx reuse lint`).
-3. `type-check` (`uv run mypy agents harness memory workloads skills evaluation`).
-4. `test (3.12)` / `test (3.13)` (`uv run pytest --cov ... --cov-fail-under=94`).
-5. `dependency-audit` (`uvx --python 3.12 pip-audit --strict ... -r audit-requirements.txt`).
-6. `evaluation` (`uv run python scripts/eval.py --min-p-at-1 1.0 --min-mrr 1.0`).
-7. `gen_schema.py --check` (run inside the test suite).
-8. `ci-success`, the aggregate; the only required context on `main`.
+1. `lint`: `uv run ruff check .`, `uv run ruff format --check .`, and `uvx reuse lint` (REUSE 3.x compliance, `BL-152`). One job, three checks.
+2. `type-check`: `uv run mypy agents harness memory workloads skills evaluation`.
+3. `test` (matrix `python: ["3.12", "3.13"]`): `uv run pytest --cov ... --cov-fail-under=94`. The suite includes `tests/workloads/test_schema.py::test_gen_schema_check_passes` which gates `scripts/gen_schema.py --check` (so a stale `docs/schema/*.json` fails the test job, not a separate CI job).
+4. `dependency-audit`: `uvx --python 3.12 pip-audit --strict ... -r audit-requirements.txt` over the exported lockfile (`BL-150`, `BL-194`).
+5. `evaluation`: `uv run python scripts/eval.py --min-p-at-1 1.0 --min-mrr 1.0` (`BL-130`).
+6. `ci-success`: the aggregate that requires jobs 1-5 to have succeeded. Branch protection's required context on `main`.
 
-Local one-liner that covers the first three plus the eval gate:
+A separate `analyze (python)` job from `.github/workflows/codeql.yml` runs CodeQL on push, pull request, and weekly; it is not part of `ci-success`.
+
+What each job depends on locally:
 
 ```bash
-make check && uv run python scripts/eval.py
+make check                                                                  # covers ruff check + type-check + the pytest leg (no coverage threshold, no ruff format --check, no reuse lint)
+uv run ruff format --check . && uvx reuse lint                              # the rest of the lint job
+uv run pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov=evaluation --cov-fail-under=94  # the test job's coverage leg
+uv run python scripts/eval.py --min-p-at-1 1.0 --min-mrr 1.0                # the evaluation job
+uv export --frozen --all-extras --no-emit-project --format requirements-txt -o /tmp/audit.txt && \
+  uvx --python 3.12 pip-audit --strict --progress-spinner=off --ignore-vuln PYSEC-2025-183 -r /tmp/audit.txt   # the dependency-audit job
 ```
 
-For the schema:
+For the schema, regenerate and confirm no drift:
 
 ```bash
 make schema && git diff --exit-code docs/schema/
