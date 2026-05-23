@@ -3,6 +3,55 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] BL-195: consolidate the expiry-boundary predicate across adapters (2026-05-23)
+
+Runbook 7.4 candidate 1 (the expiry-boundary class). Five pointwise
+fixes (`BL-157` / `BL-168` / `BL-177` / `BL-188` / the BL-180
+DynamoDB conditions) were the same invariant in different encodings;
+they now share one helper. Additive; observable behaviour is
+unchanged for every input.
+
+### Added
+
+- `memory/_expiry.py` with `is_live(now, expires_at) -> bool` and
+  `is_expired(now, expires_at) -> bool` (`BL-195`). The module
+  docstring binds the Python predicate to its SQL counterpart
+  (`expires_at < :now` for the expired half) and DynamoDB DSL
+  counterpart (`attribute_not_exists(exp) OR exp >= :now` for the
+  live half) as documented equivalents, so the SQL / DSL forms stay
+  literal where they execute server-side but the invariant has one
+  source. Boundary is inclusive at the instant `now == expires_at`.
+- `tests/memory/test_bl195_expiry_predicate.py` pins the boundary
+  table, asserts `is_live` / `is_expired` are total negations on
+  every (now, expires_at) pair, and adds an end-to-end regression on
+  `InMemoryStore` that exercises the inclusive boundary instant
+  (the BL-188 prior-fix shape, hardened against a future drift back
+  to a strict `>`).
+
+### Changed
+
+- `memory.InMemoryStore`, `memory.SQLiteStore`, `memory.S3Store`,
+  `memory.DynamoDBStore`: every Python-side liveness check
+  (`_live_value` / `_live_item` / `_get_live`, `list_keys`, `scan`,
+  `sweep_expired`) now routes through `memory._expiry`. The
+  `SQLiteStore.sweep_expired` SQL form keeps its literal
+  `expires_at IS NOT NULL AND expires_at < ?` (server-side
+  predicate); the docstring is updated to name the helper as the
+  binding equivalent. The DynamoDB `_scan_sync` filter is restructured
+  from an inline-negated generator into an explicit `is_live` check
+  for readability. No observable behaviour change for any input;
+  every existing test passes unchanged.
+
+### Documentation
+
+- `memory/README.md`: new bullet under "Documented deviations and
+  decorator scope" naming the helper and the inclusive-at-instant
+  boundary.
+- `docs/runbook.md` 7.4 candidate 1: marked resolved (referenced
+  `BL-195`).
+- `docs/backlog.md`: new section "Expiry-boundary consolidation
+  (2026-05-23)" with the `BL-195` line.
+
 ## [Unreleased] BL-180: VersionedMemoryStore on durable adapters + TransactionalMemoryStore (2026-05-23)
 
 See [ADR 0014](./docs/adr/0014-versioned-and-transactional-on-durable-adapters.md).

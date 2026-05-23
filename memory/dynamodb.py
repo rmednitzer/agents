@@ -33,6 +33,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from memory._audit import MemoryAudit
+from memory._expiry import is_expired, is_live
 from memory.errors import MemoryError as _MemoryError
 from memory.store import TxnDelete, TxnWrite
 from memory.types import Namespace
@@ -95,7 +96,7 @@ class DynamoDBStore:
         if item is None:
             return None
         exp = item.get("exp", {}).get("N")
-        if exp is not None and time.time() > float(exp):
+        if is_expired(time.time(), float(exp) if exp is not None else None):
             self._db.delete_item(TableName=self._table, Key={"pk": {"S": self._pk(key)}})
             return None
         return item
@@ -174,7 +175,7 @@ class DynamoDBStore:
             resp = self._scan_page(start, None)
             for item in resp.get("Items", []):
                 exp = item.get("exp", {}).get("N")
-                if exp is not None and now > float(exp):
+                if is_expired(now, float(exp) if exp is not None else None):
                     continue
                 short = item["pk"]["S"][len(self._pfx) :]
                 if short.startswith(prefix):
@@ -258,12 +259,13 @@ class DynamoDBStore:
         while True:
             resp = self._scan_page(start, count)
             now = time.time()
-            keys.extend(
-                item["pk"]["S"][len(self._pfx) :]
-                for item in resp.get("Items", [])
-                if item["pk"]["S"][len(self._pfx) :].startswith(prefix)
-                and not (item.get("exp", {}).get("N") is not None and now > float(item["exp"]["N"]))
-            )
+            for item in resp.get("Items", []):
+                short = item["pk"]["S"][len(self._pfx) :]
+                if not short.startswith(prefix):
+                    continue
+                exp = item.get("exp", {}).get("N")
+                if is_live(now, float(exp) if exp is not None else None):
+                    keys.append(short)
             lek = resp.get("LastEvaluatedKey")
             next_cursor = base64.b64encode(json.dumps(lek).encode()).decode() if lek else ""
             # DynamoDB Scan with a FilterExpression returns non-terminal
@@ -564,7 +566,7 @@ class DynamoDBStore:
             resp = self._scan_page(start, None)
             for item in resp.get("Items", []):
                 exp = item.get("exp", {}).get("N")
-                if exp is not None and now > float(exp):
+                if is_expired(now, float(exp) if exp is not None else None):
                     self._db.delete_item(TableName=self._table, Key={"pk": item["pk"]})
                     removed += 1
             start = resp.get("LastEvaluatedKey")
