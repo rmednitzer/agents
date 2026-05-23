@@ -12,26 +12,42 @@ column, so the adapter ships as an opt-in subclass that maintains a
 per-namespace insertion-order sorted-set index alongside the data
 writes. The bare `RedisStore` is unchanged for every existing caller.
 
+PR #60 review: the score source changed from client-side
+``time.time()`` to a per-namespace server-side INCR counter before
+merge (Copilot + Codex P1/P2 on clock skew + sub-microsecond
+tie-breaks). The change closes three review findings in one design
+swap: multi-writer deployments stay correct under clock skew, a
+tight write loop on a single writer gets unique monotonic scores,
+and a batched ``mset`` / ``transact`` no longer collapses every
+member onto a shared score that Redis tie-breaks lexicographically.
+The cost is one extra Redis round trip per write or per batch (the
+INCR / INCRBY). The auxiliary counter key is
+``__evict_counter::<namespace>``, placed under the same outside-the-
+namespace-prefix isolation convention as the index key.
+
 ### Added
 
 - `memory.BoundedRedisStore`: opt-in subclass of `RedisStore` that
   maintains a single per-namespace sorted-set index at
-  `"__evict_index::<namespace>"` (placed outside the
-  `<namespace>::*` keyspace prefix, so it cannot collide with a
-  user-written key named `__evict_index` and does not appear in
-  `list_keys` / `scan` results: the namespace-name validator's
-  `^[a-z0-9]` rule makes a colliding namespace structurally
-  impossible) and implements `SweepableStore` plus
-  `BoundedSweepableStore`. Eviction order is ZRANGE ascending by
-  score (insertion timestamp); a re-write of an existing key
-  updates its index score so a rewritten key orders as *newest* by
-  index, matching the BL-213 SQLite overwrite-shifts-to-newest
-  semantic and diverging from the BL-212 InMemoryStore first-write
-  FIFO. Every keyspace-mutating method on the parent (`write`,
-  `mset`, `delete`, `mdelete`, `compare_and_set`,
-  `compare_and_delete`, `write_versioned`, `delete_versioned`,
-  `transact`) is overridden to call `super()` then update the index
-  via ZADD / ZREM, so the index stays consistent across every
+  `"__evict_index::<namespace>"` and a server-side INCR counter at
+  `"__evict_counter::<namespace>"` (both placed outside the
+  `<namespace>::*` keyspace prefix, so neither can collide with a
+  user-written key and neither appears in `list_keys` / `scan`
+  results: the namespace-name validator's `^[a-z0-9]` rule makes a
+  colliding namespace structurally impossible) and implements
+  `SweepableStore` plus `BoundedSweepableStore`. Index scores come
+  from the server-side counter (INCR for a single write, INCRBY for
+  a batch), so ordering is strict insertion-order FIFO even across
+  clock skew, sub-microsecond ties, or batched writes; eviction is
+  ZRANGE ascending by score. A re-write of an existing key allocates
+  a new score so a rewritten key orders as *newest* by index,
+  matching the BL-213 SQLite overwrite-shifts-to-newest semantic and
+  diverging from the BL-212 InMemoryStore first-write FIFO. Every
+  keyspace-mutating method on the parent (`write`, `mset`, `delete`,
+  `mdelete`, `compare_and_set`, `compare_and_delete`,
+  `write_versioned`, `delete_versioned`, `transact`) is overridden
+  to call `super()` then update the index via INCR / INCRBY + ZADD
+  (or ZREM for deletes), so the index stays consistent across every
   mutation path.
 - `BoundedRedisStore.sweep_expired`: cleans stale index members
   whose underlying Redis data keys have already been auto-evicted

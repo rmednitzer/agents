@@ -28,7 +28,6 @@ Design:
 from __future__ import annotations
 
 import hashlib
-import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -379,52 +378,75 @@ class BoundedRedisStore(RedisStore):
 
     The Redis counterpart to `BL-213`'s SQLite reference, parallel to
     how `BL-180` extended `BL-124` to the network-durable adapters.
-    Maintains a single auxiliary sorted set
-    ``"<namespace>::__evict_index"`` whose members are user keys and
-    whose scores are the write timestamps; every keyspace-mutating
-    method also updates the index, so `evict_to_capacity` can walk
-    oldest-first by index score without scanning the keyspace.
+    Maintains two auxiliary keys per namespace, both placed OUTSIDE
+    the namespace prefix so they cannot collide with a user key and
+    do not appear in ``list_keys`` / ``scan`` results:
 
-    Cost model: every write costs one extra Redis round trip (the
-    ZADD after the SET). For high-throughput workloads, prefer
-    ``mset`` / ``transact``, which pay one extra round trip per
-    batch, not per item. Use ``RedisStore`` directly when the
-    size-bound is not needed; the bare class has no auxiliary index
-    and no per-write overhead. This is the same opt-in trade-off
-    pattern as ``EncryptedStore`` (BL-070) over a plain backend:
-    pay for the capability when you want it.
+    - ``__evict_index::<namespace>``: a sorted set whose *members*
+      are user keys and whose *scores* are server-side monotonic
+      sequence numbers from the counter below. ZRANGE ascending by
+      score yields oldest-first eviction order.
+    - ``__evict_counter::<namespace>``: an integer counter advanced
+      via INCR / INCRBY. Each ZADD score comes from this counter, so
+      ordering is server-defined (not client-wall-clock) and unique
+      per write. Multi-writer deployments stay correct under clock
+      skew (the counter is single-threaded inside Redis), and
+      sub-second back-to-back writes do not collide on a single
+      score (so Redis cannot tie-break ZADD members by name and
+      break the documented insertion-order semantic).
 
-    Eviction order: ZRANGE ascending by score, which on Redis is
-    write-time ascending. A re-write of an existing key updates the
-    score to the new timestamp, so the rewritten key orders as
-    *newest* by index, matching the SQLite ``INSERT OR REPLACE``
-    semantic (`BL-213`) and diverging from the InMemoryStore
-    first-write FIFO (`BL-212`).
+    Every keyspace-mutating method also updates the index, so
+    ``evict_to_capacity`` can walk oldest-first by index score
+    without scanning the keyspace.
+
+    Cost model: every write costs two extra Redis round trips
+    (the INCR / INCRBY for the score, then the ZADD with that
+    score). For high-throughput workloads, prefer ``mset`` /
+    ``transact``, which pay the two extra round trips per batch
+    (one INCRBY for the whole batch, one ZADD with multiple
+    member-score pairs) not per item. Use ``RedisStore`` directly
+    when the size-bound is not needed; the bare class has no
+    auxiliary index, no counter, and no per-write overhead. This is
+    the same opt-in trade-off pattern as ``EncryptedStore`` (BL-070)
+    over a plain backend: pay for the capability when you want it.
+
+    Eviction order: ZRANGE ascending by score, which is INCR-order
+    ascending (server-side monotonic, robust against client clock
+    skew). A re-write of an existing key allocates a new score and
+    ZADD updates the index entry's score, so the rewritten key
+    orders as *newest* by index, matching the SQLite
+    ``INSERT OR REPLACE`` semantic (`BL-213`) and diverging from
+    the InMemoryStore first-write FIFO (`BL-212`). Within a single
+    ``mset`` / ``transact`` batch, scores are assigned in dict
+    iteration order (Python 3.7+ preserves insertion order), so the
+    caller's intended FIFO order is preserved.
 
     Sweep responsibility: Redis auto-evicts a TTL'd data key on its
-    own schedule, but the sorted-set member with that key as its
-    score persists until cleaned. ``sweep_expired`` walks the index,
+    own schedule, but the sorted-set entry for that user key
+    persists until cleaned. ``sweep_expired`` walks the index,
     issues a pipelined EXISTS for each member, and ZREMs every
-    member whose key is gone. The size-bound capacity pass
-    (``evict_to_capacity``) performs the same staleness filter so a
-    member whose underlying key has already expired is not counted
-    against the cap.
+    member whose underlying data key is gone. The size-bound
+    capacity pass (``evict_to_capacity``) performs the same
+    staleness filter so a member whose underlying key has already
+    expired is not counted against the cap.
     """
 
     name: str = "redis-bounded"
 
     @property
     def _idx(self) -> str:
-        # Auxiliary index key. Placed OUTSIDE the namespace prefix
-        # (``__evict_index::<namespace>``) so:
+        # Auxiliary sorted-set index key, placed OUTSIDE the namespace
+        # prefix (``__evict_index::<namespace>``) so:
         #   1. It can never collide with a user key. Every user-written
         #      Redis key starts with ``<namespace>::`` (the namespace
         #      prefix), but the index key starts with ``__evict_index``,
         #      a prefix no namespace can have because
         #      ``validate_namespace_name`` requires
-        #      ``^[a-z0-9][a-z0-9_-]{0,63}$`` (lowercase only, must
-        #      start with a letter or digit, no underscores at index 0).
-        #      Capitalised + underscore prefix here makes that
+        #      ``^[a-z0-9][a-z0-9_-]{0,63}$`` (lowercase letter or
+        #      digit at index 0, no leading underscore). The
+        #      lowercase leading underscore on ``__evict_index`` here
+        #      is exactly the shape the validator forbids in a
+        #      namespace, so the colliding-namespace case is
         #      structurally impossible.
         #   2. It does not appear in ``list_keys`` or ``scan`` results.
         #      Those filter by ``<namespace>::<prefix>*``, which the
@@ -432,16 +454,48 @@ class BoundedRedisStore(RedisStore):
         #      override needed.
         return f"__evict_index::{self._namespace.name}"
 
+    @property
+    def _counter(self) -> str:
+        # Auxiliary monotonic counter key, placed under the same
+        # `__evict_*::<namespace>` collision-safe convention as
+        # ``_idx``. Used to allocate unique server-side scores via
+        # INCR / INCRBY so ordering is robust against client clock
+        # skew (BL-214 review: Copilot + Codex P1/P2 on the score
+        # source).
+        return f"__evict_counter::{self._namespace.name}"
+
+    async def _next_score(self) -> int:
+        """Allocate one monotonic score from the namespace counter."""
+        return int(await self._r.incr(self._counter))
+
+    async def _next_scores(self, count: int) -> list[int]:
+        """Allocate ``count`` contiguous monotonic scores in one round
+        trip via INCRBY, returned in allocation order so the caller can
+        assign them to members in their intended FIFO order. ``count``
+        must be positive; ``count == 0`` returns ``[]`` without a
+        round trip.
+        """
+        if count <= 0:
+            return []
+        end = int(await self._r.incrby(self._counter, count))
+        return list(range(end - count + 1, end + 1))
+
     # --- mutating methods: maintain the index alongside the parent op -
 
     async def write(self, key: str, value: bytes, *, ttl_seconds: float | None = None) -> None:
         await super().write(key, value, ttl_seconds=ttl_seconds)
-        await self._r.zadd(self._idx, {key: time.time()})
+        score = await self._next_score()
+        await self._r.zadd(self._idx, {key: score})
 
     async def mset(self, items: dict[str, bytes], *, ttl_seconds: float | None = None) -> None:
         await super().mset(items, ttl_seconds=ttl_seconds)
         if items:
-            await self._r.zadd(self._idx, dict.fromkeys(items, time.time()))
+            # Allocate one score per member from a single INCRBY, then
+            # zip them to keys in dict iteration order. Python 3.7+
+            # preserves dict insertion order so the FIFO contract holds
+            # within the batch (Codex PR #60 P2 on batch tie-breaks).
+            scores = await self._next_scores(len(items))
+            await self._r.zadd(self._idx, dict(zip(items.keys(), scores, strict=True)))
 
     async def delete(self, key: str) -> None:
         await super().delete(key)
@@ -462,11 +516,12 @@ class BoundedRedisStore(RedisStore):
     ) -> bool:
         ok = await super().compare_and_set(key, expected, new, ttl_seconds=ttl_seconds)
         if ok:
-            # The CAS succeeded so the key is freshly set; refresh its
-            # index score so a CAS-updated key sorts as newest by
-            # eviction order, matching the BL-213 overwrite-shifts-to-newest
-            # semantic.
-            await self._r.zadd(self._idx, {key: time.time()})
+            # The CAS succeeded so the key is freshly set; allocate a
+            # new monotonic score so a CAS-updated key sorts as newest
+            # by eviction order, matching the BL-213
+            # overwrite-shifts-to-newest semantic.
+            score = await self._next_score()
+            await self._r.zadd(self._idx, {key: score})
         return ok
 
     async def compare_and_delete(self, key: str, expected: bytes) -> bool:
@@ -487,7 +542,8 @@ class BoundedRedisStore(RedisStore):
             key, value, expected_version=expected_version, ttl_seconds=ttl_seconds
         )
         if token is not None:
-            await self._r.zadd(self._idx, {key: time.time()})
+            score = await self._next_score()
+            await self._r.zadd(self._idx, {key: score})
         return token
 
     async def delete_versioned(self, key: str, expected_version: str) -> bool:
@@ -508,9 +564,17 @@ class BoundedRedisStore(RedisStore):
             # parent emitted no audit and made no keyspace change, so
             # the index is unchanged.
             return out
+        # Allocate writes-many scores in a single INCRBY before the
+        # pipelined ZADD/ZREM, so write-order ZADD scores are unique
+        # and monotonic in dict iteration order (Python 3.7+
+        # preserves insertion order). One extra INCRBY round trip
+        # per transact() regardless of batch size.
+        scores: list[int] = []
+        if writes:
+            scores = await self._next_scores(len(writes))
         pipe = self._r.pipeline(transaction=False)
         if writes:
-            pipe.zadd(self._idx, dict.fromkeys(writes, time.time()))
+            pipe.zadd(self._idx, dict(zip(writes.keys(), scores, strict=True)))
         if deletes:
             pipe.zrem(self._idx, *deletes)
         await pipe.execute()

@@ -83,13 +83,16 @@ def test_bare_redis_store_does_not_satisfy_bounded_sweepable() -> None:
 
 @pytest.mark.asyncio
 async def test_evict_oldest_first_by_index_score() -> None:
+    # Tight loop with no sleeps: the INCR-based scoring (Codex /
+    # Copilot PR #60 review) gives every write a unique server-side
+    # monotonic score, so this test would have failed under the
+    # original ``time.time()`` scoring on a fast-enough host
+    # (sub-microsecond resolution collisions plus lexicographic
+    # tie-breaks). Pinned here so a future score-source change
+    # surfaces in CI.
     s = _store()
     for i in range(5):
         await s.write(f"k{i}", str(i).encode())
-        # A small sleep keeps the ZADD scores monotonic in this test
-        # without depending on time.time()'s sub-microsecond resolution
-        # (fakeredis honours floating-point scores exactly).
-        await asyncio.sleep(0.001)
     evicted = await s.evict_to_capacity(3)
     assert evicted == 2
     assert sorted(await s.list_keys()) == ["k2", "k3", "k4"]
@@ -98,17 +101,15 @@ async def test_evict_oldest_first_by_index_score() -> None:
 @pytest.mark.asyncio
 async def test_rewrite_shifts_key_to_newest() -> None:
     # The Redis divergence (parallel to BL-213's SQLite divergence):
-    # a re-ZADD of an existing member updates its score, so a
-    # rewritten key orders as *newest* by index. This is consistent
-    # with SQLite's INSERT OR REPLACE semantic and diverges from the
-    # InMemoryStore first-write FIFO. Pinned by test.
+    # a re-ZADD of an existing member updates its score with a fresh
+    # monotonic INCR allocation, so a rewritten key orders as
+    # *newest* by index. This is consistent with SQLite's
+    # INSERT OR REPLACE semantic and diverges from the InMemoryStore
+    # first-write FIFO. Pinned by test.
     s = _store()
     await s.write("a", b"1")
-    await asyncio.sleep(0.001)
     await s.write("b", b"2")
-    await asyncio.sleep(0.001)
     await s.write("c", b"3")
-    await asyncio.sleep(0.001)
     await s.write("a", b"refreshed")  # bumps a's index score
     await s.evict_to_capacity(2)
     # Oldest by score after the rewrite: b, c, a (in that order); cap 2
@@ -245,7 +246,6 @@ async def test_evict_emits_audit_per_key() -> None:
     )
     for i in range(4):
         await s.write(f"k{i}", b"v")
-        await asyncio.sleep(0.001)
     await s.evict_to_capacity(2)
     writes = [e for e in sink.events if isinstance(e, MemoryWrite)]
     deletes = [e for e in sink.events if isinstance(e, MemoryDelete)]
@@ -261,7 +261,6 @@ async def test_ttl_sweeper_drives_capacity_pass_on_redis() -> None:
     s = _store()
     for i in range(4):
         await s.write(f"k{i}", b"v")
-        await asyncio.sleep(0.001)
     async with TTLSweeper(s, interval_seconds=0.01, max_keys=2) as sweeper:
         await asyncio.sleep(0.05)
     # swept_total counts stale-index cleanups (zero here, no TTL).
@@ -278,11 +277,8 @@ async def test_ttl_sweeper_both_passes_on_redis() -> None:
     # entries to land at the cap.
     s = _store()
     await s.write("dies", b"v", ttl_seconds=0.02)
-    await asyncio.sleep(0.001)
     await s.write("a", b"v")
-    await asyncio.sleep(0.001)
     await s.write("b", b"v")
-    await asyncio.sleep(0.001)
     await s.write("c", b"v")
     await asyncio.sleep(0.05)  # let Redis evict "dies"
     async with TTLSweeper(s, interval_seconds=0.01, max_keys=2) as sweeper:
@@ -300,20 +296,22 @@ async def test_index_tracks_mset_mdelete() -> None:
     s = _store()
     await s.mset({"a": b"1", "b": b"2", "c": b"3"})
     await s.mdelete(["b"])
-    # cap=1 should evict "a" (the older of the two remaining live
-    # entries; mset writes all at the same timestamp but ZADD with
-    # identical scores preserves member ordering deterministically
-    # for fakeredis -- we accept either "a" or "c" as the evicted one
-    # by checking only the count and the index size).
+    # Cap=1 must evict "a" specifically (not "c"): the INCR-based
+    # scoring (PR #60 review fix) assigns a contiguous monotonic
+    # score range to each mset batch in dict iteration order, so
+    # "a" gets the lowest score and is the oldest. Under the
+    # previous time.time() scoring all three would have shared a
+    # score and Redis would tie-break lexicographically, evicting
+    # "a" by accident. Pinned here to catch a future regression of
+    # the FIFO contract on batch writes (Codex PR #60 P2).
     assert await s.evict_to_capacity(1) == 1
-    assert len(await s.list_keys()) == 1
+    assert sorted(await s.list_keys()) == ["c"]
 
 
 @pytest.mark.asyncio
 async def test_index_tracks_compare_and_set() -> None:
     s = _store()
     await s.write("k", b"v0")
-    await asyncio.sleep(0.001)
     ok = await s.compare_and_set("k", b"v0", b"v1")
     assert ok
     # CAS-updated key should still be in the index; cap=0 not allowed
@@ -362,3 +360,102 @@ async def test_index_tracks_transact() -> None:
     # Index has b and c; cap=1 evicts the older.
     assert await s.evict_to_capacity(1) == 1
     assert len(await s.list_keys()) == 1
+
+
+# ---- Monotonic score source (PR #60 review: Copilot + Codex P1/P2) ----------
+
+
+@pytest.mark.asyncio
+async def test_scores_are_server_side_monotonic_not_client_wallclock() -> None:
+    # The PR #60 review (Copilot + Codex P1/P2) flagged client-side
+    # ``time.time()`` as the score source: clock skew between writers
+    # and sub-microsecond ties on a single writer both break the
+    # documented insertion-order FIFO. The fix is per-namespace
+    # Redis INCR / INCRBY, server-side monotonic. This test pins
+    # the property by reading the auxiliary counter directly: each
+    # write should increment it by one, in write order.
+    s = _store()
+    counter_key = f"__evict_counter::{s.namespace.name}"
+    raw = s._r  # type: ignore[attr-defined]
+    for i in range(5):
+        await s.write(f"k{i}", b"v")
+    counter = int(await raw.get(counter_key))
+    assert counter == 5
+    # mset of three more advances the counter by exactly three in
+    # one INCRBY, not three INCRs (one round trip per batch).
+    await s.mset({"x": b"1", "y": b"2", "z": b"3"})
+    counter = int(await raw.get(counter_key))
+    assert counter == 8
+
+
+@pytest.mark.asyncio
+async def test_strict_fifo_across_tight_loop() -> None:
+    # Tight loop with no sleeps would, under client-side
+    # ``time.time()``, often produce ties on a fast host and
+    # Redis tie-breaks lexicographically. Under the INCR-based
+    # scoring this is strict insertion-order. Write keys in a
+    # known order (NOT sorted) so a lex tie-break would produce a
+    # different eviction result than the FIFO contract.
+    s = _store()
+    insertion_order = ["zulu", "alpha", "mike", "bravo", "papa"]
+    for k in insertion_order:
+        await s.write(k, b"v")
+    # Evict the three oldest; under FIFO that is [zulu, alpha, mike],
+    # leaving [bravo, papa]. Under a broken lex-tie-break it would
+    # be [alpha, bravo, mike], leaving [papa, zulu].
+    evicted = await s.evict_to_capacity(2)
+    assert evicted == 3
+    assert sorted(await s.list_keys()) == ["bravo", "papa"]
+
+
+@pytest.mark.asyncio
+async def test_mset_preserves_dict_insertion_order_under_fifo() -> None:
+    # mset assigns scores via a single INCRBY then ZADD with
+    # ``dict(zip(items.keys(), scores))``, so within the batch the
+    # FIFO order is the caller's dict iteration order (insertion
+    # order on Python 3.7+), not lexicographic.
+    s = _store()
+    # Caller writes z, a, m in that intended FIFO order. A lex
+    # tie-break would evict a (lex-first) before z (insertion-first).
+    await s.mset({"z": b"1", "a": b"2", "m": b"3"})
+    evicted = await s.evict_to_capacity(1)  # keep one (the newest, m)
+    assert evicted == 2
+    assert sorted(await s.list_keys()) == ["m"]
+
+
+@pytest.mark.asyncio
+async def test_transact_writes_preserve_batch_fifo_order() -> None:
+    # transact() writes go through one INCRBY allocating
+    # ``len(writes)`` scores assigned in dict iteration order. The
+    # contract: a transactional batch is internally FIFO by the
+    # caller's dict order, not by member name.
+    s = _store()
+    out = await s.transact(
+        writes={
+            "z_first": TxnWrite(value=b"1"),
+            "a_second": TxnWrite(value=b"2"),
+            "m_third": TxnWrite(value=b"3"),
+        }
+    )
+    assert out is not None
+    # Evict 2: should remove z_first and a_second (the two oldest
+    # by insertion); m_third stays.
+    evicted = await s.evict_to_capacity(1)
+    assert evicted == 2
+    assert sorted(await s.list_keys()) == ["m_third"]
+
+
+@pytest.mark.asyncio
+async def test_counter_key_does_not_collide_or_leak() -> None:
+    # The counter key shares the same isolation properties as the
+    # index key: placed outside the namespace prefix so it cannot
+    # collide with a user key named ``__evict_counter`` and does not
+    # appear in list_keys / scan.
+    s = _store()
+    await s.write("__evict_counter", b"user-data")
+    # The user-written key reads back unmodified.
+    assert await s.read("__evict_counter") == b"user-data"
+    # And the user key is in list_keys; the auxiliary counter
+    # itself is not.
+    keys = await s.list_keys()
+    assert keys == ["__evict_counter"]
