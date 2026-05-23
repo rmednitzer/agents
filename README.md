@@ -2,7 +2,7 @@
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/rmednitzer/agents)
 
-Infrastructure repository for agentic workloads: runtime, skills, harness, memory.
+Modular execution substrate for governed agentic workloads: enforces behavioral contracts and resource budgets between untrusted model outputs and system capabilities, with pluggable memory backends and portable skill bundles.
 
 ## Status
 
