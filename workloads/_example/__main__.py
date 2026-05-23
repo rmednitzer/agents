@@ -175,7 +175,9 @@ def _cli() -> None:
     )
     args = parser.parse_args()
     if args.path:
-        content = Path(args.path).read_text()
+        # BL-218: pin UTF-8 explicitly so a non-default platform locale
+        # cannot mis-decode a markdown file with non-ASCII content.
+        content = Path(args.path).read_text(encoding="utf-8")
         doc_name = args.path
     else:
         content = sys.stdin.read()

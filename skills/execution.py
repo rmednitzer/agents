@@ -129,6 +129,17 @@ class InProcessSkillContractExecutor:
 
 
 _FRAME_LEN = struct.Struct(">I")
+# Upper bound on a single IPC frame body, applied on the parent side
+# (`BL-216`): the 4-byte big-endian length prefix can encode up to
+# ~4 GiB, but a legitimate frame (a small JSON metadata blob or an
+# {"ok": ...} / {"error": ...} response, or a pickled predicate
+# request) is at most a few MiB even with a generous workload-defined
+# state. A compromised child subprocess can write any 4-byte prefix
+# (including 0xFFFFFFFF); without a cap, the parent would attempt to
+# allocate a 4 GiB buffer for ``stream.read(n)`` before discovering
+# the truncation. 64 MiB is large enough for any realistic frame and
+# small enough that a malicious frame cannot exhaust the host.
+_FRAME_MAX_BODY_BYTES: int = 64 * 1024 * 1024
 
 
 def _write_frame(stream: Any, data: bytes) -> None:
@@ -152,6 +163,17 @@ def _read_frame(stream: Any) -> bytes | None:
             f"expected {_FRAME_LEN.size} bytes, got {len(header)}"
         )
     (n,) = _FRAME_LEN.unpack(header)
+    if n > _FRAME_MAX_BODY_BYTES:
+        # BL-216: a compromised child subprocess can encode any
+        # ``n`` up to 2**32-1 in the frame header; without this cap
+        # the parent would attempt a ~4 GiB allocation on
+        # ``stream.read(n)`` before discovering the truncation,
+        # exhausting host memory. Refuse the frame at the documented
+        # SkillContractExecutorError boundary; the parent caller
+        # already kills the subprocess on error.
+        raise SkillContractExecutorError(
+            f"oversize frame from subprocess: header claims {n} bytes (cap {_FRAME_MAX_BODY_BYTES})"
+        )
     body = stream.read(n)
     if len(body) != n:
         raise SkillContractExecutorError(
@@ -437,14 +459,45 @@ class SubprocessSkillContractExecutor:
             raise
 
         def _proxies(slot: str) -> list[Any]:
+            # BL-217: validate every item from the subprocess metadata
+            # frame at the parent-child trust boundary. A buggy or
+            # malicious contract that constructs a non-conforming
+            # `Contract` whose predicate has a name/severity outside
+            # the expected shape would, without this check, surface as
+            # an unstructured `KeyError` or `ValueError` from the
+            # ``Severity(sev_str)`` conversion below. Translate every
+            # malformed-item case to the documented
+            # `SkillContractExecutorError` so callers see a single
+            # exception boundary across in-process and subprocess
+            # executors.
             out: list[Any] = []
             for item in meta.get(slot, []):
-                sev_str = item["severity"]
-                # ``Severity`` is a StrEnum; recover the member from its value.
-                sev = Severity(sev_str)
+                if not isinstance(item, dict):
+                    raise SkillContractExecutorError(
+                        f"malformed metadata item in slot {slot!r}: "
+                        f"expected dict, got {type(item).__name__}"
+                    )
+                try:
+                    name = item["name"]
+                    sev_str = item["severity"]
+                except KeyError as exc:
+                    raise SkillContractExecutorError(
+                        f"malformed metadata item in slot {slot!r}: missing key {exc!s}"
+                    ) from exc
+                if not isinstance(name, str) or not isinstance(sev_str, str):
+                    raise SkillContractExecutorError(
+                        f"malformed metadata item in slot {slot!r}: name/severity must be str "
+                        f"(got name={type(name).__name__}, severity={type(sev_str).__name__})"
+                    )
+                try:
+                    sev = Severity(sev_str)
+                except ValueError as exc:
+                    raise SkillContractExecutorError(
+                        f"malformed metadata item in slot {slot!r}: unknown severity {sev_str!r}"
+                    ) from exc
                 out.append(
                     _PredicateProxy(
-                        name=item["name"],
+                        name=name,
                         severity=sev,
                         _slot=slot,
                         _evaluator=evaluator,

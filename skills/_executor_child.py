@@ -25,6 +25,14 @@ from pathlib import Path
 from typing import Any, cast
 
 _FRAME_LEN = struct.Struct(">I")
+# Symmetric cap to ``skills.execution._FRAME_MAX_BODY_BYTES`` (`BL-216`).
+# The child reads from the trusted harness parent, but a corrupted
+# pipe (or a future bug in the parent) that emits a garbage length
+# header would otherwise drive the child into a multi-GiB allocation
+# before failing. Refusing the frame is safer than crashing on OOM,
+# and the child silently exits (the parent already treats a missing
+# response frame as a SkillContractExecutorError).
+_FRAME_MAX_BODY_BYTES: int = 64 * 1024 * 1024
 
 
 def _write_frame(stream: Any, data: bytes) -> None:
@@ -38,6 +46,12 @@ def _read_frame(stream: Any) -> bytes | None:
     if not header:
         return None
     (n,) = _FRAME_LEN.unpack(header)
+    if n > _FRAME_MAX_BODY_BYTES:
+        # BL-216 (child side): treat an oversize header as EOF so the
+        # main loop exits cleanly. The parent has either crashed or
+        # bug-emitted a bad header; in either case there is nothing
+        # this side can do that is more useful than exiting.
+        return None
     body = stream.read(n)
     if len(body) != n:
         return None
