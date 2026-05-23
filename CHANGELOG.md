@@ -3,6 +3,43 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] ADR 0015 deferred close (BL-209-BL-211, 2026-05-23)
+
+The three items ADR 0015 flagged as deferred (M3 / M6 / H5 in the
+audit triage), closed as additive follow-ups. No new ADR; folded
+into the ADR 0015 record by reference.
+
+### Fixed
+
+- `EncryptedStore` BL-196 multi-key loop catches `KeyError` alongside
+  `InvalidTag` (`BL-209`). Defence-in-depth for an out-of-tree
+  `IterableKeyProvider` (KMS-backed) that returns a key id from
+  `iter_key_ids` which the underlying provider can no longer
+  resolve (key revoked between iteration and lookup). The in-tree
+  `RotatingKeyProvider` does not remove keys; this is the
+  extension point for third-party providers.
+- `MarkdownValidatorRuntime` per-line comment tracker (`BL-211`).
+  New module-level helper `_double_dash_outside_comment` walks each
+  line position-aware; a line that opens or closes an HTML comment
+  and carries prose ``--`` is now flagged correctly. Demo workload;
+  no production caller, but the validator is the canonical
+  contract-binding example.
+
+### Documentation
+
+- `wrap_encrypted` docstring (`BL-210`) extended to flag all three
+  content-hash-token Protocols (`CASMemoryStore`,
+  `VersionedMemoryStore`, `TransactionalMemoryStore`) as
+  intentionally not-forwarded, with the GCM-nonce reason. The
+  Protocol-level docs in `store.py` already documented this; the
+  factory-level dual now agrees so an operator wrapping a
+  capability-rich backend sees at the composition site why the
+  decorated store no longer satisfies the version-token Protocols.
+- `docs/backlog.md` updated with `BL-209`-`BL-211` (ADR 0015
+  deferred-close section).
+- `docs/schema/workload-manifest.json` regenerated; no functional
+  drift, just the docstring propagation from `wrap_encrypted`.
+
 ## [Unreleased] Sixth code audit (ADR 0015, BL-197-BL-208, 2026-05-23)
 
 Twelve additive findings spread across `memory/`, `harness/`,

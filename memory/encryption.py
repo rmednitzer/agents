@@ -445,13 +445,22 @@ class EncryptedStore:
             # wrong plaintext (false-tag probability ``2**-128`` per
             # key, accumulated ``N * 2**-128`` across the ring). The
             # current key was already tried above and is skipped.
+            # KeyError is caught alongside InvalidTag (BL-209): an
+            # out-of-tree IterableKeyProvider (e.g., a KMS-backed
+            # provider) can return a key id from iter_key_ids that the
+            # underlying provider no longer resolves (key revoked
+            # between iteration and lookup); treat that as a missed
+            # attempt and continue, the same way an authentication
+            # failure does. The in-tree RotatingKeyProvider does not
+            # remove keys, so this path is defence-in-depth for
+            # third-party providers.
             if self._legacy_multi_key:
                 for kid in self._ikp.iter_key_ids(self._ns):
                     if kid == cur_id:
                         continue
                     try:
                         return bytes(self._aes_for(kid).decrypt(nonce, ct, aad))
-                    except InvalidTag:
+                    except (InvalidTag, KeyError):
                         continue
             # No legacy key matched; surface the original envelope error.
             raise env_err from None
@@ -543,15 +552,28 @@ def wrap_encrypted(
     Protocols ``inner`` supports (BL-156).
 
     Forwards Batch / Scan / ContentAddressable / Sweepable conditionally
-    (so ``isinstance`` is truthful). CASMemoryStore is intentionally not
-    forwarded: GCM nonce randomisation makes ciphertext-equality CAS
-    unrepresentable (see the module note and memory/README.md). Use
-    this instead of constructing ``EncryptedStore`` directly over a
-    capability-rich backend. A ``VersionedKeyProvider`` (BL-111) is
-    accepted and enables the rotation-safe value envelope.
-    ``legacy_multi_key`` (BL-196) enables the opt-in multi-key legacy
-    fallback for migrating off a plain KeyProvider with prior
-    rotations already on disk.
+    (so ``isinstance`` is truthful). ``CASMemoryStore``,
+    ``VersionedMemoryStore``, and ``TransactionalMemoryStore`` are
+    intentionally not forwarded (`BL-210`): all three encode their
+    precondition as the value's content-hash (CAS uses the
+    bytes-equality of the stored ciphertext; Versioned /
+    Transactional use the sha256 of the stored bytes), and GCM's
+    per-write random nonce makes the *ciphertext* representation
+    unstable -- the same plaintext yields different ciphertext each
+    write, so a token taken at read time cannot match at commit
+    time. Forwarding these Protocols would advertise a capability the
+    decorator structurally cannot honour (the "don't fake it" rule
+    in ADR 0004). The Protocol-level docs in ``store.py`` carry the
+    same reasoning; this docstring is the factory-level dual so an
+    operator wrapping a capability-rich backend can see at the
+    composition site why the decorated store no longer satisfies
+    the version-token Protocols. Use this factory instead of
+    constructing ``EncryptedStore`` directly over a capability-rich
+    backend. A ``VersionedKeyProvider`` (BL-111) is accepted and
+    enables the rotation-safe value envelope. ``legacy_multi_key``
+    (BL-196) enables the opt-in multi-key legacy fallback for
+    migrating off a plain KeyProvider with prior rotations already
+    on disk.
     """
     mixins: list[type] = []
     if isinstance(inner, BatchMemoryStore):
