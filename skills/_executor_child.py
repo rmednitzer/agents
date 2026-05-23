@@ -177,10 +177,7 @@ def main() -> int:
             sys.stdout.buffer,
             json.dumps(
                 {
-                    "error": (
-                        f"'contract' is not a Contract (got "
-                        f"{type(contract).__name__})"
-                    ),
+                    "error": (f"'contract' is not a Contract (got {type(contract).__name__})"),
                     "path": str(path),
                 }
             ).encode(),

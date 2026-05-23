@@ -382,9 +382,7 @@ def test_subprocess_lifecycle_closes_child_on_gc(tmp_path: Path) -> None:
     subprocess until process exit."""
     import gc
 
-    skill_dir = _write_skill_bundle(
-        tmp_path, "sub-proc-lifecycle", contract_py=_SIMPLE_CONTRACT
-    )
+    skill_dir = _write_skill_bundle(tmp_path, "sub-proc-lifecycle", contract_py=_SIMPLE_CONTRACT)
     executor = SubprocessSkillContractExecutor(timeout_seconds=10.0)
     skill = discover_skill(skill_dir, executor=executor)
     contract = skill.contract()

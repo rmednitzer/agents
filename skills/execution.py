@@ -467,5 +467,3 @@ class SubprocessSkillContractExecutor:
         # is gone.
         weakref.finalize(contract, evaluator.close)
         return contract
-
-
