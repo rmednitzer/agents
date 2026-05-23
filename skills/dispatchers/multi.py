@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from collections import defaultdict
 from enum import StrEnum
 from typing import Any
@@ -55,6 +56,16 @@ class MultiDispatcher:
             raise ValueError("weights must align 1:1 with members")
         if mode == MultiMode.WEIGHTED and weights is None:
             raise ValueError("WEIGHTED mode requires weights")
+        # Finite-and-non-negative guard on weights (`BL-205`, BL-159
+        # class extension): the downstream score clamp
+        # ``max(0.0, min(1.0, score))`` collapses a NaN weight to
+        # confidence 1.0 (the exact BL-159 NaN-clamp trap fixed for
+        # cosine_similarity / LLMDispatcher / SkillBasedDispatcher);
+        # validating at construction surfaces the configuration bug at
+        # the API boundary rather than silently shipping
+        # confidence-1.0 noise.
+        if weights is not None and not all(math.isfinite(w) and w >= 0 for w in weights):
+            raise ValueError("weights must be finite and non-negative")
         self._members = members
         self._mode = mode
         self._weights = weights or [1.0] * len(members)

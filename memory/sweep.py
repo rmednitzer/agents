@@ -8,7 +8,10 @@ interval so that space is reclaimed without an access.
 
 The sweeper is opt-in and adapter-agnostic: it depends only on the
 SweepableStore Protocol. It is cancellation-safe and idempotent to
-stop.
+stop. A transient exception from ``sweep_expired`` is caught and
+recorded (`BL-199`, BL-189 class extension) so a single backend blip
+does not silently kill the loop for the rest of the process lifetime;
+the next interval retries normally.
 """
 
 from __future__ import annotations
@@ -37,7 +40,14 @@ class TTLSweeper:
             ...
 
     ``swept_total`` accumulates the number of entries removed across all
-    sweeps for observability and tests.
+    sweeps for observability and tests. ``failures_total`` accumulates
+    the number of consecutive sweep attempts that raised so an
+    operator can detect a persistently broken backend (`BL-199`); the
+    counter resets to zero on the next successful sweep so a transient
+    blip self-heals without manual intervention. ``last_error`` carries
+    the most recent exception (or ``None`` if the last sweep
+    succeeded), so a caller can introspect the failure without parsing
+    logs.
     """
 
     def __init__(self, store: SweepableStore, *, interval_seconds: float) -> None:
@@ -48,6 +58,14 @@ class TTLSweeper:
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
         self.swept_total = 0
+        # BL-199: surface the failure path without killing the loop.
+        # ``failures_total`` is the consecutive-failure counter (reset
+        # on the next success); ``last_error`` is the most recent
+        # exception or None. Together they let an operator detect a
+        # persistently broken backend; the loop itself is robust to
+        # transients.
+        self.failures_total = 0
+        self.last_error: BaseException | None = None
 
     def start(self) -> None:
         """Start the background sweep loop. Idempotent."""
@@ -62,7 +80,28 @@ class TTLSweeper:
                 await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
             if self._stop.is_set():
                 break
-            self.swept_total += await self._store.sweep_expired()
+            try:
+                self.swept_total += await self._store.sweep_expired()
+            except asyncio.CancelledError:
+                # Cancellation is the documented stop signal; do not
+                # swallow it so ``aclose`` can complete.
+                raise
+            except Exception as exc:
+                # A transient backend error (network blip on Redis /
+                # DynamoDB / S3 Sweepable, throttling, etc.) must not
+                # silently kill the loop for the rest of the process
+                # lifetime (BL-199, BL-189 class). Record the failure
+                # and continue at the next interval; an operator
+                # introspecting ``failures_total`` / ``last_error``
+                # can detect a persistent backend break without
+                # parsing logs.
+                self.failures_total += 1
+                self.last_error = exc
+            else:
+                # Successful sweep: reset the consecutive-failure
+                # counter so a transient blip self-heals.
+                self.failures_total = 0
+                self.last_error = None
 
     async def aclose(self) -> None:
         """Stop the loop and await task teardown. Idempotent."""

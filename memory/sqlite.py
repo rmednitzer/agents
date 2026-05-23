@@ -78,7 +78,8 @@ class SQLiteStore:
         self._conn.close()
 
     def _effective_ttl(self, ttl_seconds: float | None) -> float | None:
-        return ttl_seconds if ttl_seconds is not None else self._namespace.retention_seconds
+        # Delegate to Namespace.resolve_ttl (BL-197).
+        return self._namespace.resolve_ttl(ttl_seconds)
 
     # --- sync DB primitives (run via asyncio.to_thread under the lock) --
 

@@ -74,26 +74,37 @@ class InstrumentedDispatcher:
         limit: int = 1,
     ) -> list[SkillMatch]:
         start = time.perf_counter()
-        matches = await self._inner.dispatch(query, context=context, limit=limit)
-        latency_ms = (time.perf_counter() - start) * 1000.0
+        matches: list[SkillMatch] = []
+        # `try/finally` so a failed inner dispatch (e.g., a
+        # `DispatchError` from an LLM-backed inner, an `asyncio.
+        # CancelledError`, etc.) is still observable: `calls` and
+        # latency are recorded and the event is emitted with
+        # ``fell_back=True`` / ``matched=0`` (`BL-207`, BL-189 / BL-167
+        # class extension). Without this, a workload monitoring
+        # `fallback_rate` to detect routing-health sees `0/0` no matter
+        # how many dispatch attempts crash, exactly the opposite of
+        # what observability is supposed to surface.
+        try:
+            matches = await self._inner.dispatch(query, context=context, limit=limit)
+        finally:
+            latency_ms = (time.perf_counter() - start) * 1000.0
+            top = matches[0].confidence if matches else 0.0
+            fell_back = top < self._threshold
+            self.stats.calls += 1
+            self.stats.latencies_ms.append(latency_ms)
+            if fell_back:
+                self.stats.fallbacks += 1
 
-        top = matches[0].confidence if matches else 0.0
-        fell_back = top < self._threshold
-        self.stats.calls += 1
-        self.stats.latencies_ms.append(latency_ms)
-        if fell_back:
-            self.stats.fallbacks += 1
-
-        if self._base:
-            self._sink.emit(
-                DispatchObserved(
-                    timestamp=datetime.now(UTC),
-                    dispatcher=self._inner.name,
-                    latency_ms=latency_ms,
-                    matched=len(matches),
-                    top_confidence=top,
-                    fell_back=fell_back,
-                    **self._base,
+            if self._base:
+                self._sink.emit(
+                    DispatchObserved(
+                        timestamp=datetime.now(UTC),
+                        dispatcher=self._inner.name,
+                        latency_ms=latency_ms,
+                        matched=len(matches),
+                        top_confidence=top,
+                        fell_back=fell_back,
+                        **self._base,
+                    )
                 )
-            )
         return matches

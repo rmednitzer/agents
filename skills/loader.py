@@ -53,6 +53,15 @@ def parse_skill_md(path: Path) -> tuple[SkillManifest, str]:
         raw = yaml.safe_load(frontmatter_text) or {}
     except yaml.YAMLError as exc:
         raise SkillManifestError(str(path), f"YAML parse: {exc}") from exc
+    except RecursionError as exc:
+        # PyYAML's safe_load recurses through nested mappings without a
+        # depth cap; an adversarial SKILL.md with deeply nested YAML
+        # can raise RecursionError (not a YAMLError). Translate so the
+        # `install_skill` / `discover_skill` callers see the documented
+        # `SkillManifestError` contract instead of an internal Python
+        # exception (`BL-204`, BL-173 / BL-191 class extension on the
+        # manifest-parse leg).
+        raise SkillManifestError(str(path), f"YAML parse exceeded recursion depth: {exc}") from exc
 
     if not isinstance(raw, dict):
         raise SkillManifestError(

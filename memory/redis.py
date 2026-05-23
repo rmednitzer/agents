@@ -75,7 +75,8 @@ class RedisStore:
         return full[len(self._prefix) :]
 
     def _ttl(self, ttl_seconds: float | None) -> float | None:
-        return ttl_seconds if ttl_seconds is not None else self._namespace.retention_seconds
+        # Delegate to Namespace.resolve_ttl (BL-197).
+        return self._namespace.resolve_ttl(ttl_seconds)
 
     @staticmethod
     def _b(value: Any) -> bytes | None:
@@ -128,6 +129,11 @@ class RedisStore:
     async def mset(self, items: dict[str, bytes], *, ttl_seconds: float | None = None) -> None:
         for k in items:
             validate_key(k)
+        if not items:
+            # Empty-batch short-circuit (BL-198, BL-178 class extension):
+            # parity with mdelete and with the BL-178 fix in SQLiteStore.
+            # An empty pipeline.execute() round-trips for no work.
+            return
         ttl = self._ttl(ttl_seconds)
         pipe = self._r.pipeline(transaction=False)
         for k, v in items.items():

@@ -106,6 +106,22 @@ class SkillRegistry:
     def all(self) -> list[Skill]:
         return list(self._skills.values())
 
+    def routable(self) -> list[Skill]:
+        """Skills eligible for routing (`BL-208`).
+
+        Excludes meta-skills with ``lane == "routing"`` (the
+        ``dispatcher-skill`` and any other routing meta-skill an
+        operator installs): their own SKILL.md documents that they
+        decide routing, not perform user work, so a router that
+        returns them as a task recommendation breaks the documented
+        contract. ``SkillBasedDispatcher`` excluded the bare
+        dispatcher-skill name; the lane filter generalises the same
+        invariant to every dispatcher that iterates the registry
+        (``KeywordDispatcher`` / ``EmbeddingDispatcher`` /
+        ``LLMDispatcher``).
+        """
+        return [s for s in self._skills.values() if s.lane != "routing"]
+
     def by_lane(self, lane: str) -> list[Skill]:
         names = self._lanes.get(lane, [])
         return [self._skills[n] for n in names if n in self._skills]

@@ -50,7 +50,8 @@ class LLMDispatcher:
     ) -> list[SkillMatch]:
         if limit <= 0:
             return []
-        candidates: list[Skill] = self._registry.all()[: self._max_candidates]
+        # routable() excludes routing-lane meta-skills (BL-208).
+        candidates: list[Skill] = self._registry.routable()[: self._max_candidates]
         if not candidates:
             return []
 

@@ -30,7 +30,8 @@ class EmbeddingDispatcher:
 
     async def _skill_vectors(self) -> dict[str, list[float]]:
         if self._cache is None:
-            skills = self._registry.all()
+            # routable() excludes routing-lane meta-skills (BL-208).
+            skills = self._registry.routable()
             if not skills:
                 self._cache = {}
             else:
