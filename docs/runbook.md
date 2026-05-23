@@ -129,7 +129,6 @@ Open `docs/backlog.md`, filter to `[pending]` / `[in-progress]`. The current ope
 |---|---|---|---|---|
 | `BL-120` | Tier 1 | L | A real reference workload exercising the wired runtime against a live model | A funded provider key, a credentialed CI gate skipped without it |
 | `BL-133` | Tier 0 | M | True isolation (subprocess / container) for opted-in skill contracts | `subprocess` + capability scoping; the gate-not-sandbox boundary in `LIMITATIONS.md` L3 |
-| `BL-112` | Tier 0 | M | Marketplace `SkillSource` (Vercel `skills.sh`) with checksum / signature verification | The generic `MarketplaceSkillSource` already ships; this is the vendor-specific instance |
 | `BL-150` | Tier 0 | S | Commit-SHA pinning for every GitHub Action | A maintainer / Dependabot action (the run env cannot resolve third-party action SHAs honestly) |
 | `BL-132` / `BL-171` | Tier 1 | M | Prompt and response caching on the runtime adapter | A verified PydanticAI provider-cache API + a live model to validate |
 | `BL-113` | Tier 2 | L | True OTel spans + trace-context propagation | The OTel logs SDK stabilising (the GA cut) |
@@ -142,7 +141,7 @@ Open `docs/backlog.md`, filter to `[pending]` / `[in-progress]`. The current ope
 
 ### 4.2 Item-level workflow
 
-For an item with no upstream dependency (the "ready" set today: `BL-120`, `BL-112`, `BL-135`, `BL-180`, `BL-133`, `BL-150`):
+For an item with no upstream dependency (the "ready" set today: `BL-120`, `BL-135`, `BL-180`, `BL-133`, `BL-150`):
 
 1. Move `[pending]` to `[in-progress]` with the branch name. Push the change as a separate commit so an open backlog state is visible.
 2. Design the surface. Write the new Protocol or the new optional keyword before any implementation. Surface it in the module docstring; an L3 keyword is read once, supported forever.
