@@ -62,23 +62,33 @@ from __future__ import annotations
 __all__ = ["is_expired", "is_live"]
 
 
-def is_live(now: float, expires_at: float | None) -> bool:
-    """Return ``True`` iff an entry with absolute expiry ``expires_at`` is
-    live at wall-clock ``now``.
-
-    See the module docstring for the invariant and the SQL / DynamoDB
-    counterparts. A ``None`` expiry means "no expiry, always live".
-    The boundary is inclusive at ``now == expires_at`` (the entry is
-    still live at that exact instant).
-    """
-    return expires_at is None or now <= expires_at
-
-
 def is_expired(now: float, expires_at: float | None) -> bool:
     """Return ``True`` iff an entry with absolute expiry ``expires_at`` is
     expired at wall-clock ``now``.
 
-    Negation of :func:`is_live`. An entry with no expiry is never
-    expired.
+    See the module docstring for the invariant and the SQL / DynamoDB
+    counterparts. An entry with no expiry (``expires_at is None``) is
+    never expired. The boundary is **inclusive** at ``now ==
+    expires_at`` (the entry is still live at that exact instant); the
+    strict ``>`` here is what makes the boundary inclusive.
+
+    Defined as the "positive" predicate (the caller must *prove*
+    expiry) so that any non-orderable expiry (``NaN``, anomalously
+    propagated through a user-supplied TTL) keeps the prior
+    behaviour of the in-tree adapters: ``now > NaN`` is ``False``, so
+    the entry is reported live. Validating TTL inputs as finite at
+    the API boundary is the right longer-term fix; this encoding
+    keeps the consolidation strictly behaviour-preserving.
     """
-    return not is_live(now, expires_at)
+    return expires_at is not None and now > expires_at
+
+
+def is_live(now: float, expires_at: float | None) -> bool:
+    """Return ``True`` iff an entry with absolute expiry ``expires_at`` is
+    live at wall-clock ``now``.
+
+    Negation of :func:`is_expired`. A ``None`` expiry means "no
+    expiry, always live"; the boundary is inclusive at ``now ==
+    expires_at``.
+    """
+    return not is_expired(now, expires_at)

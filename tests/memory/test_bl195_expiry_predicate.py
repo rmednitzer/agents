@@ -12,9 +12,14 @@ tests pin the invariant.
 
 from __future__ import annotations
 
+import math
+import time
+
 import pytest
 
 from memory._expiry import is_expired, is_live
+from memory.inmemory import InMemoryStore
+from memory.types import Namespace
 
 
 @pytest.mark.parametrize(
@@ -59,42 +64,58 @@ def test_none_expiry_is_never_expired() -> None:
         assert is_expired(now, None) is False
 
 
-def test_inmemory_uses_inclusive_boundary_at_expiry_instant() -> None:
-    """The InMemoryStore reference adapter must use the helper, so an
-    entry at the exact expiry instant is still readable, listable,
-    scannable, and not yet swept. Regression guard against a future
-    drift back into a strict ``>`` boundary."""
-    import asyncio
+def test_nan_expiry_preserves_prior_adapter_behaviour() -> None:
+    """Anomalous ``expires_at = NaN`` (a TTL=NaN propagated through
+    ``write``) is reported live, matching the pre-BL-195 adapter
+    behaviour (`now > NaN` is False -> not expired). The longer-term
+    fix is validating TTL as finite at the API boundary; this test
+    pins the consolidation as strictly behaviour-preserving."""
+    nan = math.nan
+    for now in (0.0, 100.0, 1e9):
+        assert is_expired(now, nan) is False
+        assert is_live(now, nan) is True
 
-    from memory.inmemory import InMemoryStore
-    from memory.types import Namespace
 
-    async def run() -> None:
-        store = InMemoryStore(Namespace(name="ns", workload="w"))
-        # Write with a TTL we can pin in time below. Patch time.time
-        # so we can land exactly on the expiry instant.
-        import time as _time
+@pytest.mark.asyncio
+async def test_inmemory_inclusive_boundary_across_read_list_scan_sweep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """At the exact expiry instant, the InMemoryStore reference adapter
+    must report an entry live across every interface that touches the
+    boundary: ``read`` / ``list_keys`` / ``scan`` / ``sweep_expired``.
+    Regression guard against a future drift back into a strict ``>``
+    boundary (the BL-188 fault class), and against per-interface
+    drift (the BL-157 / BL-168 / BL-177 fault classes).
+    """
+    store = InMemoryStore(Namespace(name="ns", workload="w"))
 
-        real_time = _time.time
-        # Anchor TTL relative to ``now``: write at t=100, ttl=10, so
-        # expires_at=110. Then read at t=110: must still be live.
-        called = {"n": 0}
-        sequence = [100.0, 110.0, 110.0, 110.0001]
+    # Phase 1: write at t=100 with TTL=10 -> expires_at = 110.
+    monkeypatch.setattr(time, "time", lambda: 100.0)
+    await store.write("k", b"v", ttl_seconds=10.0)
 
-        def fake_time() -> float:
-            i = called["n"]
-            called["n"] = min(i + 1, len(sequence) - 1)
-            return sequence[i]
+    # Phase 2: at exactly t=110 (the boundary instant), the entry is
+    # live on every path that consults the predicate.
+    monkeypatch.setattr(time, "time", lambda: 110.0)
+    assert await store.read("k") == b"v"
+    assert "k" in await store.list_keys()
+    _, page = await store.scan(count=10)
+    assert "k" in page
+    assert await store.sweep_expired() == 0  # not swept at boundary
 
-        _time.time = fake_time  # type: ignore[assignment]
-        try:
-            await store.write("k", b"v", ttl_seconds=10.0)  # uses t=100
-            assert await store.read("k") == b"v"  # at t=110: inclusive
-            assert "k" in (await store.list_keys())  # also at t=110
-            # Past the boundary, expired.
-            _time.time = lambda: 110.0001  # type: ignore[assignment]
-            assert await store.read("k") is None
-        finally:
-            _time.time = real_time  # type: ignore[assignment]
-
-    asyncio.run(run())
+    # Phase 3: at t=110.0001 (strictly past the boundary), expired on
+    # every path.
+    monkeypatch.setattr(time, "time", lambda: 110.0001)
+    assert await store.read("k") is None
+    # ``read`` lazy-deletes; rewrite to test list/scan/sweep at the
+    # post-boundary instant directly.
+    monkeypatch.setattr(time, "time", lambda: 100.0)
+    await store.write("k", b"v", ttl_seconds=10.0)
+    monkeypatch.setattr(time, "time", lambda: 110.0001)
+    assert "k" not in await store.list_keys()
+    _, page = await store.scan(count=10)
+    assert "k" not in page
+    # And sweep removes it.
+    monkeypatch.setattr(time, "time", lambda: 100.0)
+    await store.write("k", b"v", ttl_seconds=10.0)
+    monkeypatch.setattr(time, "time", lambda: 110.0001)
+    assert await store.sweep_expired() == 1
