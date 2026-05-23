@@ -175,7 +175,7 @@ tool-call dimension if a hard token ceiling matters. Closing this
 needs upstream partial-usage on the exception path (the same
 upstream-dependent shape as `BL-114` / `BL-132`). Tracking: `BL-179`.
 
-## L16. Versioned-encryption legacy migration is current-key only
+## L16. Versioned-encryption legacy migration is current-key only by default
 
 State: adopting a `VersionedKeyProvider` on a store previously sealed
 by a plain `KeyProvider` works for values whose key is the versioned
@@ -183,13 +183,25 @@ provider's *current* version: the plain and versioned on-disk formats
 have no distinguishing marker, so the authenticated legacy fallback
 (`BL-181`, ADR 0011) retries a non-envelope value as legacy `nonce+ct`
 with the current key only (AES-GCM authentication guarantees no silent
-wrong value). Implication: the migration contract is to seed the key
-ring with the existing key as the current version and rewrite values
-before rotating away from it; legacy data still under a key the
-provider has already rotated past is not reachable for a legacy read
-(re-encrypt it through the old store first). New stores and
-already-versioned stores are unaffected. No tracking item (a
-documented operational contract, not a defect).
+wrong value). Implication: the default migration contract is to seed
+the key ring with the existing key as the current version and rewrite
+values before rotating away from it; legacy data still under a key the
+provider has already rotated past is not reachable for a default
+legacy read (re-encrypt it through the old store first).
+
+Opt-in lift (`BL-196`, runbook 7.4 #4): pass `legacy_multi_key=True`
+to `EncryptedStore` / `wrap_encrypted` over a provider that also
+implements `IterableKeyProvider` (the in-tree `RotatingKeyProvider`
+does) and the legacy fallback iterates each historical key in the
+ring instead of trying only the current one. AES-GCM authentication
+still gates every attempt (false-tag probability ``2**-128`` per key,
+accumulated ``N * 2**-128`` across the ring), so the multi-key
+fallback never returns a wrong plaintext; the cost is up to ``N``
+decrypt attempts on a true mismatch. The default is unchanged so a
+KMS-backed provider that charges per call is not exposed to extra
+cost; opt-in is the right shape for an in-memory or local ring.
+New stores and already-versioned stores are unaffected. No tracking
+item (a documented operational contract, not a defect).
 
 ## L17. DynamoDB versioned writes need a one-time row upgrade
 
