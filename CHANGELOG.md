@@ -3,6 +3,80 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] BL-214: BoundedRedisStore (BL-135 size-bound on Redis, 2026-05-23)
+
+The network-durable Redis extension to BL-213's SQLite reference,
+parallel to how BL-180 extended BL-124 from the in-tree reference to
+the network-durable adapters. Redis has no native insertion-order
+column, so the adapter ships as an opt-in subclass that maintains a
+per-namespace insertion-order sorted-set index alongside the data
+writes. The bare `RedisStore` is unchanged for every existing caller.
+
+### Added
+
+- `memory.BoundedRedisStore`: opt-in subclass of `RedisStore` that
+  maintains a single per-namespace sorted-set index at
+  `"__evict_index::<namespace>"` (placed outside the
+  `<namespace>::*` keyspace prefix, so it cannot collide with a
+  user-written key named `__evict_index` and does not appear in
+  `list_keys` / `scan` results: the namespace-name validator's
+  `^[a-z0-9]` rule makes a colliding namespace structurally
+  impossible) and implements `SweepableStore` plus
+  `BoundedSweepableStore`. Eviction order is ZRANGE ascending by
+  score (insertion timestamp); a re-write of an existing key
+  updates its index score so a rewritten key orders as *newest* by
+  index, matching the BL-213 SQLite overwrite-shifts-to-newest
+  semantic and diverging from the BL-212 InMemoryStore first-write
+  FIFO. Every keyspace-mutating method on the parent (`write`,
+  `mset`, `delete`, `mdelete`, `compare_and_set`,
+  `compare_and_delete`, `write_versioned`, `delete_versioned`,
+  `transact`) is overridden to call `super()` then update the index
+  via ZADD / ZREM, so the index stays consistent across every
+  mutation path.
+- `BoundedRedisStore.sweep_expired`: cleans stale index members
+  whose underlying Redis data keys have already been auto-evicted
+  by Redis itself (catch-up bookkeeping; the data key is gone via
+  Redis's own expiry, only the auxiliary entry remains).
+- `BoundedRedisStore.evict_to_capacity`: walks the index
+  oldest-first via ZRANGE, performs the same staleness filter as
+  `sweep_expired` so an expired-but-unswept member does not count
+  toward the cap (the BL-195 read-vs-listing parity in Redis form),
+  pipelines DEL on the live oldest block plus a final ZREM on the
+  index, and emits one audit `MemoryDelete` per evicted key.
+- New regression suite `tests/memory/test_bl214_redis_bounded_sweeper.py`
+  (22 tests, fakeredis-backed): Protocol satisfaction (subclass yes,
+  bare `RedisStore` no); oldest-first eviction by index score; the
+  overwrite-shifts-to-newest contract; no-op at and under the cap;
+  non-positive cap rejection (parametrized); the index-isolation pair
+  (no leak into `list_keys` / `scan`; no collision with a user-written
+  key named `__evict_index`); `sweep_expired` stale-cleanup; zero on
+  a clean index; expired-but-unswept members excluded from the live
+  count; per-key audit emission; sweeper integration on both age and
+  capacity passes against a Redis store; the index-consistency suite
+  (every parent mutation path keeps the index aligned across `write`,
+  `mset` + `mdelete`, `compare_and_set`, `compare_and_delete`,
+  `write_versioned` + `delete_versioned`, and `transact`).
+
+### Changed
+
+- `memory.__init__` exports `BoundedRedisStore`.
+- `memory/redis.py` module docstring now notes the opt-in subclass
+  and the per-namespace insertion-order sorted-set index.
+- `LIMITATIONS.md` L5 updated to note the Redis delivery alongside
+  InMemoryStore and SQLiteStore; the remaining `DynamoDBStore` and
+  `S3Store` stay tracked under `BL-135` because neither has a native
+  insertion-order column.
+- `memory/README.md` capability bullet now enumerates the three
+  eviction orderings (SQLite by rowid, Redis by index score,
+  InMemoryStore by dict insertion order).
+
+### Documentation
+
+- `docs/backlog.md`: `BL-214` added (resolved) under the existing
+  "Sweeper size bound (2026-05-23)" section; `BL-135`'s
+  delivered / remaining narrative updated to reflect the third
+  adapter shipped.
+
 ## [Unreleased] BL-213: BoundedSweepableStore on SQLiteStore (2026-05-23)
 
 The natural durable-single-host counterpart to `BL-212`'s
