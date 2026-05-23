@@ -8,13 +8,17 @@ asyncio.Lock so the single connection is never touched concurrently.
 
 Implements MemoryStore plus every extension Protocol: Batch, Scan,
 ContentAddressable, CAS (via ``BEGIN IMMEDIATE`` transactions),
-Sweepable, BoundedSweepable (`BL-213`, eviction in SQLite rowid order
-which equals insertion order; INSERT OR REPLACE on an existing key
-assigns a fresh rowid so an overwrite shifts the key to the *newest*
-position, a documented semantic divergence from the InMemoryStore
-reference which keeps the original dict slot), Versioned, and
-Transactional. Expiry is lazy on access (rows are deleted when found
-expired); ``sweep_expired`` / TTLSweeper reclaim space proactively.
+Sweepable, BoundedSweepable (`BL-213`, oldest-first by SQLite rowid;
+``INSERT OR REPLACE`` on an existing primary key is implemented as
+delete-then-insert, and the inserted row's rowid is strictly greater
+than every other rowid currently in the table, so an overwrite orders
+as *newest* by rowid, a documented semantic divergence from the
+InMemoryStore reference which keeps the original dict slot. SQLite
+does not guarantee monotonic / never-reused rowids without
+``AUTOINCREMENT``; the contract here is the ordering property, not
+a fresh-sequence-number claim), Versioned, and Transactional. Expiry
+is lazy on access (rows are deleted when found expired);
+``sweep_expired`` / TTLSweeper reclaim space proactively.
 """
 
 from __future__ import annotations
@@ -450,6 +454,13 @@ class SQLiteStore:
 
     # --- BoundedSweepableStore (BL-213, BL-135 size-bound on durable) -
 
+    # Conservative chunk size for the rowid IN clause of the DELETE
+    # below: SQLite's SQLITE_LIMIT_VARIABLE_NUMBER defaults to 999
+    # before 3.32 and 32766 from 3.32 onwards. A chunk of 500 stays
+    # safely under the older limit so the adapter works on any
+    # supported build without runtime sniffing.
+    _EVICT_DELETE_CHUNK: int = 500
+
     async def evict_to_capacity(self, max_keys: int) -> int:
         if max_keys <= 0:
             raise ValueError("max_keys must be positive")
@@ -459,16 +470,28 @@ class SQLiteStore:
             # the BL-195 invariant): an entry is live at the instant
             # ``now <= expires_at`` (`expires_at >= :now`). We count
             # live rows, compute the overflow, then identify the
-            # ``overflow`` oldest live rows (SQLite rowid is the
-            # insertion-order key; an INSERT OR REPLACE on an existing
-            # primary key deletes-then-inserts so an overwrite shifts
-            # the row to a higher rowid). The whole operation runs in
-            # ``BEGIN IMMEDIATE`` so a concurrent writer cannot interleave
-            # between count and delete (parity with mset/mdelete's
-            # transactional shape, BL-161).
-            now = time.time()
+            # ``overflow`` oldest live rows by rowid ASC.
+            #
+            # SQLite rowid ordering: an ``INSERT OR REPLACE`` on an
+            # existing primary key is implemented as delete-then-insert,
+            # and the inserted row gets a rowid strictly greater than
+            # every other row currently in the table (so it orders as
+            # *newest* by rowid). SQLite does NOT guarantee strictly
+            # monotonic / never-reused rowids without ``AUTOINCREMENT``
+            # (a deleted max-rowid can be reassigned to the next insert),
+            # so the contract we rely on is the ordering property, not
+            # a fresh-sequence-number claim.
+            #
+            # The whole operation runs in ``BEGIN IMMEDIATE`` so a
+            # concurrent writer cannot interleave between count and
+            # delete (parity with mset/mdelete's transactional shape,
+            # BL-161). ``now`` is sampled AFTER ``BEGIN IMMEDIATE``
+            # returns so a contended write lock that blocks for up to
+            # the sqlite3 default 5-second timeout does not strand a
+            # stale timestamp that lets just-expired keys count as live.
             self._conn.execute("BEGIN IMMEDIATE")
             try:
+                now = time.time()
                 cur = self._conn.execute(
                     f'SELECT COUNT(*) FROM "{self._table}" '
                     f"WHERE expires_at IS NULL OR expires_at >= ?",
@@ -488,11 +511,18 @@ class SQLiteStore:
                 rows = cur.fetchall()
                 rowids = [int(r[0]) for r in rows]
                 keys = [str(r[1]) for r in rows]
-                placeholders = ",".join("?" * len(rowids))
-                self._conn.execute(
-                    f'DELETE FROM "{self._table}" WHERE rowid IN ({placeholders})',
-                    rowids,
-                )
+                # Chunk the DELETE so a large overflow does not exceed
+                # SQLITE_LIMIT_VARIABLE_NUMBER on builds that default
+                # to 999 parameters per statement. Each chunk is a
+                # separate execute() but the whole eviction stays in
+                # one transaction so atomicity holds across chunks.
+                for start in range(0, len(rowids), self._EVICT_DELETE_CHUNK):
+                    chunk = rowids[start : start + self._EVICT_DELETE_CHUNK]
+                    placeholders = ",".join("?" * len(chunk))
+                    self._conn.execute(
+                        f'DELETE FROM "{self._table}" WHERE rowid IN ({placeholders})',
+                        chunk,
+                    )
                 self._conn.execute("COMMIT")
             except Exception:
                 self._conn.execute("ROLLBACK")

@@ -18,19 +18,37 @@ insertion-order column the way SQLite's rowid does.
   count + select-oldest + delete inside one `BEGIN IMMEDIATE`
   transaction (parity with the BL-161 mset/mdelete transactional
   shape) so a concurrent writer cannot interleave between the
-  live-count read and the delete. Oldest-first is by SQLite rowid
-  (the engine's insertion-order key); the SQL counterpart of the
-  BL-195 `is_live` predicate (`expires_at IS NULL OR expires_at >= :now`)
-  filters expired-but-unswept rows out of the live count and the
-  eviction candidate set. Audit emission per evicted key (BL-040).
+  live-count read and the delete. ``now`` is sampled after the
+  `BEGIN IMMEDIATE` lock is held (Codex PR #59 P2), so a contended
+  write lock that blocks for up to the sqlite3 default 5-second
+  timeout cannot strand a stale timestamp that lets just-expired
+  keys still count as live. Oldest-first is by SQLite rowid;
+  ``INSERT OR REPLACE`` is implemented as delete-then-insert, and
+  the inserted row's rowid is strictly greater than every other
+  rowid currently in the table, so an overwrite orders as newest
+  by rowid (this is the ordering property; SQLite does not
+  guarantee monotonic / never-reused rowids without
+  ``AUTOINCREMENT``, per the Copilot wording fix). The SQL
+  counterpart of the BL-195 `is_live` predicate
+  (`expires_at IS NULL OR expires_at >= :now`) filters
+  expired-but-unswept rows out of the live count and the
+  eviction candidate set. The DELETE chunks the rowid IN list
+  (chunk size 500, conservative under
+  `SQLITE_LIMIT_VARIABLE_NUMBER`'s pre-3.32 default of 999) so a
+  large overflow does not raise `OperationalError: too many SQL
+  variables` (Codex PR #59 P1); all chunks share the same
+  transaction so atomicity holds across them. Audit emission per
+  evicted key (BL-040).
 - New regression suite `tests/memory/test_bl213_sqlite_bounded_sweeper.py`
-  (12 tests): Protocol satisfaction; oldest-first eviction by rowid;
-  the overwrite-shifts-to-newest contract (the SQLite divergence
+  (13 tests): Protocol satisfaction; oldest-first eviction by rowid;
+  the overwrite-orders-as-newest contract (the SQLite divergence
   from InMemoryStore's first-write FIFO, pinned by test); no-op at
   and under the cap; non-positive cap rejection; expired-but-unswept
   rows excluded from the live count; per-key audit emission; sweeper
   integration on both age and capacity passes against a durable
-  SQLite store.
+  SQLite store; the chunked-DELETE path (monkeypatching the chunk
+  constant to a small value and verifying eviction crosses multiple
+  chunk boundaries without raising).
 
 ### Changed
 

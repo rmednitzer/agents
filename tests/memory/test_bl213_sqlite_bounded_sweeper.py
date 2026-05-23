@@ -3,9 +3,12 @@
 Counterpart to BL-212's InMemoryStore tests. Tests focus on the SQLite-
 specific contract:
 
-- ``SQLiteStore`` satisfies ``BoundedSweepableStore`` (via the rowid
-  ordering, with INSERT OR REPLACE assigning a fresh rowid on overwrite,
-  the documented divergence from InMemoryStore in the module docstring);
+- ``SQLiteStore`` satisfies ``BoundedSweepableStore`` (oldest-first by
+  rowid; an ``INSERT OR REPLACE`` on an existing key is implemented as
+  delete-then-insert so the rewritten row orders as newest by rowid,
+  the documented divergence from InMemoryStore in the module docstring;
+  this is not a monotonic-rowid claim, only an ordering claim, since
+  SQLite reuses rowids without ``AUTOINCREMENT``);
 - ``evict_to_capacity`` removes oldest-first by rowid, no-op when at /
   under the cap, validates the cap;
 - the count + select + delete operation runs atomically inside
@@ -65,11 +68,14 @@ async def test_sqlite_evict_oldest_first_by_rowid() -> None:
 @pytest.mark.asyncio
 async def test_sqlite_overwrite_shifts_to_newest() -> None:
     # SQLite divergence from InMemoryStore: ``INSERT OR REPLACE`` on an
-    # existing primary key deletes-then-inserts, so the rowid advances
-    # to the next sequence number and the overwritten key becomes the
-    # *newest* entry, not the oldest. This is documented in the
-    # module docstring and pinned here so a future change of semantics
-    # triggers CI.
+    # existing primary key is implemented as delete-then-insert, and
+    # the inserted row's rowid is strictly greater than every other
+    # rowid currently in the table, so the rewritten row orders as the
+    # *newest* by rowid (not the oldest). The contract is the ordering
+    # property; SQLite does not guarantee monotonic / never-reused
+    # rowids without ``AUTOINCREMENT``, but ordering relative to the
+    # remaining rows holds. Documented in the module docstring and
+    # pinned here so a future change of semantics triggers CI.
     s = _store()
     try:
         await s.write("a", b"1")
@@ -201,5 +207,30 @@ async def test_ttl_sweeper_both_passes_on_sqlite() -> None:
         assert sweeper.swept_total >= 1
         assert sweeper.evicted_total >= 1
         assert len(await s.list_keys()) == 2
+    finally:
+        s.close()
+
+
+@pytest.mark.asyncio
+async def test_evict_chunks_when_overflow_exceeds_variable_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # When ``overflow`` exceeds SQLITE_LIMIT_VARIABLE_NUMBER (default 999
+    # on builds before 3.32), a single ``DELETE ... WHERE rowid IN (?,...,?)``
+    # raises ``sqlite3.OperationalError: too many SQL variables`` and the
+    # capacity pass cannot enforce the bound (Codex PR #59 P1). The
+    # adapter chunks the DELETE; this test forces a tiny chunk size so
+    # the eviction crosses several chunk boundaries on a small fixture,
+    # asserting the loop both evicts the right count and removes the
+    # right keys without raising.
+    monkeypatch.setattr(SQLiteStore, "_EVICT_DELETE_CHUNK", 3)
+    s = _store()
+    try:
+        for i in range(10):
+            await s.write(f"k{i:02d}", b"v")
+        evicted = await s.evict_to_capacity(2)
+        # 10 live entries, cap 2 -> evict 8, in chunks of (3, 3, 2).
+        assert evicted == 8
+        assert sorted(await s.list_keys()) == ["k08", "k09"]
     finally:
         s.close()
