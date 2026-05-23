@@ -38,6 +38,7 @@ from memory.semantic import Embedder, InMemorySemanticStore
 from memory.sqlite import SQLiteStore
 from memory.store import (
     BatchMemoryStore,
+    BoundedSweepableStore,
     CASMemoryStore,
     ContentAddressableStore,
     MemoryStore,
@@ -68,6 +69,7 @@ __all__ = [
     "AttributeACL",
     "AttributeRule",
     "BatchMemoryStore",
+    "BoundedSweepableStore",
     "CASMemoryStore",
     "ContentAddressableStore",
     "DynamoDBStore",
