@@ -32,6 +32,45 @@ from workloads._example.contract import (
 __all__ = ["MarkdownValidatorRuntime", "main"]
 
 
+def _double_dash_outside_comment(line: str, in_comment: bool) -> tuple[bool, bool]:
+    """Position-aware scan for ``--`` outside ``<!-- ... -->`` spans (`BL-211`).
+
+    Returns ``(found, in_comment_after_line)``. Walks the line
+    left-to-right, alternating between outside-comment and
+    inside-comment regions, and reports True iff an outside region
+    contains ``--``. The follow-up state carries the open-comment
+    flag across lines so a multi-line ``<!-- ... -->`` block is
+    handled correctly.
+
+    Pre-`BL-211` the validator used three per-line ``in <line>``
+    checks with a single boolean tracker; on a line like
+    ``foo -- bar <!-- baz -->`` the ``<!--`` check fired first and
+    set the flag, causing the subsequent outside-comment ``--`` to
+    be missed (and symmetrically for a line that closes a comment
+    and then carries prose ``--`` after ``-->``).
+    """
+    pos = 0
+    found = False
+    n = len(line)
+    while pos < n:
+        if in_comment:
+            end = line.find("-->", pos)
+            if end == -1:
+                return found, True
+            pos = end + 3
+            in_comment = False
+        else:
+            start = line.find("<!--", pos)
+            outside_end = start if start != -1 else n
+            if "--" in line[pos:outside_end]:
+                found = True
+            if start == -1:
+                return found, False
+            pos = start + 4
+            in_comment = True
+    return found, in_comment
+
+
 class MarkdownValidatorRuntime:
     """In-process stub Runtime that scans markdown for style violations."""
 
@@ -54,8 +93,6 @@ class MarkdownValidatorRuntime:
         lines = input_data.content.splitlines()
         in_html_comment = False
         for i, line in enumerate(lines, start=1):
-            if "<!--" in line:
-                in_html_comment = True
             if "—" in line:
                 findings.append(
                     Finding(
@@ -64,7 +101,8 @@ class MarkdownValidatorRuntime:
                         message="line contains em-dash",
                     )
                 )
-            if "--" in line and not in_html_comment:
+            has_dd, in_html_comment = _double_dash_outside_comment(line, in_html_comment)
+            if has_dd:
                 findings.append(
                     Finding(
                         rule="no-double-dash",
@@ -72,8 +110,6 @@ class MarkdownValidatorRuntime:
                         message="line contains '--' outside HTML comment",
                     )
                 )
-            if "-->" in line:
-                in_html_comment = False
 
         stripped = input_data.content.lstrip()
         first_line = stripped.split("\n", 1)[0] if stripped else ""
