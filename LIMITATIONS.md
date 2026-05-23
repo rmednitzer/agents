@@ -74,12 +74,20 @@ write plus similarity query, reusing the `HashingEmbeddingProvider`
 (`BL-110`) through memory's own `Embedder` Protocol. The shipped
 embedder is a deterministic lexical baseline, not a semantic model (a
 model-quality embedder satisfies the same `Embedder` Protocol and is
-the workload's choice, out-of-tree by the ADR 0001 stance). There is
-still no summarisation or tiering, and the durable adapters do not
-implement `SemanticMemoryStore`. Implication: in-tree just-in-time
-retrieval works for a single process; long-horizon compaction and a
-durable vector backend are open. Tracking: `BL-135` (compaction /
-tiering), `BL-131` notes the embedder scope.
+the workload's choice, out-of-tree by the ADR 0001 stance). The
+sweeper's size-bound half landed as `BL-212`: the
+`BoundedSweepableStore` extension Protocol on `InMemoryStore` plus
+`TTLSweeper(max_keys=...)` enforces a keyspace cap beyond age-only
+expiry, so a write-rate-driven workload no longer grows unbounded on
+the in-tree reference. There is still no summarisation or tiering,
+the durable adapters do not implement `BoundedSweepableStore` or
+`SemanticMemoryStore`, and an LRU policy (versus the shipped
+insertion-order FIFO) is not in-tree. Implication: in-tree
+just-in-time retrieval and size-bounded reclamation work for a
+single process; long-horizon compaction, summarisation, and a
+durable vector / capacity backend are open. Tracking: `BL-135`
+(compaction / summarisation / tiering, plus durable
+`BoundedSweepableStore`), `BL-131` notes the embedder scope.
 
 ## L6. The behavioural gate is deterministic-only
 

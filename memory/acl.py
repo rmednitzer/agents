@@ -33,6 +33,7 @@ from memory._audit import MemoryAudit
 from memory.errors import AccessDenied
 from memory.store import (
     BatchMemoryStore,
+    BoundedSweepableStore,
     CASMemoryStore,
     ContentAddressableStore,
     MemoryStore,
@@ -309,6 +310,20 @@ class _ACLSweepMixin:
         return await self._inner.sweep_expired()
 
 
+class _ACLBoundedMixin:
+    # BL-212 size-bound forwarded through ACL (BL-156): like sweep,
+    # capacity eviction is a store-maintenance operation chosen by the
+    # operator who sized the sweeper, not a per-key principal action.
+    # No ACL check, matching _ACLSweepMixin's coarse gate.
+    _inner: BoundedSweepableStore
+
+    async def sweep_expired(self) -> int:
+        return await self._inner.sweep_expired()
+
+    async def evict_to_capacity(self, max_keys: int) -> int:
+        return await self._inner.evict_to_capacity(max_keys)
+
+
 class _ACLVersionedMixin:
     # BL-124 MVCC forwarded through ACL (BL-156): ACL does not transform
     # bytes, so the content-hash version token is preserved. Gated like
@@ -397,7 +412,14 @@ def wrap_acl(
         mixins.append(_ACLContentMixin)
     if isinstance(inner, CASMemoryStore):
         mixins.append(_ACLCASMixin)
-    if isinstance(inner, SweepableStore):
+    if isinstance(inner, BoundedSweepableStore):
+        # BL-212: pick the bounded mixin (which subsumes sweep) when
+        # inner supports it; the sweep mixin alone otherwise. The two
+        # are mutually exclusive at the type level to keep
+        # isinstance truthful without forwarding capacity that the
+        # inner cannot honour.
+        mixins.append(_ACLBoundedMixin)
+    elif isinstance(inner, SweepableStore):
         mixins.append(_ACLSweepMixin)
     if isinstance(inner, VersionedMemoryStore):
         mixins.append(_ACLVersionedMixin)

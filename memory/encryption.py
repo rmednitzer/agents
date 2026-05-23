@@ -63,6 +63,7 @@ from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from memory.store import (
     BatchMemoryStore,
+    BoundedSweepableStore,
     ContentAddressableStore,
     MemoryStore,
     ScannableStore,
@@ -542,6 +543,21 @@ class _EncSweepMixin:
         return await self._inner.sweep_expired()
 
 
+class _EncBoundedMixin:
+    # BL-212 size-bound forwarded through encryption (BL-156): eviction
+    # by count is content-agnostic (no ciphertext compare, no version
+    # token), so unlike CAS / Versioned / Transactional the GCM
+    # per-write-nonce constraint does not apply. The capacity pass
+    # deletes whole entries; encryption is irrelevant to the choice.
+    _inner: BoundedSweepableStore
+
+    async def sweep_expired(self) -> int:
+        return await self._inner.sweep_expired()
+
+    async def evict_to_capacity(self, max_keys: int) -> int:
+        return await self._inner.evict_to_capacity(max_keys)
+
+
 def wrap_encrypted(
     inner: MemoryStore,
     key_provider: KeyProvider | VersionedKeyProvider,
@@ -551,8 +567,9 @@ def wrap_encrypted(
     """EncryptedStore that also forwards the value-safe extension
     Protocols ``inner`` supports (BL-156).
 
-    Forwards Batch / Scan / ContentAddressable / Sweepable conditionally
-    (so ``isinstance`` is truthful). ``CASMemoryStore``,
+    Forwards Batch / Scan / ContentAddressable / Sweepable /
+    BoundedSweepable (`BL-212`) conditionally (so ``isinstance`` is
+    truthful). ``CASMemoryStore``,
     ``VersionedMemoryStore``, and ``TransactionalMemoryStore`` are
     intentionally not forwarded (`BL-210`): all three encode their
     precondition as the value's content-hash (CAS uses the
@@ -582,7 +599,11 @@ def wrap_encrypted(
         mixins.append(_EncScanMixin)
     if isinstance(inner, ContentAddressableStore):
         mixins.append(_EncContentMixin)
-    if isinstance(inner, SweepableStore):
+    if isinstance(inner, BoundedSweepableStore):
+        # BL-212: capacity-bound forwarding subsumes sweep forwarding;
+        # mutually exclusive to keep isinstance truthful.
+        mixins.append(_EncBoundedMixin)
+    elif isinstance(inner, SweepableStore):
         mixins.append(_EncSweepMixin)
     if not mixins:
         return EncryptedStore(inner, key_provider, legacy_multi_key=legacy_multi_key)

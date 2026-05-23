@@ -3,6 +3,79 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] BL-212: sweeper size bound (BL-135 size-bound half, 2026-05-23)
+
+The size-bound half of `BL-135` lands as a separate ID (`BL-212`) so
+the long-horizon compaction / summarisation / tiering half stays
+tracked under `BL-135`. The new Protocol is a strict superset of
+`SweepableStore`; the default `TTLSweeper` behaviour is unchanged for
+every existing caller.
+
+### Added
+
+- `memory.BoundedSweepableStore` extension Protocol: a
+  `SweepableStore` that also supports `evict_to_capacity(max_keys) -> int`,
+  removing the oldest entries (insertion order, Python dict
+  semantics: in-place overwrite keeps the key's original position)
+  until the live keyspace is at most `max_keys`. The reference
+  implementation lands on `InMemoryStore`; durable adapters are
+  tracked under `BL-135` (the BL-124 -> BL-180 Protocol-plus-reference
+  cadence).
+- `TTLSweeper(max_keys: int | None = None)` kwarg: when set, the
+  sweeper runs `evict_to_capacity` after the age-only `sweep_expired`
+  on each interval. The store must implement
+  `BoundedSweepableStore`; a non-bounded store with `max_keys` set
+  raises `TypeError` at construction (ADR 0007 load-time validation),
+  and a non-positive `max_keys` raises `ValueError`.
+- `TTLSweeper.evicted_total` counter, distinct from `swept_total`,
+  so an operator can attribute reclamation to write-rate (capacity)
+  versus TTL (age).
+- `_ACLBoundedMixin` (in `memory.acl`) and `_EncBoundedMixin` (in
+  `memory.encryption`) forward `evict_to_capacity` through `wrap_acl`
+  and `wrap_encrypted`. The size-bound is content-agnostic, so unlike
+  the CAS / Versioned / Transactional Protocols (which depend on the
+  ciphertext token's stability) `wrap_encrypted` *does* forward
+  `BoundedSweepableStore`. Each mixin is mutually exclusive with the
+  plain sweep mixin in the wrap factories so `isinstance` stays
+  truthful on a sweep-only inner.
+- New regression suite `tests/memory/test_bl212_bounded_sweeper.py`
+  (19 tests): Protocol satisfaction; oldest-first eviction; the
+  overwrite-keeps-position contract; no-op at and under the cap;
+  non-positive cap rejection; expired-entries-do-not-count (so a
+  TTL'd entry does not double-evict a live one); audit-event
+  emission per evicted key; sweeper integration on both age and
+  capacity passes; load-time configuration errors (non-bounded store
+  with `max_keys`, non-positive `max_keys`); `max_keys=None`
+  byte-for-byte parity with the BL-080 / BL-199 path; `wrap_acl`
+  and `wrap_encrypted` forwarding (including the truthful-isinstance
+  shape on a sweep-only inner).
+
+### Changed
+
+- `memory.__init__` exports `BoundedSweepableStore`.
+- `memory.acl.wrap_acl` chooses `_ACLBoundedMixin` over
+  `_ACLSweepMixin` when the inner satisfies the bounded Protocol;
+  the two are mutually exclusive at composition.
+- `memory.encryption.wrap_encrypted` chooses `_EncBoundedMixin` over
+  `_EncSweepMixin` when the inner satisfies the bounded Protocol;
+  the docstring now lists `BoundedSweepable` as a forwarded
+  Protocol (the GCM-nonce-conflict reasoning that excludes CAS /
+  Versioned / Transactional does not apply to a content-agnostic
+  count-based eviction).
+- `LIMITATIONS.md` L5 is updated to note the size-bound delivery and
+  the remaining compaction / summarisation / tiering / durable-
+  adapter scope.
+
+### Documentation
+
+- `docs/backlog.md`: `BL-212` added (resolved) under a new
+  "Sweeper size bound (2026-05-23)" section; `BL-135` moves from
+  `[pending]` to `[in-progress]` with the delivered slice and the
+  remaining scope (compaction / summarisation / tiering + durable
+  adapters) noted (the `BL-150` partial-close template).
+- `memory/README.md` capability bullet now mentions
+  `BoundedSweepableStore` and the `max_keys` kwarg on `TTLSweeper`.
+
 ## [Unreleased] BL-133: skill contract execution isolation (ADR 0016, 2026-05-23)
 
 The long-standing L3 "the gate is defence in depth, not a sandbox"
