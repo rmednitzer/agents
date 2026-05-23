@@ -162,6 +162,30 @@ def main() -> int:
             ).encode(),
         )
         return 1
+    # Parity with the in-process loader (`skills.loader.
+    # _load_skill_contract`): a `contract` export that is not a
+    # `harness.contract.Contract` instance is a mis-shaped manifest,
+    # not a runtime error. Reject it here so the subprocess executor
+    # has the same documented `SkillManifestError` contract as the
+    # in-process default (Copilot review on PR #56). The harness
+    # package is in the same venv as the parent, so this import
+    # always succeeds when the parent's import succeeded.
+    from harness.contract import Contract
+
+    if not isinstance(contract, Contract):
+        _write_frame(
+            sys.stdout.buffer,
+            json.dumps(
+                {
+                    "error": (
+                        f"'contract' is not a Contract (got "
+                        f"{type(contract).__name__})"
+                    ),
+                    "path": str(path),
+                }
+            ).encode(),
+        )
+        return 1
 
     # Ship the metadata frame and enter the evaluation loop.
     try:

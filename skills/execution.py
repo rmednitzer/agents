@@ -46,6 +46,7 @@ import struct
 import subprocess
 import sys
 import threading
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
@@ -140,6 +141,16 @@ def _read_frame(stream: Any) -> bytes | None:
     header = stream.read(_FRAME_LEN.size)
     if not header:
         return None
+    if len(header) != _FRAME_LEN.size:
+        # A child that printed fewer than 4 bytes before exiting (a
+        # stray `print()` during import + crash) gives a truncated
+        # header. Mirror the body-truncation branch below so the
+        # documented `SkillContractExecutorError` boundary is upheld
+        # instead of leaking `struct.error`.
+        raise SkillContractExecutorError(
+            f"truncated frame header from subprocess: "
+            f"expected {_FRAME_LEN.size} bytes, got {len(header)}"
+        )
     (n,) = _FRAME_LEN.unpack(header)
     body = stream.read(n)
     if len(body) != n:
@@ -263,10 +274,35 @@ class _SubprocessEvaluator:
             raise SkillContractExecutorError("evaluator is closed")
         if self._proc.stdin is None or self._proc.stdout is None:
             raise SkillContractExecutorError("subprocess pipes are closed")
+        # If the child has already exited (e.g., RLIMIT_CPU killed it
+        # between calls), surface a documented executor error instead
+        # of letting `_write_frame` raise BrokenPipeError. ``poll()``
+        # returns None while alive.
+        exit_code = self._proc.poll()
+        if exit_code is not None:
+            stderr = b""
+            if self._proc.stderr is not None:
+                stderr = self._proc.stderr.read() or b""
+            raise SkillContractExecutorError(
+                f"subprocess already exited (exit={exit_code!r}) before "
+                f"predicate {name!r}: stderr={stderr.decode(errors='replace')!r}"
+            )
         request = {"op": "evaluate", "slot": slot, "name": name}
         payload = pickle.dumps((request, state))
         with self._lock:
-            _write_frame(self._proc.stdin, payload)
+            try:
+                _write_frame(self._proc.stdin, payload)
+            except (BrokenPipeError, OSError) as exc:
+                # The child died mid-write (raced with the poll() above
+                # or was killed by setrlimit between calls). Wrap the
+                # raw pipe error in the documented boundary.
+                stderr = b""
+                if self._proc.stderr is not None:
+                    stderr = self._proc.stderr.read() or b""
+                raise SkillContractExecutorError(
+                    f"subprocess write failed for predicate {name!r}: {exc!r}; "
+                    f"stderr={stderr.decode(errors='replace')!r}"
+                ) from exc
             frame = self._read_with_timeout(self._proc.stdout)
         if frame is None:
             stderr = b""
@@ -409,7 +445,7 @@ class SubprocessSkillContractExecutor:
                 )
             return out
 
-        return Contract(
+        contract = Contract(
             name=str(meta.get("name", skill.name)),
             version=str(meta.get("version", "0.0.0")),
             preconditions=_proxies("preconditions"),
@@ -417,5 +453,19 @@ class SubprocessSkillContractExecutor:
             postconditions=_proxies("postconditions"),
             governance=_proxies("governance"),
         )
+        # Lifecycle: tie the subprocess to the returned Contract via
+        # ``weakref.finalize``. The finalizer runs at the first of:
+        # (a) the Contract being GC'd (mid-process cleanup), or
+        # (b) interpreter exit (the finalizer is auto-registered with
+        # atexit by weakref.finalize). Without this hook, a load that
+        # leaves the returned Contract unreferenced would orphan the
+        # subprocess until process exit; the Copilot review on PR #56
+        # raised this as a real leak on repeated `Skill.contract()`
+        # calls. The proxy predicates keep ``evaluator`` alive while
+        # the Contract is alive (they reference it as a field), so
+        # finalize fires only after every reference to the Contract
+        # is gone.
+        weakref.finalize(contract, evaluator.close)
+        return contract
 
 

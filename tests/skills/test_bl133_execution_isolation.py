@@ -115,6 +115,25 @@ x = 1
 """
 
 
+_NON_CONTRACT_EXPORT = """\
+# Exports a `contract` symbol that is NOT a harness.contract.Contract
+# instance. The in-process loader rejects this; the BL-133 subprocess
+# executor must match (PR #56 Copilot review).
+contract = "this is a string, not a Contract"
+"""
+
+
+_PRINTS_BEFORE_CRASH = """\
+# Prints a single character to stdout before exiting. The subprocess
+# executor sees a short header (one byte instead of four) on the read;
+# pre-fix this raised struct.error out of `_read_frame`.
+import sys
+sys.stdout.buffer.write(b'x')
+sys.stdout.buffer.flush()
+sys.exit(1)
+"""
+
+
 _RAISING_PREDICATE_CONTRACT = """\
 from pydantic import BaseModel
 from harness.contract import Contract, Severity, predicate
@@ -318,6 +337,84 @@ def test_install_skill_forwards_executor(tmp_path: Path) -> None:
         executor=executor,
     )
     assert skill._executor is executor
+
+
+# --- PR #56 Copilot review follow-ups ---------------------------------
+
+
+def test_subprocess_rejects_non_contract_export(tmp_path: Path) -> None:
+    """Parity with the in-process loader: a `contract` export that is
+    not a `harness.contract.Contract` instance is a manifest error,
+    not a runtime error. Pre-fix the subprocess executor accepted
+    any non-None export and surfaced the failure later when the
+    parent tried to serialise its predicates."""
+    skill_dir = _write_skill_bundle(
+        tmp_path, "sub-proc-non-contract", contract_py=_NON_CONTRACT_EXPORT
+    )
+    executor = SubprocessSkillContractExecutor(timeout_seconds=10.0)
+    skill = discover_skill(skill_dir, executor=executor)
+    with pytest.raises(SkillManifestError, match="not a Contract"):
+        skill.contract()
+
+
+def test_subprocess_short_header_is_executor_error(tmp_path: Path) -> None:
+    """A child that prints fewer than 4 bytes before exiting gives
+    `_read_frame` a truncated header; pre-fix this raised
+    `struct.error` out of the executor. Now it raises a documented
+    `SkillContractExecutorError`."""
+    skill_dir = _write_skill_bundle(
+        tmp_path, "sub-proc-short-header", contract_py=_PRINTS_BEFORE_CRASH
+    )
+    executor = SubprocessSkillContractExecutor(timeout_seconds=10.0)
+    skill = discover_skill(skill_dir, executor=executor)
+    # The child prints "x" (1 byte) then exits. `_read_frame` sees a
+    # truncated header. Either SkillContractExecutorError (the new
+    # boundary) or SkillManifestError (the legacy boundary, used by
+    # tests upstream); the property we pin is "no raw struct.error".
+    with pytest.raises((SkillContractExecutorError, SkillManifestError)):
+        skill.contract()
+
+
+def test_subprocess_lifecycle_closes_child_on_gc(tmp_path: Path) -> None:
+    """The subprocess is bound to the returned Contract's lifecycle
+    via `weakref.finalize`; dropping the last reference and forcing
+    GC closes the child. Pre-fix each `load` leaked a long-lived
+    subprocess until process exit."""
+    import gc
+
+    skill_dir = _write_skill_bundle(
+        tmp_path, "sub-proc-lifecycle", contract_py=_SIMPLE_CONTRACT
+    )
+    executor = SubprocessSkillContractExecutor(timeout_seconds=10.0)
+    skill = discover_skill(skill_dir, executor=executor)
+    contract = skill.contract()
+    assert contract is not None
+    # Reach into the proxy to snapshot the subprocess Popen object,
+    # so we can poll it after the Contract is GC'd to confirm
+    # finalize ran.
+    proxy = contract.preconditions[0]
+    evaluator = proxy._evaluator
+    proc = evaluator._proc
+    assert proc is not None
+    assert proc.poll() is None  # alive before GC
+
+    # Drop every Python-side reference and force GC. weakref.finalize
+    # runs `evaluator.close()` -> the subprocess is signalled to exit.
+    skill._contract = None
+    skill._contract_loaded = False
+    del contract
+    del proxy
+    gc.collect()
+
+    # Give the subprocess a moment to exit. close() blocks up to 2s
+    # internally, so a quick poll here is sufficient.
+    import time as _time
+
+    for _ in range(20):
+        if proc.poll() is not None:
+            break
+        _time.sleep(0.05)
+    assert proc.poll() is not None, "subprocess did not exit after Contract GC"
 
 
 # Quiet ruff F401.
