@@ -21,7 +21,9 @@ simply does not implement it rather than faking it:
 - SweepableStore: sweep_expired for the active TTL sweeper (BL-080).
 - SemanticMemoryStore: vector write + similarity query (BL-131).
 - VersionedMemoryStore: MVCC read/write/delete by version token
-  (BL-124).
+  (BL-124, BL-180).
+- TransactionalMemoryStore: atomic multi-key version-gated
+  transactions on backends with native support (BL-180).
 
 Audit (BL-040): an adapter MAY accept ``sink`` and
 ``base_event_fields`` at construction and emit MemoryRead / MemoryWrite
@@ -50,6 +52,9 @@ __all__ = [
     "SemanticHit",
     "SemanticMemoryStore",
     "SweepableStore",
+    "TransactionalMemoryStore",
+    "TxnDelete",
+    "TxnWrite",
     "VersionedMemoryStore",
 ]
 
@@ -235,11 +240,21 @@ class VersionedMemoryStore(MemoryStore, Protocol):
     - ``delete_versioned`` deletes iff the live token equals
       ``expected_version``; returns whether it deleted.
 
-    Multi-key transactions where the backend supports them are the
-    documented remainder (the BL-072 scoping: Protocol + reference
-    first, per-adapter breadth later). The token is over the stored
-    bytes, so (like CAS) it is not forwarded through EncryptedStore: a
-    per-write random GCM nonce makes the ciphertext token unstable.
+    Best-effort give-up (BL-072 convention): on a backend that uses
+    optimistic concurrency under the hood (Redis WATCH/MULTI), a hot
+    key under sustained external contention may exhaust the bounded
+    retry budget; ``write_versioned`` and ``delete_versioned`` then
+    return ``None`` / ``False`` so a stuck retry loop cannot wedge the
+    caller. The token surface alone does not let a caller distinguish
+    a real version mismatch from contention exhaustion (matching
+    ``compare_and_set``'s ``False`` return); a caller that needs that
+    distinction should re-read the live token and decide.
+
+    Multi-key transactions are now in scope as the separate
+    ``TransactionalMemoryStore`` Protocol (BL-180), not part of this
+    Protocol. The token is over the stored bytes, so (like CAS) it is
+    not forwarded through EncryptedStore: a per-write random GCM
+    nonce makes the ciphertext token unstable.
     """
 
     async def read_versioned(self, key: str) -> tuple[bytes, str] | None: ...
@@ -254,6 +269,95 @@ class VersionedMemoryStore(MemoryStore, Protocol):
     ) -> str | None: ...
 
     async def delete_versioned(self, key: str, expected_version: str) -> bool: ...
+
+
+@dataclass(frozen=True)
+class TxnWrite:
+    """A conditional write within a multi-key transaction (BL-180).
+
+    ``expected_version`` is the content-hash token the key must currently
+    hold at commit time. ``None`` means "the key must be absent". A
+    backend implementing TransactionalMemoryStore commits the write iff
+    this precondition holds, atomically with every other operation in
+    the transaction; otherwise the whole transaction is a no-op.
+    ``ttl_seconds`` follows MemoryStore.write: ``None`` falls back to
+    the namespace default.
+    """
+
+    value: bytes
+    expected_version: str | None = None
+    ttl_seconds: float | None = None
+
+
+@dataclass(frozen=True)
+class TxnDelete:
+    """A conditional delete within a multi-key transaction (BL-180).
+
+    ``expected_version`` must equal the key's current content-hash token
+    at commit time. A delete with ``expected_version=None`` is not
+    accepted: deleting a known-absent key is a no-op, not a transaction
+    precondition; express "delete if exists with any version" by reading
+    the live version first.
+    """
+
+    expected_version: str
+
+
+@runtime_checkable
+class TransactionalMemoryStore(MemoryStore, Protocol):
+    """Atomic multi-key version-gated transactions (BL-180, extends BL-124).
+
+    Builds on VersionedMemoryStore: every operation in a transaction
+    carries an ``expected_version`` precondition referencing the same
+    content-hash token. The transaction commits iff every precondition
+    holds at commit time, atomically; otherwise it is a no-op and
+    ``transact`` returns ``None``.
+
+    Backend mappings:
+
+    - ``InMemoryStore``: serialized by the store's ``asyncio.Lock``.
+    - ``SQLiteStore``: ``BEGIN IMMEDIATE`` / per-key check / per-key
+      apply / ``COMMIT``.
+    - ``RedisStore``: ``WATCH(all keys)`` / read+verify / ``MULTI`` /
+      commands / ``EXEC``, with bounded WatchError retries.
+    - ``DynamoDBStore``: one ``TransactWriteItems`` call with a per-item
+      ``ConditionExpression``; ``TransactionCanceledException`` whose
+      reasons are all ``ConditionalCheckFailed`` is the no-op signal.
+
+    Backends without native multi-key atomicity (S3) do not implement
+    this Protocol; emulating it with per-key CAS would not be atomic in
+    the face of concurrent writers (ADR 0004 "don't fake it"). The
+    token is over the stored bytes, so (like CAS / VersionedMemoryStore)
+    it is not forwarded through ``EncryptedStore`` (a per-write random
+    GCM nonce makes the ciphertext token unstable).
+
+    A key cannot appear in both ``writes`` and ``deletes``; the
+    intersection is rejected at the contract boundary as a caller bug.
+
+    Best-effort give-up (BL-072 convention): an optimistic-concurrency
+    backend (Redis WATCH/MULTI) may exhaust its bounded retry budget on
+    sustained external contention; ``transact`` then returns ``None``
+    so a stuck retry loop cannot wedge the caller. The return surface
+    alone does not let a caller distinguish a real precondition failure
+    from contention exhaustion; a caller that needs the distinction
+    should re-read live tokens via ``read_versioned`` and decide.
+    """
+
+    async def transact(
+        self,
+        *,
+        writes: Mapping[str, TxnWrite] | None = None,
+        deletes: Mapping[str, TxnDelete] | None = None,
+    ) -> dict[str, str] | None:
+        """Atomically commit the writes and deletes.
+
+        Returns ``{key: new_token}`` for each written key on success, or
+        ``None`` on any precondition failure (no partial application).
+        An empty transaction (``writes`` and ``deletes`` both empty / None)
+        returns an empty dict. See the class docstring for the
+        best-effort give-up on retry-budget exhaustion.
+        """
+        ...
 
 
 @runtime_checkable

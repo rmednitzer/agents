@@ -16,6 +16,8 @@ from memory.store import (
     MemoryStore,
     ScannableStore,
     SweepableStore,
+    TxnWrite,
+    VersionedMemoryStore,
 )
 from memory.types import Namespace
 
@@ -51,6 +53,7 @@ async def test_satisfies_protocols(ddb_client: object) -> None:
     assert isinstance(s, ContentAddressableStore)
     assert isinstance(s, CASMemoryStore)
     assert isinstance(s, SweepableStore)
+    assert isinstance(s, VersionedMemoryStore)
 
 
 @pytest.mark.asyncio
@@ -144,6 +147,137 @@ async def test_batch_write_retries_unprocessed_items(ddb_client: object) -> None
     assert calls["n"] >= 2  # retried
     assert await s.read("a") == b"1"
     assert await s.read("b") == b"2"
+
+
+@pytest.mark.asyncio
+async def test_transact_no_op_on_missing_cancellation_reasons(
+    ddb_client: object,
+) -> None:
+    """Some SDK/service combinations omit ``CancellationReasons`` on a
+    cancelled transaction. The whitelist-based discriminator must still
+    map "no infrastructure code observed" to the BL-180 no-op contract
+    (return None), not raise (P1 review fix on PR #50)."""
+    from botocore.exceptions import ClientError
+
+    s = _store(ddb_client, consistent_read=True)
+    real = s._db.transact_write_items
+
+    def stripped(**kw: object) -> object:
+        try:
+            return real(**kw)
+        except ClientError as exc:
+            # Re-raise with CancellationReasons stripped, simulating the
+            # SDK/service combination that omits the field.
+            new_response = {k: v for k, v in exc.response.items() if k != "CancellationReasons"}
+            raise ClientError(new_response, exc.operation_name) from None
+
+    s._db.transact_write_items = stripped  # type: ignore[attr-defined]
+    await s.write("k", b"v")  # row exists
+    # Precondition: "must be absent" — fails for the existing row.
+    out = await s.transact(writes={"k": TxnWrite(value=b"new")})
+    assert out is None
+    assert await s.read("k") == b"v"
+
+
+@pytest.mark.asyncio
+async def test_transact_no_op_on_null_code_in_cancellation_reasons(
+    ddb_client: object,
+) -> None:
+    """When one item fails a condition and the others have a null
+    ``Code`` (rather than the marker string ``"None"``), the
+    discriminator must still treat it as the no-op contract (P1 review
+    fix on PR #50)."""
+    from botocore.exceptions import ClientError
+
+    s = _store(ddb_client, consistent_read=True)
+    real = s._db.transact_write_items
+
+    def null_marker(**kw: object) -> object:
+        try:
+            return real(**kw)
+        except ClientError as exc:
+            # Rewrite non-failing items' Code to None (the documented
+            # "successful entries can have a null code" case).
+            new_response = dict(exc.response)
+            reasons = list(new_response.get("CancellationReasons", []))
+            new_response["CancellationReasons"] = [
+                {**r, "Code": None} if r.get("Code") == "None" else r for r in reasons
+            ]
+            raise ClientError(new_response, exc.operation_name) from None
+
+    s._db.transact_write_items = null_marker  # type: ignore[attr-defined]
+    await s.write("a", b"v-a")  # row exists -> "must be absent" precondition fails
+    out = await s.transact(
+        writes={
+            "a": TxnWrite(value=b"new-a"),  # fails (exists)
+            "b": TxnWrite(value=b"new-b"),  # would succeed alone; null Code
+        }
+    )
+    assert out is None
+    assert await s.read("a") == b"v-a"
+    assert await s.read("b") is None
+
+
+@pytest.mark.asyncio
+async def test_transact_raises_on_infrastructure_cancellation(
+    ddb_client: object,
+) -> None:
+    """An infrastructure cancellation code (e.g. ProvisionedThroughputExceeded)
+    must propagate as ``ClientError``, not be silently swallowed as a
+    no-op. The whitelist guards against masking a real failure as a
+    precondition miss."""
+    from botocore.exceptions import ClientError
+
+    s = _store(ddb_client, consistent_read=True)
+
+    def throttling(**kw: object) -> object:
+        raise ClientError(
+            {
+                "Error": {"Code": "TransactionCanceledException", "Message": "x"},
+                "CancellationReasons": [
+                    {"Code": "ProvisionedThroughputExceeded", "Message": "throttled"}
+                ],
+            },
+            "TransactWriteItems",
+        )
+
+    s._db.transact_write_items = throttling  # type: ignore[attr-defined]
+    with pytest.raises(ClientError) as ei:
+        await s.transact(writes={"k": TxnWrite(value=b"v")})
+    assert ei.value.response["Error"]["Code"] == "TransactionCanceledException"
+
+
+@pytest.mark.asyncio
+async def test_write_versioned_against_legacy_row_without_ver_attribute(
+    ddb_client: object,
+) -> None:
+    """A row written before BL-180 has no ``ver`` attribute, so
+    write_versioned must refuse it (no silent success) and a plain
+    write() must restamp ``ver`` to unblock subsequent versioned writes
+    (the documented migration contract; ``LIMITATIONS.md`` L17 +
+    ``memory/README.md`` Versioned/transactional scope)."""
+    s = _store(ddb_client, consistent_read=True)
+    # Simulate a legacy row by writing directly via boto3 without ``ver``.
+    ddb_client.put_item(  # type: ignore[attr-defined]
+        TableName=_TABLE, Item={"pk": {"S": "ns::legacy"}, "v": {"B": b"old"}}
+    )
+    # read_versioned still works (hashes the live ``v``).
+    rv = await s.read_versioned("legacy")
+    assert rv is not None
+    legacy_value, legacy_token = rv
+    assert legacy_value == b"old"
+    # write_versioned with the correct hash fails: ``ver`` is absent so
+    # the conditional expression ``ver = :e`` does not match.
+    assert await s.write_versioned("legacy", b"new", expected_version=legacy_token) is None
+    # A plain write() upgrades the row by stamping ``ver``.
+    await s.write("legacy", b"upgraded")
+    rv2 = await s.read_versioned("legacy")
+    assert rv2 is not None
+    upgraded_token = rv2[1]
+    # Now versioned writes succeed.
+    new_token = await s.write_versioned("legacy", b"final", expected_version=upgraded_token)
+    assert new_token is not None
+    assert (await s.read("legacy")) == b"final"
 
 
 @pytest.mark.asyncio

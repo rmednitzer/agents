@@ -45,6 +45,9 @@ from memory.store import (
     SemanticHit,
     SemanticMemoryStore,
     SweepableStore,
+    TransactionalMemoryStore,
+    TxnDelete,
+    TxnWrite,
     VersionedMemoryStore,
 )
 from memory.sweep import TTLSweeper
@@ -91,6 +94,9 @@ __all__ = [
     "StaticKeyProvider",
     "SweepableStore",
     "TTLSweeper",
+    "TransactionalMemoryStore",
+    "TxnDelete",
+    "TxnWrite",
     "VersionedKeyProvider",
     "VersionedMemoryStore",
     "validate_key",

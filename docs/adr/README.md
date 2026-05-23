@@ -19,6 +19,7 @@ a later ADR supersedes an earlier one rather than editing it.
 | [0011](./0011-third-audit-and-l3-capability-wave.md) | Third code audit, L3 capability wave | Accepted | `BL-172`-`180` (third-audit fixes); `BL-111` key providers, `BL-122` ABAC + audited denial, `BL-124` MVCC tokens, `BL-130` evaluation gate, `BL-131` semantic memory. |
 | [0012](./0012-run-provenance-and-anthropic-capabilities.md) | Run provenance records, optional provider batch capabilities | Accepted | `BL-185` run-provenance records + offline gate, `BL-186`/`187` Anthropic/OpenAI batch + prompt-cache helpers. |
 | [0013](./0013-fifth-code-audit.md) | Fifth code audit, additive hardening | Accepted | `BL-188` read-vs-listing expiry boundary, `BL-189` OpenAI batch error label, `BL-190` LocalSkillSource symlink-safe clear, `BL-191` JSON span-list memory ceiling, `BL-192` provenance-gate registry validation. |
+| [0014](./0014-versioned-and-transactional-on-durable-adapters.md) | `VersionedMemoryStore` on durable adapters, `TransactionalMemoryStore` | Accepted | `BL-180`: Versioned on `RedisStore` + `DynamoDBStore`; new `TransactionalMemoryStore` Protocol + reference impls on InMemory/SQLite/Redis/DynamoDB. |
 
 See [docs/backlog.md](../backlog.md) for the line-item tracker and
 [CLAUDE.md](../../CLAUDE.md) for when a change needs a new ADR.

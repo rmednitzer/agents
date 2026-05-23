@@ -3,7 +3,7 @@
 Explicit scope boundaries and known gaps. Each limit states the current
 state, the implication, and the tracking item. This is pre-1.0
 infrastructure; the list is expected to shrink as L3 lands. Last
-reviewed: 2026-05-20.
+reviewed: 2026-05-23.
 
 ## L1. Pre-1.0, no release lifecycle
 
@@ -190,3 +190,24 @@ provider has already rotated past is not reachable for a legacy read
 (re-encrypt it through the old store first). New stores and
 already-versioned stores are unaffected. No tracking item (a
 documented operational contract, not a defect).
+
+## L17. DynamoDB versioned writes need a one-time row upgrade
+
+State: `DynamoDBStore._item` now stamps a `ver` attribute (the
+content-hash of `v`) on every write path (`BL-180`, ADR 0014), so
+`write_versioned` and `delete_versioned` can use a one-round-trip
+conditional expression on `ver`. A pre-BL-180 row was written without
+`ver`; `read` / `mget` / `list_keys` / `scan` / `read_versioned`
+continue to round-trip such a row (the read path hashes the live `v`
+for path-independence), but `write_versioned(expected_version=...)`
+against a row with no `ver` attribute fails its conditional
+(`attribute_not_exists(ver)` evaluates true), so the call returns
+`None` rather than silently succeeding. Implication: the migration
+contract is to perform a single plain `write()` per legacy row, which
+restamps `ver`; subsequent versioned writes succeed normally.
+Conceptually parallel to L16's authenticated-legacy-fallback for
+encryption, but without an in-line fallback because no atomic
+"compute-hash-server-side" primitive exists in DynamoDB (and the
+plain bytes can always be re-hashed by a fresh write, so the cost is
+bounded). No tracking item (a documented operational contract, not a
+defect).

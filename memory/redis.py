@@ -17,14 +17,18 @@ Design:
   ordering is Redis-defined, which the ScannableStore contract permits.
 - CAS via the canonical WATCH/MULTI optimistic transaction with bounded
   retries; on persistent contention it returns False (best-effort) so a
-  hot key cannot wedge the caller.
+  hot key cannot wedge the caller. ``VersionedMemoryStore`` (BL-180)
+  reuses the same WATCH/MULTI loop with a content-hash version check.
 """
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Mapping
 from typing import Any
 
 from memory._audit import MemoryAudit
+from memory.store import TxnDelete, TxnWrite
 from memory.types import Namespace
 from memory.validators import validate_key
 
@@ -160,11 +164,15 @@ class RedisStore:
         return ("" if next_cursor == 0 else str(next_cursor)), keys
 
     async def write_content(self, value: bytes, *, ttl_seconds: float | None = None) -> str:
-        import hashlib
-
         key = hashlib.sha256(value).hexdigest()
         await self.write(key, value, ttl_seconds=ttl_seconds)
         return key
+
+    # --- VersionedMemoryStore (BL-124, BL-180) ------------------------
+
+    @staticmethod
+    def _token(value: bytes) -> str:
+        return hashlib.sha256(value).hexdigest()
 
     async def compare_and_set(
         self,
@@ -220,3 +228,136 @@ class RedisStore:
                 self._audit.delete(key, existed=True)
                 return True
         return False
+
+    async def read_versioned(self, key: str) -> tuple[bytes, str] | None:
+        validate_key(key)
+        value = self._b(await self._r.get(self._k(key)))
+        self._audit.read(key, hit=value is not None)
+        if value is None:
+            return None
+        return value, self._token(value)
+
+    async def write_versioned(
+        self,
+        key: str,
+        value: bytes,
+        *,
+        expected_version: str | None = None,
+        ttl_seconds: float | None = None,
+    ) -> str | None:
+        # WATCH/MULTI mirror of compare_and_set: the precondition is the
+        # content-hash of the live value (path-independent, per the
+        # VersionedMemoryStore contract), not a bytes-equality check.
+        # Persistent WatchError contention exhausts the retry budget and
+        # returns None (the BL-072 CAS best-effort give-up; a hot key
+        # cannot wedge the caller).
+        validate_key(key)
+        ttl = self._ttl(ttl_seconds)
+        from redis import WatchError
+
+        rk = self._k(key)
+        for _ in range(_CAS_MAX_RETRIES):
+            async with self._r.pipeline() as pipe:
+                try:
+                    await pipe.watch(rk)
+                    current = self._b(await pipe.get(rk))
+                    live_version = None if current is None else self._token(current)
+                    if live_version != expected_version:
+                        await pipe.unwatch()
+                        return None
+                    pipe.multi()
+                    if ttl is not None:
+                        pipe.set(rk, value, px=max(1, int(ttl * 1000)))
+                    else:
+                        pipe.set(rk, value)
+                    await pipe.execute()
+                except WatchError:
+                    continue
+                self._audit.write(key, value_bytes=len(value), ttl_seconds=ttl)
+                return self._token(value)
+        return None
+
+    async def delete_versioned(self, key: str, expected_version: str) -> bool:
+        validate_key(key)
+        from redis import WatchError
+
+        rk = self._k(key)
+        for _ in range(_CAS_MAX_RETRIES):
+            async with self._r.pipeline() as pipe:
+                try:
+                    await pipe.watch(rk)
+                    current = self._b(await pipe.get(rk))
+                    if current is None or self._token(current) != expected_version:
+                        await pipe.unwatch()
+                        return False
+                    pipe.multi()
+                    pipe.delete(rk)
+                    await pipe.execute()
+                except WatchError:
+                    continue
+                self._audit.delete(key, existed=True)
+                return True
+        return False
+
+    # --- TransactionalMemoryStore (BL-180) ----------------------------
+
+    async def transact(
+        self,
+        *,
+        writes: Mapping[str, TxnWrite] | None = None,
+        deletes: Mapping[str, TxnDelete] | None = None,
+    ) -> dict[str, str] | None:
+        writes_d = dict(writes or {})
+        deletes_d = dict(deletes or {})
+        overlap = set(writes_d) & set(deletes_d)
+        if overlap:
+            raise ValueError(f"transaction key in both writes and deletes: {sorted(overlap)}")
+        for k in (*writes_d, *deletes_d):
+            validate_key(k)
+        if not writes_d and not deletes_d:
+            return {}
+        from redis import WatchError
+
+        all_rkeys = [self._k(k) for k in (*writes_d, *deletes_d)]
+        for _ in range(_CAS_MAX_RETRIES):
+            async with self._r.pipeline() as pipe:
+                try:
+                    await pipe.watch(*all_rkeys)
+                    # Verify every precondition with sequential GETs (no
+                    # MGET inside a WATCH/MULTI: GET runs immediately so
+                    # we can inspect the value before MULTI starts the
+                    # queued command block).
+                    for key, w in writes_d.items():
+                        current = self._b(await pipe.get(self._k(key)))
+                        live = None if current is None else self._token(current)
+                        if live != w.expected_version:
+                            await pipe.unwatch()
+                            return None
+                    for key, d in deletes_d.items():
+                        current = self._b(await pipe.get(self._k(key)))
+                        if current is None or self._token(current) != d.expected_version:
+                            await pipe.unwatch()
+                            return None
+                    pipe.multi()
+                    for key, w in writes_d.items():
+                        ttl = self._ttl(w.ttl_seconds)
+                        if ttl is not None:
+                            pipe.set(self._k(key), w.value, px=max(1, int(ttl * 1000)))
+                        else:
+                            pipe.set(self._k(key), w.value)
+                    for key in deletes_d:
+                        pipe.delete(self._k(key))
+                    await pipe.execute()
+                except WatchError:
+                    continue  # any watched key changed; retry
+                out = {key: self._token(w.value) for key, w in writes_d.items()}
+                for key, w in writes_d.items():
+                    self._audit.write(
+                        key,
+                        value_bytes=len(w.value),
+                        ttl_seconds=self._ttl(w.ttl_seconds),
+                    )
+                for key in deletes_d:
+                    self._audit.delete(key, existed=True)
+                return out
+        return None  # persistent contention; best-effort give up
