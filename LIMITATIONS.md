@@ -19,13 +19,39 @@ Implication: provider wiring, real tool-call behaviour, rate limits, and
 provider failure modes are not yet exercised end to end. Tracking:
 `BL-120`.
 
-## L3. Skill execution is gated, not sandboxed
+## L3. Skill execution is gated, with opt-in subprocess isolation
 
-State: archive extraction is bounded and `contract.py` execution is
-refused by default for installed skills (ADR 0008). A skill loaded with
-`allow_contract=True` still runs arbitrary Python. Implication: only
-enable contract execution for a source you trust (immutable ref plus
-checksum). Tracking: `BL-133` (true isolation).
+State: archive extraction is bounded; `contract.py` execution is
+refused by default for installed skills (`allow_contract=False`,
+ADR 0008). When a caller opts in (`allow_contract=True`) the
+default in-process executor runs the contract in the parent
+interpreter (full trust). A `SubprocessSkillContractExecutor`
+(`BL-133`, ADR 0016) is the in-tree opt-in second tier: import and
+predicate evaluation both run in a long-lived Python subprocess
+with `resource.setrlimit` caps on CPU time, address space, and
+open files. Crash isolation is real (a contract that segfaults or
+recurses past the stack does not kill the harness); resource
+exhaustion is bounded; predicate exceptions surface as
+`SkillContractExecutorError` and the harness keeps running.
+
+What the subprocess executor does NOT enforce: filesystem,
+network, or syscall isolation. The child inherits the parent's
+namespace. For a bundle that must be denied filesystem or network
+access (untrusted-source threat model), supply a custom
+`SkillContractExecutor` over a container, seccomp profile, or
+mount namespace; the Protocol is the in-tree extension point and
+the implementation is intentionally out-of-tree (ADR 0001 no-vendor-
+binding stance, matching the `KeyProvider` / `Embedder` /
+`SkillSource` pattern).
+
+Implication: enable contract execution only for a source whose
+trust matches the executor's posture. Immutable ref + checksum +
+`InProcess` executor for a fully-trusted source; immutable ref +
+checksum + `Subprocess` executor for a source you trust to read
+files / use network but not to crash or starve the harness; a
+container-backed executor for an untrusted source. No tracking
+item (the operational contract is now documented and the in-tree
+tier is delivered).
 
 ## L4. Supply-chain attestation incomplete
 

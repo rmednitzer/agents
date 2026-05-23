@@ -3,6 +3,57 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] BL-133: skill contract execution isolation (ADR 0016, 2026-05-23)
+
+The long-standing L3 "the gate is defence in depth, not a sandbox"
+limitation now has an opt-in in-tree second tier. The default
+behaviour is unchanged for every existing caller.
+
+### Added
+
+- `skills.execution` module with the `SkillContractExecutor` Protocol
+  (`BL-133`, ADR 0016): how a skill's `contract.py` is loaded and
+  evaluated. Two in-tree references:
+  - `InProcessSkillContractExecutor` (default): the L1 behaviour
+    preserved exactly (import in this interpreter; predicates
+    evaluate here).
+  - `SubprocessSkillContractExecutor`: load and evaluate in a
+    long-lived Python subprocess with `resource.setrlimit` caps on
+    CPU time, address space, and open files (POSIX). Crash isolation
+    is real; resource exhaustion is bounded; predicate exceptions
+    surface as `SkillContractExecutorError` without killing the
+    harness. IPC framing: 4-byte length prefix + body; parent->child
+    pickled (parent owns the source), child->parent JSON (so a
+    malicious bundle cannot RCE the parent).
+- `skills._executor_child` module: the subprocess entry point. Reads
+  limits + contract path from the environment, applies
+  `setrlimit`, imports the contract, ships metadata, then services
+  predicate-evaluation requests.
+- `SkillContractExecutorError`: distinguishes isolation-layer
+  failures (subprocess crashed, IPC framing broke) from
+  `SkillManifestError` (the documented "this contract is
+  malformed").
+- New regression suite `tests/skills/test_bl133_execution_isolation.py`
+  (12 tests): Protocol satisfaction; in-process load + evaluate;
+  subprocess load + evaluate with IPC round-trip; missing-export /
+  malformed-import / predicate-raise / child-crash boundaries;
+  loader-level forwarding; default backward-compatibility.
+- ADR 0016 (`docs/adr/0016-skill-execution-isolation.md`): the design
+  decision and the trust framework.
+
+### Changed
+
+- `Skill` gains an opt-in `_executor` field. `Skill.contract()` uses
+  it when set; defaults preserve the legacy in-process call path
+  (additive to L1, ADR 0007).
+- `discover_skill(executor=None)` and `install_skill(executor=None)`
+  forward the executor to the constructed Skill.
+- `LIMITATIONS.md` L3 is rewritten: the gate is no longer "no
+  isolation" but "default in-process, opt-in subprocess + rlimit,
+  out-of-tree container for capability isolation".
+- `docs/schema/skill-manifest.json` is unchanged; no manifest-level
+  surface changed.
+
 ## [Unreleased] ADR 0015 deferred close (BL-209-BL-211, 2026-05-23)
 
 The three items ADR 0015 flagged as deferred (M3 / M6 / H5 in the

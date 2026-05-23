@@ -116,7 +116,12 @@ def _split_frontmatter(text: str, path: Path) -> tuple[str, str]:
     return frontmatter_text, body
 
 
-def discover_skill(skill_dir: Path, *, allow_contract: bool = True) -> Skill:
+def discover_skill(
+    skill_dir: Path,
+    *,
+    allow_contract: bool = True,
+    executor: Any | None = None,
+) -> Skill:
     """Discover a single skill from its directory.
 
     Args:
@@ -126,6 +131,14 @@ def discover_skill(skill_dir: Path, *, allow_contract: bool = True) -> Skill:
             executed; ``Skill.contract()`` raises instead. Defaults to
             True (L1 behaviour: in-tree skills are trusted). Untrusted
             sources should pass False (``install_skill`` does).
+        executor: Optional ``SkillContractExecutor`` (`BL-133`,
+            ADR 0016). When None, ``Skill.contract()`` uses the in-
+            process default (the L1 behaviour: import here, evaluate
+            here). When a ``SubprocessSkillContractExecutor`` is
+            supplied, both import and predicate evaluation happen in
+            a subprocess with ``resource.setrlimit`` caps, giving
+            crash + resource isolation on opt-in. Additive: existing
+            callers do not change.
 
     Returns:
         A Skill with eagerly-loaded manifest and discovered resource
@@ -162,6 +175,7 @@ def discover_skill(skill_dir: Path, *, allow_contract: bool = True) -> Skill:
         assets=assets,
         contract_path=contract_path,
         _allow_contract=allow_contract,
+        _executor=executor,
     )
 
 

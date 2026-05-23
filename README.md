@@ -10,9 +10,10 @@ L1 framework, the full L2 implementation wave, the L3 default-path
 wiring + audit wave, the third-audit + L3 capability wave, the
 run-provenance + provider-batch wave, the fifth-code-audit
 hardening (plus the post-audit approval-resume binding fix, `BL-193`),
-the BL-180 durable-adapter MVCC + transactional Protocol wave, and
-the sixth-code-audit hardening (`BL-197`-`208` plus the ADR 0015
-deferred close `BL-209`-`211`) on `main` (see
+the BL-180 durable-adapter MVCC + transactional Protocol wave, the
+sixth-code-audit hardening (`BL-197`-`208` plus the ADR 0015
+deferred close `BL-209`-`211`), and the BL-133 skill execution
+isolation Protocol + subprocess reference on `main` (see
 [docs/backlog.md](./docs/backlog.md),
 [ADR 0007](./docs/adr/0007-l2-implementation-wave.md),
 [ADR 0010](./docs/adr/0010-l3-default-path-wiring-and-audit-wave.md),
@@ -20,7 +21,8 @@ deferred close `BL-209`-`211`) on `main` (see
 [ADR 0012](./docs/adr/0012-run-provenance-and-anthropic-capabilities.md),
 [ADR 0013](./docs/adr/0013-fifth-code-audit.md),
 [ADR 0014](./docs/adr/0014-versioned-and-transactional-on-durable-adapters.md),
-[ADR 0015](./docs/adr/0015-sixth-code-audit.md)).
+[ADR 0015](./docs/adr/0015-sixth-code-audit.md),
+[ADR 0016](./docs/adr/0016-skill-execution-isolation.md)).
 Every L2/L3 change is additive to the L1 Protocols: new optional
 parameters, new modules, and side-by-side Protocols; nothing in the L1
 surface was removed. The package imports and type-checks with no
