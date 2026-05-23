@@ -3,6 +3,56 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] BL-213: BoundedSweepableStore on SQLiteStore (2026-05-23)
+
+The natural durable-single-host counterpart to `BL-212`'s
+`InMemoryStore` reference (parallel to the `BL-124` SQLite reference
+for the version-token Protocol). Adds the second adapter behind the
+new Protocol; the remaining durable backends stay tracked under
+`BL-135` and each needs an auxiliary index because none has a native
+insertion-order column the way SQLite's rowid does.
+
+### Added
+
+- `SQLiteStore.evict_to_capacity(max_keys: int) -> int`: runs the
+  count + select-oldest + delete inside one `BEGIN IMMEDIATE`
+  transaction (parity with the BL-161 mset/mdelete transactional
+  shape) so a concurrent writer cannot interleave between the
+  live-count read and the delete. Oldest-first is by SQLite rowid
+  (the engine's insertion-order key); the SQL counterpart of the
+  BL-195 `is_live` predicate (`expires_at IS NULL OR expires_at >= :now`)
+  filters expired-but-unswept rows out of the live count and the
+  eviction candidate set. Audit emission per evicted key (BL-040).
+- New regression suite `tests/memory/test_bl213_sqlite_bounded_sweeper.py`
+  (12 tests): Protocol satisfaction; oldest-first eviction by rowid;
+  the overwrite-shifts-to-newest contract (the SQLite divergence
+  from InMemoryStore's first-write FIFO, pinned by test); no-op at
+  and under the cap; non-positive cap rejection; expired-but-unswept
+  rows excluded from the live count; per-key audit emission; sweeper
+  integration on both age and capacity passes against a durable
+  SQLite store.
+
+### Changed
+
+- `memory/sqlite.py` module docstring now lists `BoundedSweepable`
+  among the implemented extension Protocols, with the rowid-based
+  ordering and the `INSERT OR REPLACE` overwrite-shifts-to-newest
+  semantic divergence from `InMemoryStore` called out explicitly.
+- `LIMITATIONS.md` L5 notes the SQLite delivery alongside
+  InMemoryStore; the remaining durable adapters (`RedisStore`,
+  `DynamoDBStore`, `S3Store`) stay tracked because none has a native
+  insertion-order column.
+- `memory/README.md` capability bullet now lists `InMemoryStore` and
+  `SQLiteStore` as the two backends behind `BoundedSweepableStore`,
+  with a note on the SQLite-specific ordering semantic.
+
+### Documentation
+
+- `docs/backlog.md`: `BL-213` added (resolved) under the existing
+  "Sweeper size bound (2026-05-23)" section; `BL-135`'s
+  delivered/remaining narrative updated to reflect the second
+  adapter shipped.
+
 ## [Unreleased] BL-212: sweeper size bound (BL-135 size-bound half, 2026-05-23)
 
 The size-bound half of `BL-135` lands as a separate ID (`BL-212`) so

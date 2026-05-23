@@ -7,8 +7,13 @@ worker thread (``asyncio.to_thread``) and are serialized by an
 asyncio.Lock so the single connection is never touched concurrently.
 
 Implements MemoryStore plus every extension Protocol: Batch, Scan,
-ContentAddressable, CAS (via ``BEGIN IMMEDIATE`` transactions), and
-Sweepable. Expiry is lazy on access (rows are deleted when found
+ContentAddressable, CAS (via ``BEGIN IMMEDIATE`` transactions),
+Sweepable, BoundedSweepable (`BL-213`, eviction in SQLite rowid order
+which equals insertion order; INSERT OR REPLACE on an existing key
+assigns a fresh rowid so an overwrite shifts the key to the *newest*
+position, a documented semantic divergence from the InMemoryStore
+reference which keeps the original dict slot), Versioned, and
+Transactional. Expiry is lazy on access (rows are deleted when found
 expired); ``sweep_expired`` / TTLSweeper reclaim space proactively.
 """
 
@@ -442,3 +447,60 @@ class SQLiteStore:
 
         async with self._lock:
             return await asyncio.to_thread(_sweep)
+
+    # --- BoundedSweepableStore (BL-213, BL-135 size-bound on durable) -
+
+    async def evict_to_capacity(self, max_keys: int) -> int:
+        if max_keys <= 0:
+            raise ValueError("max_keys must be positive")
+
+        def _evict() -> list[str]:
+            # SQL counterpart of memory._expiry.is_live (the live half of
+            # the BL-195 invariant): an entry is live at the instant
+            # ``now <= expires_at`` (`expires_at >= :now`). We count
+            # live rows, compute the overflow, then identify the
+            # ``overflow`` oldest live rows (SQLite rowid is the
+            # insertion-order key; an INSERT OR REPLACE on an existing
+            # primary key deletes-then-inserts so an overwrite shifts
+            # the row to a higher rowid). The whole operation runs in
+            # ``BEGIN IMMEDIATE`` so a concurrent writer cannot interleave
+            # between count and delete (parity with mset/mdelete's
+            # transactional shape, BL-161).
+            now = time.time()
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                cur = self._conn.execute(
+                    f'SELECT COUNT(*) FROM "{self._table}" '
+                    f"WHERE expires_at IS NULL OR expires_at >= ?",
+                    (now,),
+                )
+                live_count = int(cur.fetchone()[0])
+                overflow = live_count - max_keys
+                if overflow <= 0:
+                    self._conn.execute("COMMIT")
+                    return []
+                cur = self._conn.execute(
+                    f'SELECT rowid, key FROM "{self._table}" '
+                    f"WHERE expires_at IS NULL OR expires_at >= ? "
+                    f"ORDER BY rowid ASC LIMIT ?",
+                    (now, overflow),
+                )
+                rows = cur.fetchall()
+                rowids = [int(r[0]) for r in rows]
+                keys = [str(r[1]) for r in rows]
+                placeholders = ",".join("?" * len(rowids))
+                self._conn.execute(
+                    f'DELETE FROM "{self._table}" WHERE rowid IN ({placeholders})',
+                    rowids,
+                )
+                self._conn.execute("COMMIT")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
+            return keys
+
+        async with self._lock:
+            evicted = await asyncio.to_thread(_evict)
+        for key in evicted:
+            self._audit.delete(key, existed=True)
+        return len(evicted)
