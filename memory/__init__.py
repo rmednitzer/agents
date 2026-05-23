@@ -32,7 +32,7 @@ from memory.encryption import (
 )
 from memory.errors import AccessDenied, MemoryError, NamespaceViolation
 from memory.inmemory import InMemoryStore
-from memory.redis import RedisStore
+from memory.redis import BoundedRedisStore, RedisStore
 from memory.s3 import S3Store
 from memory.semantic import Embedder, InMemorySemanticStore
 from memory.sqlite import SQLiteStore
@@ -69,6 +69,7 @@ __all__ = [
     "AttributeACL",
     "AttributeRule",
     "BatchMemoryStore",
+    "BoundedRedisStore",
     "BoundedSweepableStore",
     "CASMemoryStore",
     "ContentAddressableStore",
