@@ -24,6 +24,7 @@ from typing import Any
 
 from harness.sinks import EventSink
 from memory._audit import MemoryAudit
+from memory.store import TxnDelete, TxnWrite
 from memory.types import Namespace
 from memory.validators import validate_key
 
@@ -275,6 +276,52 @@ class InMemoryStore:
             del self._data[key]
         self._audit.delete(key, existed=True)
         return True
+
+    # --- TransactionalMemoryStore (BL-180) ----------------------------
+
+    async def transact(
+        self,
+        *,
+        writes: Mapping[str, TxnWrite] | None = None,
+        deletes: Mapping[str, TxnDelete] | None = None,
+    ) -> dict[str, str] | None:
+        writes_d = dict(writes or {})
+        deletes_d = dict(deletes or {})
+        overlap = set(writes_d) & set(deletes_d)
+        if overlap:
+            raise ValueError(f"transaction key in both writes and deletes: {sorted(overlap)}")
+        for k in (*writes_d, *deletes_d):
+            validate_key(k)
+        if not writes_d and not deletes_d:
+            return {}
+        async with self._lock:
+            now = time.time()
+            for key, w in writes_d.items():
+                current = self._live_value(key, now)
+                live_version = None if current is None else self._token(current)
+                if live_version != w.expected_version:
+                    return None
+            for key, d in deletes_d.items():
+                current = self._live_value(key, now)
+                if current is None or self._token(current) != d.expected_version:
+                    return None
+            out: dict[str, str] = {}
+            for key, w in writes_d.items():
+                effective_ttl = self._effective_ttl(w.ttl_seconds)
+                expires_at = now + effective_ttl if effective_ttl is not None else None
+                self._data[key] = _Entry(value=w.value, expires_at=expires_at)
+                out[key] = self._token(w.value)
+            for key in deletes_d:
+                self._data.pop(key, None)
+        for key, w in writes_d.items():
+            self._audit.write(
+                key,
+                value_bytes=len(w.value),
+                ttl_seconds=self._effective_ttl(w.ttl_seconds),
+            )
+        for key in deletes_d:
+            self._audit.delete(key, existed=True)
+        return out
 
     # --- SweepableStore (BL-080) --------------------------------------
 

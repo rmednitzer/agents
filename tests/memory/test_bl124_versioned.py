@@ -1,4 +1,13 @@
-"""Tests for BL-124: VersionedMemoryStore MVCC version tokens."""
+"""Tests for BL-124 / BL-180: VersionedMemoryStore MVCC version tokens.
+
+The same generic boundary tests run against every backend that
+implements ``VersionedMemoryStore``: the InMemory / SQLite reference
+adapters (BL-124) plus the durable Redis / DynamoDB adapters (BL-180).
+S3 is intentionally excluded for the same reason it does not implement
+CAS: no atomic compare-and-set on object content (ADR 0004 "don't fake
+it"); a parametrize id pulling moto/fakeredis is skipped cleanly when
+the optional driver is absent.
+"""
 
 from __future__ import annotations
 
@@ -16,14 +25,41 @@ def _ns(retention: float | None = None) -> Namespace:
     return Namespace(name="ns", workload="w", retention_seconds=retention)
 
 
-@pytest.fixture(params=["inmemory", "sqlite"])
+@pytest.fixture(params=["inmemory", "sqlite", "redis", "dynamodb"])
 def store(request: pytest.FixtureRequest) -> Iterator[VersionedMemoryStore]:
-    if request.param == "inmemory":
+    backend = request.param
+    if backend == "inmemory":
         yield InMemoryStore(_ns())
-    else:
+        return
+    if backend == "sqlite":
         s = SQLiteStore(_ns())
         yield s
         s.close()
+        return
+    if backend == "redis":
+        fakeredis = pytest.importorskip("fakeredis")
+        from memory.redis import RedisStore
+
+        client = fakeredis.aioredis.FakeRedis()
+        yield RedisStore(_ns(), client=client)
+        return
+    if backend == "dynamodb":
+        moto = pytest.importorskip("moto")
+        import boto3
+
+        from memory.dynamodb import DynamoDBStore
+
+        with moto.mock_aws():
+            client = boto3.client("dynamodb", region_name="us-east-1")
+            client.create_table(
+                TableName="kv",
+                KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
+                AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}],
+                BillingMode="PAY_PER_REQUEST",
+            )
+            yield DynamoDBStore(_ns(), "kv", client=client, consistent_read=True)
+        return
+    raise AssertionError(f"unknown backend: {backend}")  # pragma: no cover
 
 
 def test_satisfies_protocol(store: VersionedMemoryStore) -> None:

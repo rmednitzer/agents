@@ -38,6 +38,9 @@ from memory.store import (
     MemoryStore,
     ScannableStore,
     SweepableStore,
+    TransactionalMemoryStore,
+    TxnDelete,
+    TxnWrite,
     VersionedMemoryStore,
 )
 from memory.types import Namespace
@@ -338,6 +341,31 @@ class _ACLVersionedMixin:
         return await self._inner.delete_versioned(key, expected_version)
 
 
+class _ACLTransactionalMixin:
+    # BL-180 multi-key transactions forwarded through ACL (BL-156): the
+    # guard runs once per touched key before the inner store sees the
+    # call, so a partial-permission principal cannot smuggle an
+    # un-authorized write into an otherwise legal batch. ``transact`` is
+    # all-or-nothing, so a guard denial aborts the whole call (raising)
+    # rather than dropping individual ops.
+    _inner: TransactionalMemoryStore
+    _guard: Callable[[Operation, str], None]
+
+    async def transact(
+        self,
+        *,
+        writes: Mapping[str, TxnWrite] | None = None,
+        deletes: Mapping[str, TxnDelete] | None = None,
+    ) -> dict[str, str] | None:
+        for key in writes or {}:
+            validate_key(key)
+            self._guard("write", key)
+        for key in deletes or {}:
+            validate_key(key)
+            self._guard("delete", key)
+        return await self._inner.transact(writes=writes, deletes=deletes)
+
+
 def wrap_acl(
     inner: MemoryStore,
     policy: AccessPolicy,
@@ -373,6 +401,8 @@ def wrap_acl(
         mixins.append(_ACLSweepMixin)
     if isinstance(inner, VersionedMemoryStore):
         mixins.append(_ACLVersionedMixin)
+    if isinstance(inner, TransactionalMemoryStore):
+        mixins.append(_ACLTransactionalMixin)
     if not mixins:
         return ACLStore(inner, policy, principal, sink=sink, base_event_fields=base_event_fields)
     cls = type("ACLStore", (ACLStore, *mixins), {})

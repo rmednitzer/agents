@@ -14,6 +14,7 @@ from memory.store import (
     ContentAddressableStore,
     MemoryStore,
     ScannableStore,
+    VersionedMemoryStore,
 )
 from memory.types import Namespace
 
@@ -34,6 +35,7 @@ async def test_satisfies_protocols() -> None:
     assert isinstance(s, ScannableStore)
     assert isinstance(s, ContentAddressableStore)
     assert isinstance(s, CASMemoryStore)
+    assert isinstance(s, VersionedMemoryStore)
 
 
 @pytest.mark.asyncio

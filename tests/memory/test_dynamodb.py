@@ -16,6 +16,7 @@ from memory.store import (
     MemoryStore,
     ScannableStore,
     SweepableStore,
+    VersionedMemoryStore,
 )
 from memory.types import Namespace
 
@@ -51,6 +52,7 @@ async def test_satisfies_protocols(ddb_client: object) -> None:
     assert isinstance(s, ContentAddressableStore)
     assert isinstance(s, CASMemoryStore)
     assert isinstance(s, SweepableStore)
+    assert isinstance(s, VersionedMemoryStore)
 
 
 @pytest.mark.asyncio
@@ -144,6 +146,38 @@ async def test_batch_write_retries_unprocessed_items(ddb_client: object) -> None
     assert calls["n"] >= 2  # retried
     assert await s.read("a") == b"1"
     assert await s.read("b") == b"2"
+
+
+@pytest.mark.asyncio
+async def test_write_versioned_against_legacy_row_without_ver_attribute(
+    ddb_client: object,
+) -> None:
+    """A row written before BL-180 has no ``ver`` attribute, so
+    write_versioned must refuse it (no silent success) and a plain
+    write() must restamp ``ver`` to unblock subsequent versioned writes
+    (the documented migration contract; memory/README.md, L17)."""
+    s = _store(ddb_client, consistent_read=True)
+    # Simulate a legacy row by writing directly via boto3 without ``ver``.
+    ddb_client.put_item(  # type: ignore[attr-defined]
+        TableName=_TABLE, Item={"pk": {"S": "ns::legacy"}, "v": {"B": b"old"}}
+    )
+    # read_versioned still works (hashes the live ``v``).
+    rv = await s.read_versioned("legacy")
+    assert rv is not None
+    legacy_value, legacy_token = rv
+    assert legacy_value == b"old"
+    # write_versioned with the correct hash fails: ``ver`` is absent so
+    # the conditional expression ``ver = :e`` does not match.
+    assert await s.write_versioned("legacy", b"new", expected_version=legacy_token) is None
+    # A plain write() upgrades the row by stamping ``ver``.
+    await s.write("legacy", b"upgraded")
+    rv2 = await s.read_versioned("legacy")
+    assert rv2 is not None
+    upgraded_token = rv2[1]
+    # Now versioned writes succeed.
+    new_token = await s.write_versioned("legacy", b"final", expected_version=upgraded_token)
+    assert new_token is not None
+    assert (await s.read("legacy")) == b"final"
 
 
 @pytest.mark.asyncio

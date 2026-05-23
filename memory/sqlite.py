@@ -24,6 +24,7 @@ from typing import Any
 
 from harness.sinks import EventSink
 from memory._audit import MemoryAudit
+from memory.store import TxnDelete, TxnWrite
 from memory.types import Namespace
 from memory.validators import validate_key
 
@@ -359,6 +360,67 @@ class SQLiteStore:
         if ok:
             self._audit.delete(key, existed=True)
         return ok
+
+    # --- TransactionalMemoryStore (BL-180) ----------------------------
+
+    async def transact(
+        self,
+        *,
+        writes: Mapping[str, TxnWrite] | None = None,
+        deletes: Mapping[str, TxnDelete] | None = None,
+    ) -> dict[str, str] | None:
+        writes_d = dict(writes or {})
+        deletes_d = dict(deletes or {})
+        overlap = set(writes_d) & set(deletes_d)
+        if overlap:
+            raise ValueError(f"transaction key in both writes and deletes: {sorted(overlap)}")
+        for k in (*writes_d, *deletes_d):
+            validate_key(k)
+        if not writes_d and not deletes_d:
+            return {}
+
+        def _txn() -> dict[str, str] | None:
+            now = time.time()
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                for key, w in writes_d.items():
+                    current = self._db_get(key)
+                    live_version = None if current is None else self._token(current)
+                    if live_version != w.expected_version:
+                        self._conn.execute("ROLLBACK")
+                        return None
+                for key, d in deletes_d.items():
+                    current = self._db_get(key)
+                    if current is None or self._token(current) != d.expected_version:
+                        self._conn.execute("ROLLBACK")
+                        return None
+                out: dict[str, str] = {}
+                for key, w in writes_d.items():
+                    effective_ttl = self._effective_ttl(w.ttl_seconds)
+                    expires_at = now + effective_ttl if effective_ttl is not None else None
+                    self._db_put(key, w.value, expires_at)
+                    out[key] = self._token(w.value)
+                for key in deletes_d:
+                    self._conn.execute(f'DELETE FROM "{self._table}" WHERE key=?', (key,))
+                self._conn.execute("COMMIT")
+                return out
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
+
+        async with self._lock:
+            out = await asyncio.to_thread(_txn)
+        if out is None:
+            return None
+        for key, w in writes_d.items():
+            self._audit.write(
+                key,
+                value_bytes=len(w.value),
+                ttl_seconds=self._effective_ttl(w.ttl_seconds),
+            )
+        for key in deletes_d:
+            self._audit.delete(key, existed=True)
+        return out
 
     # --- SweepableStore (BL-080) --------------------------------------
 

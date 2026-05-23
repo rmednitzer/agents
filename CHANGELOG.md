@@ -3,6 +3,86 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] BL-180: VersionedMemoryStore on durable adapters + TransactionalMemoryStore (2026-05-23)
+
+See [ADR 0014](./docs/adr/0014-versioned-and-transactional-on-durable-adapters.md).
+Closes the BL-124 remainder: brings the MVCC content-hash version
+Protocol to the durable network adapters and adds a new
+`TransactionalMemoryStore` Protocol for native multi-key transactions.
+Additive: defaults reproduce prior behaviour byte-for-byte; `S3Store`
+stays excluded for the same reason it does not implement CAS.
+
+### Added
+
+- `memory.RedisStore.read_versioned` / `write_versioned` /
+  `delete_versioned` (`BL-180`). WATCH/MULTI/EXEC mirror of
+  `compare_and_set` with the precondition switched to a content-hash
+  comparison. Persistent contention exhausts the bounded retry budget
+  and returns `None` / `False` per the BL-072 best-effort convention.
+- `memory.DynamoDBStore.read_versioned` / `write_versioned` /
+  `delete_versioned` (`BL-180`). One-round-trip conditional PUT/DELETE
+  against a server-stored `ver` attribute (the content-hash of the
+  value at write time). `read_versioned` hashes the live `v` for
+  path-independence; `write_versioned` and `delete_versioned` use
+  `ConditionExpression = "ver = :e AND (attribute_not_exists(exp) OR
+  exp >= :now)"`. The `exp >= :now` live boundary matches `_live_item`
+  (BL-157 / BL-177 / BL-188 expiry-class).
+- `memory.TransactionalMemoryStore` Protocol + `memory.TxnWrite` and
+  `memory.TxnDelete` frozen dataclasses (`BL-180`). Atomic multi-key
+  version-gated transactions: each operation carries an
+  `expected_version` referencing the same content-hash token; the
+  transaction commits iff every precondition holds, otherwise it is a
+  no-op (`transact` returns `None`). An empty transaction returns `{}`;
+  a key in both `writes` and `deletes` is rejected at the contract
+  boundary as a caller bug.
+- `memory.InMemoryStore.transact` (lock-serialized reference impl;
+  `BL-180`).
+- `memory.SQLiteStore.transact` (one `BEGIN IMMEDIATE` per call, per-key
+  precondition check then per-key apply, `ROLLBACK` on a miss; `BL-180`).
+- `memory.RedisStore.transact` (`WATCH(all keys)` / sequential `GET`s /
+  hash check / `MULTI` / queued commands / `EXEC`, with `WatchError`
+  bounded retry; `BL-180`).
+- `memory.DynamoDBStore.transact` (one `transact_write_items` call with
+  a per-item `ConditionExpression`; the AWS 100-item hard limit is
+  pre-checked at the contract boundary;
+  `TransactionCanceledException` whose `CancellationReasons` are all
+  `ConditionalCheckFailed` is the no-op signal, any other cancellation
+  code propagates; `BL-180`).
+- `memory.wrap_acl` gains `_ACLTransactionalMixin` so an ACL-wrapped
+  transactional backend keeps `isinstance(wrapped,
+  TransactionalMemoryStore)` truthful (BL-156 contract). The guard runs
+  per touched key before the inner call; an unauthorised op raises
+  `AccessDenied` and aborts the whole transaction (all-or-nothing).
+- `tests/memory/test_bl124_versioned.py` is now parametrised over all
+  four backends (`inmemory`, `sqlite`, `redis`, `dynamodb`); the new
+  `tests/memory/test_bl180_transactional.py` covers the transactional
+  Protocol with the same parametrisation. A
+  `test_write_versioned_against_legacy_row_without_ver_attribute`
+  regression covers the documented DynamoDB legacy-row contract.
+
+### Changed
+
+- `memory.DynamoDBStore._item` now stamps `ver = sha256(value)` on
+  every write path (`write`, `mset`, `compare_and_set`,
+  `write_versioned`, transactional `Put`). The attribute is consistent
+  with `v` by construction; pre-BL-180 rows continue to round-trip
+  through the existing `_live_item` path and remain readable via
+  `read` / `mget` / `list_keys` / `scan` / `read_versioned`. A
+  pre-BL-180 row without `ver` cannot be `write_versioned`-updated
+  until a single plain `write()` upgrades it (the documented migration
+  contract; `LIMITATIONS.md` L17).
+
+### Documentation
+
+- New `docs/adr/0014-versioned-and-transactional-on-durable-adapters.md`.
+- `memory/README.md`: removed the "tracked remainder" note for the
+  durable Versioned adapters; added a row for `TransactionalMemoryStore`
+  and the `wrap_acl` forwarding + `wrap_encrypted` non-forwarding
+  rationale.
+- `STATUS.md`: new phase row for `BL-180` / ADR 0014.
+- `LIMITATIONS.md`: new L17 documenting the DynamoDB legacy-row
+  migration contract; the L5 / L12 references unchanged.
+
 ## [Unreleased] CI gate hardening: dependency-audit env + disputed pyjwt CVE (2026-05-20)
 
 A CI-policy fix folded into PR #47: the `dependency-audit` job started

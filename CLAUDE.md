@@ -46,9 +46,11 @@ ADRs `0007` (L2), `0008`/`0009` (L3 entry + first audit), `0010`
 (default-path wiring, second audit, governance maturity), `0011`
 (third audit; key providers, attribute-based ACL, MVCC tokens,
 semantic memory, the evaluation gate), `0012` (run-provenance records,
-optional provider batch capabilities), and `0013` (fifth audit;
+optional provider batch capabilities), `0013` (fifth audit;
 read-vs-listing expiry boundary, the JSON span-list memory ceiling,
-provider-batch and provenance-gate hardening).
+provider-batch and provenance-gate hardening), and `0014` (`BL-180`:
+`VersionedMemoryStore` on the durable adapters and the new
+`TransactionalMemoryStore` Protocol for atomic multi-key transactions).
 
 ## Conventions
 
@@ -130,7 +132,7 @@ The PydanticAI runtime is tested deterministically with `TestModel`/`FunctionMod
 
 ## Status and limitations
 
-Phase and document maturity: `STATUS.md`. Explicit scope boundaries and known gaps: `LIMITATIONS.md`. Material changes by phase: `CHANGELOG.md`. Versioning, release, and operations policy: `docs/releasing.md`. ADR index: `docs/adr/README.md`. The L3 roadmap is tiered in `docs/backlog.md`; cross-cutting decisions are ADR 0007 (L2), ADR 0008/0009 (L3 entry + first audit), ADR 0010 (default-path wiring, second audit, governance and release maturity), ADR 0011 (third audit; key providers, attribute-based ACL, MVCC tokens, semantic memory, the evaluation gate), ADR 0012 (run-provenance records, optional provider batch capabilities), and ADR 0013 (fifth audit; the read-vs-listing expiry boundary and provider-batch/provenance-gate hardening).
+Phase and document maturity: `STATUS.md`. Explicit scope boundaries and known gaps: `LIMITATIONS.md`. Material changes by phase: `CHANGELOG.md`. Versioning, release, and operations policy: `docs/releasing.md`. ADR index: `docs/adr/README.md`. The L3 roadmap is tiered in `docs/backlog.md`; cross-cutting decisions are ADR 0007 (L2), ADR 0008/0009 (L3 entry + first audit), ADR 0010 (default-path wiring, second audit, governance and release maturity), ADR 0011 (third audit; key providers, attribute-based ACL, MVCC tokens, semantic memory, the evaluation gate), ADR 0012 (run-provenance records, optional provider batch capabilities), ADR 0013 (fifth audit; the read-vs-listing expiry boundary and provider-batch/provenance-gate hardening), and ADR 0014 (`BL-180`: `VersionedMemoryStore` on the durable adapters + `TransactionalMemoryStore` Protocol).
 
 Security conventions: untrusted skill bundles are loaded with `allow_contract=False` (no `contract.py` execution) and bounded extraction; pin an immutable `ref` plus a `sha256` for tamper-evident installs; wrap event sinks in `harness.RedactingSink` when arguments may carry secrets. The gate is defence in depth, not a sandbox (see `LIMITATIONS.md` L3).
 

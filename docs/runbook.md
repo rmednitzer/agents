@@ -6,7 +6,7 @@ This is a runbook, not a roadmap. The roadmap lives in [`docs/backlog.md`](./bac
 
 Audience: a maintainer or contributor opening a fresh PR cycle, an auditor preparing the next in-depth code audit, or a Claude agent running `/ultrareview` or the `code-review` skill against the working tree.
 
-Last reviewed: 2026-05-23.
+Last reviewed: 2026-05-23 (BL-180 resolved by ADR 0014; next audit slot is ADR 0015).
 
 ## 0. Conventions this runbook respects
 
@@ -32,7 +32,7 @@ Open in order, top to bottom:
 
 ## 2. Phase A: audit
 
-The repo's audit cadence is in `docs/backlog.md`: ADR 0009 (first), ADR 0010 (second), ADR 0011 (third), ADR 0013 (fifth). A "fourth" audit pass was folded into the cross-repo review in ADR 0012 (run-provenance + provider-batch capabilities). The next audit slot is ADR 0014.
+The repo's audit cadence is in `docs/backlog.md`: ADR 0009 (first), ADR 0010 (second), ADR 0011 (third), ADR 0013 (fifth). A "fourth" audit pass was folded into the cross-repo review in ADR 0012 (run-provenance + provider-batch capabilities). ADR 0014 is the BL-180 capability ADR (durable Versioned + new Transactional Protocol). The next audit slot is ADR 0015.
 
 ### 2.1 Plan the audit
 
@@ -135,13 +135,12 @@ Open `docs/backlog.md`, filter to `[pending]` / `[in-progress]`. The current ope
 | `BL-138` | Tier 2 | M | OTel GenAI semantic conventions on `BL-113`'s spans | Same upstream as `BL-113`; depends on it |
 | `BL-114` | Tier 2 | L | Deeper PydanticAI resume via `DeferredToolRequests` / `message_history` | PydanticAI's pause/resume primitive stabilising |
 | `BL-135` | Tier 2 | L | Memory compaction / summarisation / tiering, size or LRU bound on the sweeper | None (in-tree); pairs with `BL-131` (semantic memory) |
-| `BL-180` | Tier 2 | L | Multi-key transactions on durable adapters; `VersionedMemoryStore` on the network backends | The MVCC reference (`BL-124`) ships on `InMemoryStore` / `SQLiteStore`; this is the durable extension |
 | `BL-155` | Tier 2 | L | True wall-clock preemption for non-cooperative tools | A thread/process execution boundary (not the asyncio await pattern) |
 | `BL-179` | Tier 2 | M | `RetryPolicy` token / step accounting from intermediate attempts | Upstream PydanticAI partial-usage on the exception path |
 
 ### 4.2 Item-level workflow
 
-For an item with no upstream dependency (the "ready" set today: `BL-120`, `BL-135`, `BL-180`, `BL-133`, `BL-150`):
+For an item with no upstream dependency (the "ready" set today: `BL-120`, `BL-135`, `BL-133`, `BL-150`):
 
 1. Move `[pending]` to `[in-progress]` with the branch name. Push the change as a separate commit so an open backlog state is visible.
 2. Design the surface. Write the new Protocol or the new optional keyword before any implementation. Surface it in the module docstring; an L3 keyword is read once, supported forever.

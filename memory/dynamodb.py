@@ -16,6 +16,10 @@ Design:
 - CAS maps onto DynamoDB conditional expressions (atomic server-side).
 - ``scan`` is cursor-paged; the opaque cursor is the base64 of
   LastEvaluatedKey, which callers must not parse.
+- ``VersionedMemoryStore`` (BL-180) uses a server-stored ``ver``
+  attribute (the content-hash of the value at write time) so the
+  conditional expression is one round trip; every write path stamps
+  ``ver`` so the attribute is always consistent with ``v``.
 """
 
 from __future__ import annotations
@@ -29,12 +33,15 @@ from typing import Any
 
 from memory._audit import MemoryAudit
 from memory.errors import MemoryError as _MemoryError
+from memory.store import TxnDelete, TxnWrite
 from memory.types import Namespace
 from memory.validators import validate_key
 
 __all__ = ["DynamoDBStore"]
 
 _BATCH_MAX_RETRIES = 8
+# DynamoDB TransactWriteItems hard limit (cf. DynamoDB Service Quotas).
+_TRANSACT_MAX_ITEMS = 100
 
 
 class DynamoDBStore:
@@ -102,8 +109,22 @@ class DynamoDBStore:
         self._audit.read(key, hit=value is not None)
         return value
 
+    @staticmethod
+    def _token(value: bytes) -> str:
+        return hashlib.sha256(value).hexdigest()
+
     def _item(self, key: str, value: bytes, ttl: float | None) -> dict[str, Any]:
-        item: dict[str, Any] = {"pk": {"S": self._pk(key)}, "v": {"B": value}}
+        # ``ver`` is the content-hash of ``value`` (BL-180); every write
+        # path that builds an item via ``_item`` (write, mset,
+        # compare_and_set) stamps it, so VersionedMemoryStore's
+        # conditional expression can match in one round trip. Computing
+        # the hash here keeps ``ver`` and ``v`` consistent by
+        # construction.
+        item: dict[str, Any] = {
+            "pk": {"S": self._pk(key)},
+            "v": {"B": value},
+            "ver": {"S": self._token(value)},
+        }
         if ttl is not None:
             # Float seconds (BL-157): matches InMemory/SQLite/S3 and the
             # ``float(exp)`` read path, so a sub-second TTL is honoured
@@ -339,6 +360,185 @@ class DynamoDBStore:
             raise
         self._audit.delete(key, existed=True)
         return True
+
+    # --- VersionedMemoryStore (BL-124, BL-180) ------------------------
+
+    async def read_versioned(self, key: str) -> tuple[bytes, str] | None:
+        validate_key(key)
+        item = await asyncio.to_thread(self._live_item, key)
+        value = bytes(item["v"]["B"]) if item is not None else None
+        self._audit.read(key, hit=value is not None)
+        if value is None:
+            return None
+        # Hash the live ``v`` (path-independent) rather than trust the
+        # stored ``ver``: ``ver`` is the optimisation that makes
+        # write/delete_versioned one round trip; ``read_versioned``
+        # returns the bytes anyway, so hashing here costs one sha256 and
+        # avoids drift if a future code path forgets to refresh ``ver``.
+        return value, self._token(value)
+
+    async def write_versioned(
+        self,
+        key: str,
+        value: bytes,
+        *,
+        expected_version: str | None = None,
+        ttl_seconds: float | None = None,
+    ) -> str | None:
+        validate_key(key)
+        ttl = self._ttl(ttl_seconds)
+        from botocore.exceptions import ClientError
+
+        now = {"N": str(time.time())}
+        kw: dict[str, Any] = {"TableName": self._table, "Item": self._item(key, value, ttl)}
+        if expected_version is None:
+            # Create-only: row absent or expired. Mirrors
+            # compare_and_set(expected=None) so read/CAS/versioned agree
+            # at the expiry boundary (BL-157/BL-177).
+            kw["ConditionExpression"] = (
+                "attribute_not_exists(pk) OR (attribute_exists(exp) AND exp < :now)"
+            )
+            kw["ExpressionAttributeValues"] = {":now": now}
+        else:
+            # Match the server-stored ``ver`` (the content-hash of the
+            # live value) AND not expired. Atomic conditional PUT, one
+            # round trip. A pre-BL-180 row without ``ver`` cannot be
+            # versioned-written until a plain write() rewrites it
+            # (documented; see memory/README.md and LIMITATIONS.md L17).
+            kw["ConditionExpression"] = "ver = :e AND (attribute_not_exists(exp) OR exp >= :now)"
+            kw["ExpressionAttributeValues"] = {
+                ":e": {"S": expected_version},
+                ":now": now,
+            }
+        try:
+            await asyncio.to_thread(lambda: self._db.put_item(**kw))
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return None
+            raise
+        self._audit.write(key, value_bytes=len(value), ttl_seconds=ttl)
+        return self._token(value)
+
+    async def delete_versioned(self, key: str, expected_version: str) -> bool:
+        validate_key(key)
+        from botocore.exceptions import ClientError
+
+        try:
+            await asyncio.to_thread(
+                lambda: self._db.delete_item(
+                    TableName=self._table,
+                    Key={"pk": {"S": self._pk(key)}},
+                    # Match ``ver`` and not-expired, mirroring the
+                    # compare_and_delete match-branch with the version
+                    # attribute instead of byte equality. An expired row
+                    # is absent (parity with read()/CAS).
+                    ConditionExpression=("ver = :e AND (attribute_not_exists(exp) OR exp >= :now)"),
+                    ExpressionAttributeValues={
+                        ":e": {"S": expected_version},
+                        ":now": {"N": str(time.time())},
+                    },
+                )
+            )
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            raise
+        self._audit.delete(key, existed=True)
+        return True
+
+    # --- TransactionalMemoryStore (BL-180) ----------------------------
+
+    async def transact(
+        self,
+        *,
+        writes: dict[str, TxnWrite] | None = None,
+        deletes: dict[str, TxnDelete] | None = None,
+    ) -> dict[str, str] | None:
+        writes_d = dict(writes or {})
+        deletes_d = dict(deletes or {})
+        overlap = set(writes_d) & set(deletes_d)
+        if overlap:
+            raise ValueError(f"transaction key in both writes and deletes: {sorted(overlap)}")
+        for k in (*writes_d, *deletes_d):
+            validate_key(k)
+        if not writes_d and not deletes_d:
+            return {}
+        total = len(writes_d) + len(deletes_d)
+        if total > _TRANSACT_MAX_ITEMS:
+            # DynamoDB TransactWriteItems caps at 100 items. Fail fast at
+            # the contract boundary rather than mid-call so the caller
+            # sees a clear ValueError, not an opaque ClientError.
+            raise ValueError(
+                f"transaction has {total} operations; DynamoDB TransactWriteItems caps at "
+                f"{_TRANSACT_MAX_ITEMS}"
+            )
+        from botocore.exceptions import ClientError
+
+        items: list[dict[str, Any]] = []
+        now_n = {"N": str(time.time())}
+        for key, w in writes_d.items():
+            ttl = self._ttl(w.ttl_seconds)
+            put_kw: dict[str, Any] = {
+                "TableName": self._table,
+                "Item": self._item(key, w.value, ttl),
+            }
+            if w.expected_version is None:
+                put_kw["ConditionExpression"] = (
+                    "attribute_not_exists(pk) OR (attribute_exists(exp) AND exp < :now)"
+                )
+                put_kw["ExpressionAttributeValues"] = {":now": now_n}
+            else:
+                put_kw["ConditionExpression"] = (
+                    "ver = :e AND (attribute_not_exists(exp) OR exp >= :now)"
+                )
+                put_kw["ExpressionAttributeValues"] = {
+                    ":e": {"S": w.expected_version},
+                    ":now": now_n,
+                }
+            items.append({"Put": put_kw})
+        for key, d in deletes_d.items():
+            items.append(
+                {
+                    "Delete": {
+                        "TableName": self._table,
+                        "Key": {"pk": {"S": self._pk(key)}},
+                        "ConditionExpression": (
+                            "ver = :e AND (attribute_not_exists(exp) OR exp >= :now)"
+                        ),
+                        "ExpressionAttributeValues": {
+                            ":e": {"S": d.expected_version},
+                            ":now": now_n,
+                        },
+                    }
+                }
+            )
+        try:
+            await asyncio.to_thread(lambda: self._db.transact_write_items(TransactItems=items))
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "TransactionCanceledException":
+                # A per-item ConditionalCheckFailed cancels the whole
+                # transaction (the BL-180 no-op contract). Other cancel
+                # codes (capacity exceeded, throttle,
+                # ItemCollectionSizeLimitExceeded, ...) are infrastructure
+                # errors and must propagate so the caller does NOT emit
+                # success audit for dropped writes.
+                reasons = exc.response.get("CancellationReasons", [])
+                if reasons and all(
+                    r.get("Code") in ("ConditionalCheckFailed", "None") for r in reasons
+                ):
+                    return None
+            raise
+        out: dict[str, str] = {}
+        for key, w in writes_d.items():
+            out[key] = self._token(w.value)
+            self._audit.write(
+                key,
+                value_bytes=len(w.value),
+                ttl_seconds=self._ttl(w.ttl_seconds),
+            )
+        for key in deletes_d:
+            self._audit.delete(key, existed=True)
+        return out
 
     def _sweep_sync(self) -> int:
         removed = 0
