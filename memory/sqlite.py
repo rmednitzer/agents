@@ -24,6 +24,7 @@ from typing import Any
 
 from harness.sinks import EventSink
 from memory._audit import MemoryAudit
+from memory._expiry import is_expired, is_live
 from memory.store import TxnDelete, TxnWrite
 from memory.types import Namespace
 from memory.validators import validate_key
@@ -89,7 +90,7 @@ class SQLiteStore:
         if row is None:
             return None
         value, expires_at = row
-        if expires_at is not None and time.time() > expires_at:
+        if is_expired(time.time(), expires_at):
             self._conn.execute(f'DELETE FROM "{self._table}" WHERE key=?', (key,))
             return None
         return bytes(value)
@@ -136,7 +137,7 @@ class SQLiteStore:
         async with self._lock:
             rows = await asyncio.to_thread(self._db_live_keys)
         now = time.time()
-        return sorted(k for k, exp in rows if (exp is None or now <= exp) and k.startswith(prefix))
+        return sorted(k for k, exp in rows if is_live(now, exp) and k.startswith(prefix))
 
     # --- BatchMemoryStore (BL-081) ------------------------------------
 
@@ -219,7 +220,7 @@ class SQLiteStore:
         candidates = sorted(
             k
             for k, exp in rows
-            if (exp is None or now <= exp) and k.startswith(prefix) and (cursor == "" or k > cursor)
+            if is_live(now, exp) and k.startswith(prefix) and (cursor == "" or k > cursor)
         )
         page = candidates[:count]
         next_cursor = page[-1] if len(candidates) > count else ""
@@ -426,12 +427,12 @@ class SQLiteStore:
 
     async def sweep_expired(self) -> int:
         def _sweep() -> int:
-            # Strict ``<`` matches read()/list_keys()/scan() which treat
-            # an entry live until ``now > expires_at`` (live at the exact
-            # expiry instant). ``<=`` here swept an entry the readers
-            # still considered live at that instant (audit A6: read vs
-            # sweep boundary; list_keys/scan aligned to the same
-            # ``now <= exp`` live boundary in the same class fix).
+            # SQL counterpart of memory._expiry.is_expired: live until
+            # ``now <= expires_at`` (inclusive at the instant), expired
+            # at strict ``<``. The Python-side readers (read / list_keys
+            # / scan) use the helper directly; this SQL form is the
+            # documented equivalent (see memory/_expiry.py "SQL
+            # counterpart"). One invariant, two encodings.
             cur = self._conn.execute(
                 f'DELETE FROM "{self._table}" WHERE expires_at IS NOT NULL AND expires_at < ?',
                 (time.time(),),

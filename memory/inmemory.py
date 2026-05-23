@@ -24,6 +24,7 @@ from typing import Any
 
 from harness.sinks import EventSink
 from memory._audit import MemoryAudit
+from memory._expiry import is_expired, is_live
 from memory.store import TxnDelete, TxnWrite
 from memory.types import Namespace
 from memory.validators import validate_key
@@ -78,7 +79,7 @@ class InMemoryStore:
         entry = self._data.get(key)
         if entry is None:
             return None
-        if entry.expires_at is not None and now > entry.expires_at:
+        if is_expired(now, entry.expires_at):
             del self._data[key]
             return None
         return entry.value
@@ -118,11 +119,7 @@ class InMemoryStore:
     async def list_keys(self, prefix: str = "") -> list[str]:
         async with self._lock:
             now = time.time()
-            live = [
-                k
-                for k, entry in self._data.items()
-                if entry.expires_at is None or now <= entry.expires_at
-            ]
+            live = [k for k, entry in self._data.items() if is_live(now, entry.expires_at)]
             return sorted(k for k in live if k.startswith(prefix))
 
     # --- BatchMemoryStore (BL-081) ------------------------------------
@@ -181,7 +178,7 @@ class InMemoryStore:
             candidates = sorted(
                 k
                 for k, entry in self._data.items()
-                if (entry.expires_at is None or now <= entry.expires_at)
+                if is_live(now, entry.expires_at)
                 and k.startswith(prefix)
                 and (cursor == "" or k > cursor)
             )
@@ -328,11 +325,7 @@ class InMemoryStore:
     async def sweep_expired(self) -> int:
         async with self._lock:
             now = time.time()
-            expired = [
-                k
-                for k, entry in self._data.items()
-                if entry.expires_at is not None and now > entry.expires_at
-            ]
+            expired = [k for k, entry in self._data.items() if is_expired(now, entry.expires_at)]
             for k in expired:
                 del self._data[k]
             return len(expired)

@@ -25,6 +25,7 @@ import time
 from typing import Any
 
 from memory._audit import MemoryAudit
+from memory._expiry import is_expired
 from memory.types import Namespace
 from memory.validators import validate_key
 
@@ -91,7 +92,7 @@ class S3Store:
                 return None
             raise
         exp = obj.get("Metadata", {}).get(_EXPIRES_META)
-        if exp is not None and time.time() > float(exp):
+        if is_expired(time.time(), float(exp) if exp is not None else None):
             self._s3.delete_object(Bucket=self._bucket, Key=self._okey(key))
             return None
         body = obj["Body"].read()
@@ -228,7 +229,7 @@ class S3Store:
             for item in resp.get("Contents", []):
                 head = self._s3.head_object(Bucket=self._bucket, Key=item["Key"])
                 exp = head.get("Metadata", {}).get(_EXPIRES_META)
-                if exp is not None and time.time() > float(exp):
+                if is_expired(time.time(), float(exp) if exp is not None else None):
                     self._s3.delete_object(Bucket=self._bucket, Key=item["Key"])
                     removed += 1
             if not resp.get("IsTruncated"):
