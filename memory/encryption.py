@@ -38,6 +38,18 @@ raised. The migration contract: seed the ring with the existing key as
 the current version (rotate later, once values have been rewritten);
 data still under a key the provider has rotated away from is not
 reachable for legacy reads (``LIMITATIONS.md`` L16).
+
+Multi-key legacy fallback (BL-196, opt-in): pass
+``legacy_multi_key=True`` to ``EncryptedStore`` / ``wrap_encrypted``
+to lift the L16 "current-key only" restriction. The provider must
+implement the optional :class:`IterableKeyProvider` Protocol
+(``iter_key_ids``); the in-tree ``RotatingKeyProvider`` does. On a
+legacy decrypt the current key is tried first, then each remaining
+key in the ring; AES-GCM authentication still guarantees no silent
+wrong plaintext (false-tag probability ``2**-128`` per attempt). The
+behaviour is opt-in so KMS-backed providers that charge per call
+keep the current-key-only default; the ring iteration is bounded by
+the size of the ring.
 """
 
 from __future__ import annotations
@@ -45,7 +57,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, runtime_checkable
 
@@ -63,6 +75,7 @@ __all__ = [
     "EncryptedStore",
     "EnvKeyProvider",
     "FileKeyProvider",
+    "IterableKeyProvider",
     "KeyProvider",
     "RotatingKeyProvider",
     "StaticKeyProvider",
@@ -104,6 +117,30 @@ class VersionedKeyProvider(Protocol):
     def current_key(self, namespace: str) -> tuple[str, bytes]: ...
 
     def key(self, namespace: str, key_id: str) -> bytes: ...
+
+
+@runtime_checkable
+class IterableKeyProvider(Protocol):
+    """A VersionedKeyProvider that can enumerate its key ring (`BL-196`).
+
+    Optional capability on top of :class:`VersionedKeyProvider`. When
+    present, ``EncryptedStore(..., legacy_multi_key=True)`` falls back
+    to *each* historical key (not only the current one) when
+    decrypting a pre-rotation legacy value, lifting the L16
+    "current-key only" migration restriction. AES-GCM authentication
+    guarantees no silent wrong plaintext: a wrong-key attempt fails
+    with ``InvalidTag``; the probability of a false-positive tag on a
+    given attempt is ``2**-128``, so the cost of iterating ``N`` keys
+    on a true mismatch is ``N`` decrypt attempts and a negligible
+    accumulated false-match probability ``N * 2**-128``.
+
+    For a KMS-backed provider, ``iter_key_ids`` should return the
+    enumeration cheaply (e.g., cached aliases); the implementation
+    decides whether to enumerate at all. Without this Protocol,
+    EncryptedStore preserves the BL-181 current-key-only behaviour.
+    """
+
+    def iter_key_ids(self, namespace: str) -> Iterable[str]: ...
 
 
 def _validate_key_bytes(key: bytes) -> bytes:
@@ -214,6 +251,16 @@ class RotatingKeyProvider:
         except KeyError:
             raise KeyError(f"unknown key version {key_id!r}") from None
 
+    def iter_key_ids(self, namespace: str) -> Iterable[str]:
+        """Enumerate the key ring (`BL-196` IterableKeyProvider).
+
+        Order is insertion order: the seed key first, then each
+        ``rotate`` in chronological order. EncryptedStore's multi-key
+        legacy fallback skips the current key (already tried) and
+        iterates the rest.
+        """
+        return list(self._keys)
+
 
 class EncryptedStore:
     """Wraps a MemoryStore, sealing values with AES-256-GCM.
@@ -227,7 +274,11 @@ class EncryptedStore:
     name: str = "encrypted"
 
     def __init__(
-        self, inner: MemoryStore, key_provider: KeyProvider | VersionedKeyProvider
+        self,
+        inner: MemoryStore,
+        key_provider: KeyProvider | VersionedKeyProvider,
+        *,
+        legacy_multi_key: bool = False,
     ) -> None:
         try:
             from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -252,6 +303,24 @@ class EncryptedStore:
             # isinstance does not narrow the union for mypy; in this
             # branch the provider is the plain (key_for) KeyProvider.
             self._aes = AESGCM(cast(KeyProvider, key_provider).key_for(self._ns))
+        # Opt-in multi-key legacy fallback (BL-196): see
+        # IterableKeyProvider docstring for the contract. Surface
+        # configuration errors at load time per ADR 0007 (additive-to-L1
+        # rule).
+        self._legacy_multi_key = legacy_multi_key
+        if legacy_multi_key:
+            if not self._versioned:
+                raise ValueError(
+                    "legacy_multi_key=True requires a VersionedKeyProvider; "
+                    "a plain KeyProvider has no key ring to iterate"
+                )
+            if not isinstance(key_provider, IterableKeyProvider):
+                raise ValueError(
+                    "legacy_multi_key=True requires the provider to implement "
+                    "IterableKeyProvider (an iter_key_ids method); the in-tree "
+                    "RotatingKeyProvider supports this"
+                )
+            self._ikp = cast(IterableKeyProvider, key_provider)
 
     @property
     def namespace(self) -> Namespace:
@@ -360,15 +429,32 @@ class EncryptedStore:
             # the existing key as the current version, rotate later
             # (memory/README.md, LIMITATIONS.md L16).
             cur_id, cur_bytes = self._vkp.current_key(self._ns)
-            try:
-                nonce, ct = sealed[:_NONCE_BYTES], sealed[_NONCE_BYTES:]
-                return bytes(self._aes_cached(cur_id, cur_bytes).decrypt(nonce, ct, aad))
-            except (InvalidTag, ValueError):
-                # InvalidTag: wrong key/not legacy. ValueError: the
-                # bytes are too short for even a nonce (a truly
-                # malformed value). Either way the original, more
-                # informative envelope error is the right one to raise.
+            if len(sealed) < _NONCE_BYTES:
+                # A truly malformed value (too short for even a nonce).
+                # The original, more informative envelope error is the
+                # right one to raise.
                 raise env_err from None
+            nonce, ct = sealed[:_NONCE_BYTES], sealed[_NONCE_BYTES:]
+            try:
+                return bytes(self._aes_cached(cur_id, cur_bytes).decrypt(nonce, ct, aad))
+            except InvalidTag:
+                pass
+            # Multi-key legacy fallback (BL-196, opt-in via
+            # legacy_multi_key=True): try each historical key in the
+            # ring. AES-GCM authentication still guarantees no silent
+            # wrong plaintext (false-tag probability ``2**-128`` per
+            # key, accumulated ``N * 2**-128`` across the ring). The
+            # current key was already tried above and is skipped.
+            if self._legacy_multi_key:
+                for kid in self._ikp.iter_key_ids(self._ns):
+                    if kid == cur_id:
+                        continue
+                    try:
+                        return bytes(self._aes_for(kid).decrypt(nonce, ct, aad))
+                    except InvalidTag:
+                        continue
+            # No legacy key matched; surface the original envelope error.
+            raise env_err from None
 
 
 # --- Extension-Protocol forwarding (BL-156) ---------------------------
@@ -448,7 +534,10 @@ class _EncSweepMixin:
 
 
 def wrap_encrypted(
-    inner: MemoryStore, key_provider: KeyProvider | VersionedKeyProvider
+    inner: MemoryStore,
+    key_provider: KeyProvider | VersionedKeyProvider,
+    *,
+    legacy_multi_key: bool = False,
 ) -> EncryptedStore:
     """EncryptedStore that also forwards the value-safe extension
     Protocols ``inner`` supports (BL-156).
@@ -460,6 +549,9 @@ def wrap_encrypted(
     this instead of constructing ``EncryptedStore`` directly over a
     capability-rich backend. A ``VersionedKeyProvider`` (BL-111) is
     accepted and enables the rotation-safe value envelope.
+    ``legacy_multi_key`` (BL-196) enables the opt-in multi-key legacy
+    fallback for migrating off a plain KeyProvider with prior
+    rotations already on disk.
     """
     mixins: list[type] = []
     if isinstance(inner, BatchMemoryStore):
@@ -471,6 +563,6 @@ def wrap_encrypted(
     if isinstance(inner, SweepableStore):
         mixins.append(_EncSweepMixin)
     if not mixins:
-        return EncryptedStore(inner, key_provider)
+        return EncryptedStore(inner, key_provider, legacy_multi_key=legacy_multi_key)
     cls = type("EncryptedStore", (EncryptedStore, *mixins), {})
-    return cls(inner, key_provider)  # type: ignore[no-any-return]
+    return cls(inner, key_provider, legacy_multi_key=legacy_multi_key)  # type: ignore[no-any-return]

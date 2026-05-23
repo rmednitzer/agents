@@ -3,6 +3,70 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] BL-196: opt-in multi-key legacy fallback on EncryptedStore (2026-05-23)
+
+Runbook 7.4 candidate 4 (the EncryptedStore legacy migration class).
+The `BL-181` authenticated legacy fallback was current-key only
+(`LIMITATIONS.md` L16): adopting a `VersionedKeyProvider` on a store
+sealed by a plain `KeyProvider` could only read values whose
+plaintext key matched the current ring version, and a key the
+provider had rotated past could not decrypt legacy data without an
+out-of-band re-encryption pass through the old store. BL-196 adds
+an opt-in lift over a new optional `IterableKeyProvider` Protocol.
+Additive: default behaviour is unchanged; every existing call site
+is byte-identical.
+
+### Added
+
+- `memory.encryption.IterableKeyProvider` Protocol with
+  `iter_key_ids(namespace) -> Iterable[str]`. Optional capability on
+  top of `VersionedKeyProvider`; out-of-tree KMS-backed providers
+  decide whether to enumerate (they may not want to pay per call).
+  `runtime_checkable` so `EncryptedStore` can detect it at
+  construction time.
+- `RotatingKeyProvider.iter_key_ids` (in-tree reference). Returns
+  the key ring in insertion order (seed first, then each `rotate`
+  chronologically).
+- New `legacy_multi_key: bool = False` kwarg on
+  `EncryptedStore.__init__` and `wrap_encrypted`. When `True`, the
+  legacy `_unseal` fallback iterates every historical key in the
+  ring after the current-key attempt fails. AES-GCM authentication
+  still gates each attempt (false-tag probability `2**-128` per key,
+  accumulated `N * 2**-128` across the ring), so the multi-key
+  fallback never returns a wrong plaintext.
+- `tests/memory/test_bl196_multi_key_legacy.py` covers the
+  iteration order, the construction guards (both `VersionedKeyProvider`
+  *and* `IterableKeyProvider` required for the opt-in), the BL-181
+  preservation when off, the historical-key decrypt when on, the
+  AES-GCM "no silent wrong value" guarantee under the multi-key
+  path, the envelope-still-preferred case, the malformed-value fast
+  path, and the `wrap_encrypted` flag forwarding (11 tests).
+
+### Changed
+
+- `EncryptedStore._unseal` legacy fallback path is restructured so
+  the current-key attempt is tried first (preserving BL-181), then,
+  when `legacy_multi_key=True`, the iteration of `iter_key_ids`
+  begins (skipping the current id already tried). The malformed
+  fast-path (`len(sealed) < _NONCE_BYTES`) moves above the decrypt
+  attempt so a truly-too-short value short-circuits to the original
+  envelope error without consuming a ring iteration.
+
+### Documentation
+
+- `memory/encryption.py` module docstring: new "Multi-key legacy
+  fallback (BL-196, opt-in)" paragraph.
+- `memory/README.md`: extends the key-provider bullet with the
+  `legacy_multi_key` opt-in and the IterableKeyProvider Protocol.
+- `LIMITATIONS.md` L16: renamed to "current-key only by default" and
+  documents the opt-in lift, the AES-GCM bound on false matches, and
+  the KMS-provider rationale for keeping the default off.
+- `docs/runbook.md` 7.4 candidate 4: marked resolved (referenced
+  `BL-196`); the "open question" about AES-GCM tag strength is
+  answered affirmatively.
+- `docs/backlog.md`: new section "EncryptedStore multi-key legacy
+  migration (2026-05-23)" with the `BL-196` line.
+
 ## [Unreleased] BL-195: consolidate the expiry-boundary predicate across adapters (2026-05-23)
 
 Runbook 7.4 candidate 1 (the expiry-boundary class). Five pointwise
