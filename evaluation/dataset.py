@@ -80,7 +80,11 @@ def load_dispatch_golden(path: str | Path) -> DispatchGoldenSet:
     Validation errors surface as pydantic ValidationError so a malformed
     fixture fails the eval at load, not mid-run.
     """
-    data = json.loads(Path(path).read_text())
+    # BL-218: pin UTF-8 explicitly (parity with the rest of the
+    # explicit-encoding convention) so a non-default platform locale
+    # cannot silently mis-decode a golden-set fixture carrying
+    # non-ASCII query text.
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
     return DispatchGoldenSet.model_validate(data)
 
 

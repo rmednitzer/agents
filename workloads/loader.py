@@ -294,7 +294,13 @@ def _build_loaded_workload(
         raise ManifestNotFound(name, str(manifest_path))
 
     try:
-        raw = yaml.safe_load(manifest_path.read_text())
+        # BL-218: pin UTF-8 explicitly so a non-default platform locale
+        # (Windows cp1252, C locale ASCII, etc.) cannot silently
+        # mis-decode a manifest carrying non-ASCII text in a
+        # description or comment. Matches the project's
+        # explicit-UTF-8 convention elsewhere (gen_schema,
+        # check_run_records, skills/loader).
+        raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         raise WorkloadValidationError(name, f"YAML parse: {exc}") from exc
     if not isinstance(raw, dict):

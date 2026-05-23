@@ -3,6 +3,84 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Seventh code audit (ADR 0017, BL-215-BL-218, 2026-05-23)
+
+The seventh in-depth code audit, by area, against the same green
+gates (ruff, ruff format, mypy strict, pytest at `cov-fail-under=94`,
+schema-drift, REUSE 3.x, `pip-audit`, the dispatch evaluation gate).
+The clear bugs were fixed additively in the same increment; ADR 0017
+is the cross-cutting why. This audit targeted the *classes* the
+prior audits fixed pointwise and the new IPC surface introduced by
+ADR 0016 (`BL-133`). Four findings, all in `skills/` or the
+`read_text` encoding boundary.
+
+### Fixed
+
+- `BL-215`: `skills.loader.parse_skill_md` and the lazy
+  `_read_body_only` (used by `Skill.body()`) now catch
+  `UnicodeDecodeError` and re-raise as `SkillLoadError`. A SKILL.md
+  that is not valid UTF-8 (latin-1, a binary file misnamed, a
+  UTF-16 BOM at the head) previously leaked a Python-internal
+  exception past the documented `SkillLoadError` boundary; the fix
+  translates to the documented "unreadable file" branch.
+  BL-204 class extension.
+- `BL-216`: `skills.execution._read_frame` (parent side, reading
+  from the subprocess) and `skills._executor_child._read_frame`
+  (child side, reading from the parent) now cap the body length at
+  64 MiB (`_FRAME_MAX_BODY_BYTES`). The 4-byte big-endian length
+  prefix can encode up to ~4 GiB; without the cap, a compromised
+  child writing `2**32 - 1` would drive the parent into a multi-GiB
+  allocation before discovering the truncation. The parent raises
+  `SkillContractExecutorError` and kills the subprocess; the child
+  treats an oversize header as EOF (defence in depth). New class
+  introduced by ADR 0016; the "external-input-must-not-crash"
+  invariant from BL-167 / BL-200 / BL-201 generalised to the new
+  IPC boundary.
+- `BL-217`: `skills.execution.SubprocessSkillContractExecutor.load`'s
+  `_proxies` closure now validates every metadata item from the
+  child structurally before constructing `_PredicateProxy`: non-dict
+  raises, missing `name` / `severity` raises, non-string types
+  raise, unknown severity raises, all with a diagnostic naming the
+  slot and the failure mode. Without the check, a malformed item
+  (a buggy or malicious child) leaked `KeyError` / `ValueError`
+  past the documented `SkillContractExecutorError` boundary.
+  BL-159 / BL-205 class extension applied to the new IPC metadata
+  frame.
+
+### Changed
+
+- `BL-218`: `workloads.loader._build_loaded_workload`,
+  `evaluation.dataset.load_dispatch_golden`, and
+  `workloads/_example/__main__.py` now specify
+  `encoding="utf-8"` on their `Path.read_text` calls, restoring
+  consistency with the project's
+  explicit-UTF-8 convention (the `check_run_records.py` /
+  `gen_schema.py` / `skills.loader` precedents). A non-default
+  platform locale (Windows cp1252, a C locale ASCII) would have
+  silently mis-decoded non-ASCII content in any of the three
+  affected reads.
+
+### Added
+
+- 15 new regression tests across three new test modules:
+  `tests/skills/test_bl215_loader_unicode.py` (4 tests),
+  `tests/skills/test_bl216_subprocess_frame_bound.py` (6 tests),
+  `tests/skills/test_bl217_subprocess_metadata_validation.py`
+  (5 tests). Total test count: 925 (up from 910).
+- ADR 0017: the seventh-audit narrative and the consequences for
+  the IPC trust boundary.
+
+### Documentation
+
+- `docs/backlog.md`: new "Seventh code audit (ADR 0017,
+  2026-05-23)" section with `BL-215` through `BL-218` resolved.
+- `docs/adr/README.md`: ADR 0017 row added.
+- `STATUS.md`, `README.md`, `CLAUDE.md`, `LIMITATIONS.md`:
+  phase tracking, ADR enumeration, and document-maturity refreshed
+  for the seventh audit.
+- `docs/runbook.md`: section 8.1 off-by-one fix ("six" -> "seven"
+  files), seventh-audit slot recorded, last-reviewed bumped.
+
 ## [Unreleased] BL-214: BoundedRedisStore (BL-135 size-bound on Redis, 2026-05-23)
 
 The network-durable Redis extension to BL-213's SQLite reference,

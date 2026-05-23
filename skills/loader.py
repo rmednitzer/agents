@@ -46,6 +46,15 @@ def parse_skill_md(path: Path) -> tuple[SkillManifest, str]:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise SkillLoadError(str(path), f"read failed: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        # A SKILL.md that is not valid UTF-8 (e.g. accidentally saved
+        # latin-1, or a binary file mis-named) raises UnicodeDecodeError
+        # rather than OSError. Translate to the documented
+        # ``SkillLoadError`` boundary so an `install_skill` /
+        # `discover_skill` caller sees the same shape as a missing-file
+        # or read-failure case (`BL-215`, BL-204 class extension on the
+        # loader-input leg).
+        raise SkillLoadError(str(path), f"not valid UTF-8: {exc}") from exc
 
     frontmatter_text, body = _split_frontmatter(text, path)
 
@@ -82,7 +91,14 @@ def _read_body_only(path: Path) -> str:
     Used by Skill.body() for lazy loading. Re-parses the file rather
     than relying on shared state because the Skill caches it.
     """
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        # Same BL-215 boundary as ``parse_skill_md``: an unreadable
+        # UTF-8 body surfaces as ``SkillLoadError`` instead of an
+        # internal exception when the Skill caller hits the lazy
+        # body load.
+        raise SkillLoadError(str(path), f"not valid UTF-8: {exc}") from exc
     _, body = _split_frontmatter(text, path)
     return body
 
