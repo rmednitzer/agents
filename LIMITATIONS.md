@@ -77,24 +77,30 @@ model-quality embedder satisfies the same `Embedder` Protocol and is
 the workload's choice, out-of-tree by the ADR 0001 stance). The
 sweeper's size-bound half landed as `BL-212` (InMemoryStore reference),
 extended to the durable single-host adapter as `BL-213` (SQLiteStore),
-and extended again to the network-durable adapter as `BL-214`
+extended to the network-durable Redis adapter as `BL-214`
 (`BoundedRedisStore`, an opt-in subclass that maintains a per-namespace
-insertion-order sorted-set index outside the namespace prefix). The
+insertion-order sorted-set index outside the namespace prefix), and
+extended to the AWS-native DynamoDB adapter as `BL-224`
+(`BoundedDynamoDBStore`, an opt-in subclass that stamps a per-namespace
+monotonic `seq` Number attribute on every item, allocated via atomic
+`UpdateItem ADD seq :n` on a per-namespace counter row outside the
+namespace prefix; eviction scans the namespace, sorts by `seq`
+ascending, and batch-deletes the oldest entries). The
 `BoundedSweepableStore` extension Protocol plus
 `TTLSweeper(max_keys=...)` enforces a keyspace cap beyond age-only
 expiry, so a write-rate-driven workload no longer grows unbounded on
-any of the three backends. There is still no summarisation or tiering,
-the remaining durable adapters (`DynamoDBStore`, `S3Store`) do not yet
-implement `BoundedSweepableStore` (neither has a native insertion-order
-column the way SQLite's rowid or Redis's ZRANGE-by-score do; each
-needs an auxiliary index attribute or a timestamp-prefixed object),
+any of the four backends. There is still no summarisation or tiering,
+the remaining durable adapter (`S3Store`) does not yet implement
+`BoundedSweepableStore` (S3 has no native insertion-order column;
+implementing the Protocol there means an auxiliary timestamp-prefixed
+object per data key over LIST + DELETE),
 the durable adapters do not implement `SemanticMemoryStore`, and an
 LRU policy (versus the shipped insertion-order FIFO) is not in-tree. Implication: in-tree
 just-in-time retrieval and size-bounded reclamation work for a
 single process; long-horizon compaction, summarisation, and a
-durable vector / capacity backend are open. Tracking: `BL-135`
-(compaction / summarisation / tiering, plus durable
-`BoundedSweepableStore`), `BL-131` notes the embedder scope.
+durable vector / S3 capacity backend are open. Tracking: `BL-135`
+(compaction / summarisation / tiering, plus `BoundedSweepableStore`
+on S3), `BL-131` notes the embedder scope.
 
 ## L6. The behavioural gate is deterministic-only
 
