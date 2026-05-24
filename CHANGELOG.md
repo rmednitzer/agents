@@ -3,6 +3,78 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Eighth code audit (ADR 0018, BL-219-BL-222, 2026-05-24)
+
+The eighth in-depth code audit, by area, against the same green
+gates (ruff, ruff format, mypy strict, pytest at `cov-fail-under=94`,
+schema-drift, REUSE 3.x, `pip-audit`, the dispatch evaluation gate).
+The clear bugs were fixed additively in the same increment; ADR 0018
+is the cross-cutting why. This audit re-walked the same *classes*
+the prior audits fixed pointwise and the code paths exercised by the
+BL-212-BL-214 sweeper-size-bound wave plus the ADR 0016 (`BL-133`)
+IPC surface. Four findings, all class extensions of bugs the prior
+audits fixed elsewhere.
+
+### Fixed
+
+- `BL-219`: `harness.sinks.JsonlSink.emit` now pins `encoding="utf-8"`
+  on its `Path.open("a", ...)` call. Without the explicit encoding,
+  a non-UTF-8 platform locale (Windows cp1252, C locale ASCII) would
+  either raise `UnicodeEncodeError` past the sink boundary or
+  silently mis-encode a non-ASCII event payload (a localised error
+  message, a unicode prompt template, a redacted span carrying high
+  bytes), corrupting the audit stream. BL-218 class extension on the
+  write side: the read-side standard (`Path.read_text(
+  encoding="utf-8")` everywhere) now applies to the write side too.
+- `BL-220`: `skills._executor_child._read_frame` now treats a
+  1 / 2 / 3-byte partial header as EOF (the parent crashed mid-write
+  after sending part of the 4-byte length prefix), mirroring the
+  empty-header branch and the parent's reciprocal handling at the
+  documented `SkillContractExecutorError` boundary in
+  `skills.execution._read_frame`. Without the check,
+  `_FRAME_LEN.unpack(header)` raised `struct.error` past the child's
+  clean EOF path, crashing the child with an unhandled exception
+  instead of exiting through the main loop's EOF branch. BL-216
+  class extension on the child side.
+- `BL-221`: `harness.budgets.BudgetTracker.consume_cost(usd)` and
+  `consume_tool_call(..., wall_clock_seconds=)` now validate
+  `math.isfinite(...)` and non-negativity at the entry boundary,
+  raising `ValueError` with a diagnostic naming the argument.
+  Without the validation, a single NaN cost report or wall-clock
+  attribution (a buggy pricing helper, a misconfigured adapter that
+  emits NaN on a zero-token request) silently disabled the budget
+  ceiling for the rest of the run: NaN is truthy in Python (so the
+  `if usd:` short-circuit did not skip it), NaN propagates through
+  `+` (so the accumulator becomes NaN for the rest of the run), and
+  `NaN > limit` is always `False` (so the `_check` strict-greater
+  comparison never trips). BL-159 / BL-205 class extension on the
+  budget input boundary.
+- `BL-222`: `skills.dispatchers.multi.MultiDispatcher.dispatch` now
+  uses `asyncio.gather(*, return_exceptions=True)` and skips
+  exceptional results in the aggregation loop. Without the change,
+  a single flaky member (an LLM-backed inner that raised
+  `DispatchError`, an embedding provider that timed out) cancelled
+  every sibling task and crashed the entire ensemble. The cancelled
+  siblings' `InstrumentedDispatcher` `try/finally` wrappers (BL-207)
+  then emitted `fell_back=True / matched=0` events, polluting the
+  routing-health telemetry with cancellation-as-fallback noise. An
+  `Exception` member now contributes 0 to the AVERAGE / WEIGHTED /
+  VOTE blend, parity with the documented "a member that did not
+  return the skill contributes 0" semantic; the exception is
+  contained at the ensemble boundary. BL-207 / BL-208 class
+  extension on the ensemble side.
+
+### Tests
+
+- 20 new regression tests:
+  `tests/harness/test_bl219_bl221_audit8.py` (11 tests on the JsonlSink
+  UTF-8 encoding and the BudgetTracker finite/non-negative validation),
+  `tests/skills/test_bl220_executor_child_partial_header.py` (5 tests
+  on the child-side partial-header EOF treatment), and
+  `tests/skills/test_bl222_multi_member_failure.py` (4 tests on the
+  MultiDispatcher member-failure containment).
+- Coverage at 94.98% (above the 94% gate, up from 94.97%).
+
 ## [Unreleased] Seventh code audit (ADR 0017, BL-215-BL-218, 2026-05-23)
 
 The seventh in-depth code audit, by area, against the same green

@@ -80,12 +80,30 @@ class MultiDispatcher:
     ) -> list[SkillMatch]:
         if limit <= 0:
             return []
-        results = await asyncio.gather(
+        # BL-222: a single flaky member (an LLM-backed inner that
+        # raises `DispatchError` on a malformed response, an embedding
+        # provider that times out) must not poison the ensemble. The
+        # default `asyncio.gather()` cancels sibling tasks on the first
+        # exception, and the cancelled siblings' `InstrumentedDispatcher`
+        # `try/finally` wrappers (BL-207) then emit `fell_back=True /
+        # matched=0` events, making cancellation indistinguishable
+        # from a real fallback in the routing-health telemetry. Use
+        # `return_exceptions=True` so each member runs to completion
+        # (or its own failure); skip exceptional results in the
+        # aggregation loop so the surviving members' contributions are
+        # blended truthfully. BL-207 / BL-208 class extension on the
+        # ensemble side: the ensemble's robustness is the dual of the
+        # InstrumentedDispatcher's "observable on failure" guarantee.
+        raw_results = await asyncio.gather(
             *(
                 m.dispatch(query, context=context, limit=self._candidate_limit)
                 for m in self._members
-            )
+            ),
+            return_exceptions=True,
         )
+        results: list[list[SkillMatch]] = [
+            r if isinstance(r, list) else [] for r in raw_results
+        ]
 
         confidences: dict[str, list[float]] = defaultdict(list)
         weighted_sum: dict[str, float] = defaultdict(float)

@@ -13,6 +13,7 @@ scope for L1.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -172,6 +173,18 @@ class BudgetTracker:
         No-op when ``usd`` is zero so an adapter that cannot price a run
         (no cost signal) leaves the dimension at 0 and unbounded-in-fact.
         """
+        # BL-221: caller-fed float trust boundary. NaN is truthy in
+        # Python (so the `if usd:` short-circuit does NOT skip it),
+        # NaN propagates through `+` (so the accumulator becomes NaN
+        # for the rest of the run), and `NaN > limit` is always False
+        # (so `_check` never trips). Net effect of a single NaN cost
+        # report: the ceiling is silently disabled. Same class as
+        # BL-159 / BL-205 (non-finite numeric coercion at a trust
+        # boundary) applied to the caller-fed budget input.
+        if not math.isfinite(usd):
+            raise ValueError(f"consume_cost requires a finite float, got {usd!r}")
+        if usd < 0:
+            raise ValueError(f"consume_cost requires non-negative, got {usd!r}")
         if usd:
             self._cost_usd += usd
             self._check("cost", self._cost_usd, self._budget.max_cost_usd)
@@ -206,6 +219,24 @@ class BudgetTracker:
         adapter that does not attribute per-tool resources keeps the
         exact L1/BL-073 call-count behaviour.
         """
+        # BL-221: same caller-fed float trust boundary as consume_cost.
+        # ``wall_clock_seconds`` is a `float` so NaN/inf are valid Python
+        # values; if either reached `_check`, the per-tool wall-clock
+        # ceiling would silently break (NaN > limit is False; the
+        # accumulator becomes NaN/inf for the rest of the run). Validate
+        # at the entry boundary so a buggy adapter or a misconfigured
+        # pricing helper surfaces the bug here rather than disabling the
+        # cap in production.
+        if not math.isfinite(wall_clock_seconds):
+            raise ValueError(
+                f"consume_tool_call requires a finite wall_clock_seconds, "
+                f"got {wall_clock_seconds!r}"
+            )
+        if wall_clock_seconds < 0:
+            raise ValueError(
+                f"consume_tool_call requires non-negative wall_clock_seconds, "
+                f"got {wall_clock_seconds!r}"
+            )
         self._tool_calls += n
         self._check("tool_calls", float(self._tool_calls), self._budget.max_tool_calls)
         if tool is not None:
