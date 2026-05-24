@@ -64,11 +64,38 @@ class JsonlSink:
 
 
 class MultiSink:
-    """Fan-out: emit each event to all wrapped sinks, in order."""
+    """Fan-out: emit each event to all wrapped sinks, in order.
+
+    Per-sink failure is contained (`BL-223`, BL-222 class extension on
+    the audit fan-out side): a single sink raising ``Exception``
+    (e.g., a flaky OTel exporter, a disk-full ``JsonlSink``, a
+    third-party sink with a transient network error) does NOT prevent
+    downstream sinks from receiving the event. The audit-vs-raise
+    parity invariant (BL-202 / BL-167: every state-affecting raise
+    has a matching audit event) requires the fan-out to deliver
+    maximally, not skip on the first failure.
+
+    ``BaseException`` (KeyboardInterrupt, SystemExit,
+    asyncio.CancelledError) is NOT contained: those are authoritative
+    termination signals and must reach the caller, parity with the
+    runtime's BL-165 "do not reinterpret cancellation as a pause"
+    invariant.
+    """
 
     def __init__(self, *sinks: EventSink) -> None:
         self.sinks: tuple[EventSink, ...] = sinks
 
     def emit(self, event: HarnessEvent) -> None:
         for sink in self.sinks:
-            sink.emit(event)
+            try:
+                sink.emit(event)
+            except Exception:
+                # Per-sink containment (`BL-223`): an Exception from
+                # one sink must not block the rest of the fan-out, or
+                # an OTLP sink with a transient network failure could
+                # silently swallow a BudgetExceededEvent or
+                # GovernanceViolated from the in-memory / JSONL sinks
+                # paired with it. BaseException (the line above only
+                # catches Exception) still propagates so terminal
+                # signals are not swallowed.
+                continue

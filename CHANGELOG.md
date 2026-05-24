@@ -3,6 +3,53 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Ninth code audit (ADR 0019, BL-223, 2026-05-24)
+
+The ninth in-depth code audit, by area, against the same green gates
+(ruff, ruff format, mypy strict, pytest at `cov-fail-under=94`,
+schema-drift, REUSE 3.x, `pip-audit`, the dispatch evaluation gate).
+The clear bug was fixed additively in the same increment; ADR 0019 is
+the cross-cutting why. This audit re-walked the same *classes* the
+prior audits fixed pointwise, with particular attention to the BL-222
+"per-member failure containment" guarantee from ADR 0018 and whether
+the class generalises to other fan-out paths in the tree. One finding,
+a class extension on the audit-sink fan-out side.
+
+### Fixed
+
+- `BL-223`: `harness.sinks.MultiSink.emit` now contains per-sink
+  `Exception` failures so a single failing sink (a flaky OTel
+  exporter, a disk-full `JsonlSink`, any sink with a transient
+  network or filesystem error) does not prevent downstream sinks
+  from receiving the event. Without the containment, the
+  enforcement loop's `active_sink.emit(BudgetExceededEvent(...))`
+  or `active_sink.emit(GovernanceViolated(...))` could be lost on
+  the OTLP sink because the in-process JsonlSink failed first, or
+  vice versa: a bare `raise BudgetExceeded(...)` then arrived in
+  the caller without a matching event in the downstream-of-the-
+  failure sinks, breaking the BL-202 / BL-167 audit-vs-raise
+  parity invariant ("every state-affecting raise has a matching
+  audit event") at the fan-out boundary. The fix wraps each
+  `sink.emit(event)` in a per-sink `try / except Exception` and
+  continues; `BaseException` (`KeyboardInterrupt`, `SystemExit`,
+  `asyncio.CancelledError`) still propagates so terminal signals
+  are not swallowed (parity with the runtime's BL-165 "do not
+  reinterpret cancellation as a pause" invariant). BL-222 class
+  extension on the audit fan-out side.
+
+### Tests
+
+- 7 new regression tests
+  (`tests/harness/test_bl223_multi_sink_failure.py`): failing
+  middle sink does not block downstream sinks, failing first sink
+  does not block subsequent sinks, all-failing returns cleanly,
+  `KeyboardInterrupt` propagates, happy-path fan-out unchanged,
+  empty fan-out is a no-op, multi-event sequence with one
+  intermittent failing sink delivers every healthy event in order.
+- Coverage at 94.94% (above the 94% gate; the absolute number
+  fluctuates with pytest discovery and the new tests, the gate is
+  what matters).
+
 ## [Unreleased] Eighth code audit (ADR 0018, BL-219-BL-222, 2026-05-24)
 
 The eighth in-depth code audit, by area, against the same green

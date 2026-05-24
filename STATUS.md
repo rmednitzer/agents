@@ -1,7 +1,7 @@
 # Status
 
 Maturity of the repository and its documents. Updated when a phase
-opens or closes. Last reviewed: 2026-05-24.
+opens or closes. Last reviewed: 2026-05-24 (ADR 0019 ninth code audit).
 
 ## Maturity taxonomy
 
@@ -33,6 +33,7 @@ opens or closes. Last reviewed: 2026-05-24.
 | Sweeper size bound on three adapters (`BL-212`-`BL-214`) | New `BoundedSweepableStore` extension Protocol + `TTLSweeper(max_keys=...)` capacity pass. `InMemoryStore` (Python dict-order FIFO with overwrite-keeps-position), `SQLiteStore` (rowid ASC with overwrite-shifts-to-newest), `BoundedRedisStore` opt-in subclass (sorted-set index scored by a per-namespace server-side INCR counter, robust against client clock skew). Closes the size-bound half of `BL-135`; `DynamoDBStore` / `S3Store` and the compaction / summarisation / tiering half stay tracked | stable | PRs #58/#59/#60 |
 | Seventh code audit (`BL-215`-`BL-218`) | Four additive findings: `SkillLoader` UTF-8 decode boundary, subprocess IPC frame length bound, `SubprocessSkillContractExecutor` metadata validation, `read_text` UTF-8 encoding consistency. Brings the IPC trust boundary introduced by ADR 0016 to the same "external-input-must-not-crash" invariant as the audit-path and bulk-decode sides; 15 new regression tests | stable | ADR 0017 |
 | Eighth code audit (`BL-219`-`BL-222`) | Four additive findings: `JsonlSink` UTF-8 write-side encoding, subprocess child-side partial-header EOF treatment, `BudgetTracker` finite/non-negative validation on caller-fed `usd` / `wall_clock_seconds`, `MultiDispatcher` per-member failure containment. Brings the BL-218 read-side standard to the write side, generalises BL-216 truncated-header handling to the child, applies the BL-159 / BL-205 NaN-clamp class to the budget input boundary, and makes the BL-207 / BL-208 telemetry-on-failure guarantee robust against ensemble-level cancellation; 20 new regression tests | stable | ADR 0018 |
+| Ninth code audit (`BL-223`) | One additive finding: `MultiSink` per-sink failure containment on the audit fan-out side, the BL-222 ensemble-side guarantee generalised to the sequential sink fan-out so a single failing sink (OTel exporter, JsonlSink with disk full) does not block downstream sinks from receiving the event. `BaseException` (KeyboardInterrupt / SystemExit / CancelledError) still propagates; terminal signals are not swallowed. 7 new regression tests; the audit-vs-raise parity invariant (BL-202 / BL-167) now holds at every fan-out leg | stable | ADR 0019 |
 | L3 open | Live-model workload, memory compaction/tiering + `BoundedSweepableStore` on Dynamo/S3, true OTel spans, prompt caching, true preemption, non-replay resume | planned | `docs/backlog.md` (`BL-120`, `BL-135`, `BL-113`/`138`, `BL-132`/`171`, `BL-155`, `BL-114`) |
 
 ## Document maturity
@@ -40,7 +41,7 @@ opens or closes. Last reviewed: 2026-05-24.
 | Document | Maturity |
 | --- | --- |
 | `CLAUDE.md`, `README.md`, component `README.md` | stable |
-| `docs/adr/0001`-`0018` | stable (Accepted) |
+| `docs/adr/0001`-`0019` | stable (Accepted) |
 | `docs/releasing.md` | stable |
 | `docs/backlog.md` | living tracker |
 | `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE` section (in `CONTRIBUTING.md`) | stable |
