@@ -3,6 +3,102 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] BL-224: BoundedDynamoDBStore (BL-135 size-bound on DynamoDB, 2026-05-24)
+
+The network-durable DynamoDB extension to BL-214's Redis reference and
+BL-213's SQLite reference, parallel to how BL-180 extended BL-124 from
+the in-tree reference to the network-durable adapters. DynamoDB has no
+native insertion-order column either, so the adapter ships as an
+opt-in subclass that stamps a per-namespace monotonic `seq` Number
+attribute on every data item, allocated via an atomic
+`UpdateItem ADD seq :n` on a per-namespace counter row. The bare
+`DynamoDBStore` is unchanged for every existing caller. Closes the
+DynamoDB half of `BL-135` (the size-bound half); `S3Store` stays
+tracked under `BL-135` as the remaining durable backend.
+
+### Added
+
+- `memory.BoundedDynamoDBStore`: opt-in subclass of `DynamoDBStore`
+  that stamps a per-namespace monotonic `seq` Number attribute on
+  every data item and maintains a per-namespace counter row at
+  `pk = "__evict_counter::<namespace>"` (placed outside the
+  `<namespace>::*` data prefix, so it cannot collide with a user
+  data item: the namespace-name validator's `^[a-z0-9]` rule makes
+  a colliding namespace structurally impossible, and the counter row
+  does not appear in `list_keys` / `scan` / `sweep_expired` results,
+  all of which filter by `begins_with(pk, "<namespace>::")`). Seq allocation
+  uses DynamoDB's atomic `UpdateItem ADD seq :one` action (creates
+  the counter with `seq = 1` on first use; increments server-side
+  thereafter), so ordering is strict insertion-order FIFO across
+  concurrent writers without clock skew. Every keyspace-mutating
+  method (`write`, `mset`, `compare_and_set`, `write_versioned`,
+  `transact`) is overridden to allocate a seq before the PutItem
+  and stamp it onto the item. A rewrite of an existing key
+  allocates a fresh seq and the PutItem replaces the whole item,
+  so the rewritten key orders as *newest* by seq, matching the
+  BL-213 SQLite `INSERT OR REPLACE` semantic and the BL-214 Redis
+  ZADD-rescore semantic and diverging from the BL-212 InMemoryStore
+  first-write FIFO.
+- `BoundedDynamoDBStore.evict_to_capacity`: scans the namespace's
+  data items (the counter row is outside the namespace prefix so
+  the FilterExpression naturally excludes it), projects only
+  `pk` / `seq` / `exp` (kept small via `ProjectionExpression`),
+  client-side filters expired-but-unswept items (the BL-195
+  read-vs-listing parity in DynamoDB form so a dead row does not
+  double-evict a live one), sorts the live entries by `(seq, key)`
+  ascending (secondary key sort is a deterministic tie-break for
+  the migration case where multiple legacy items share `seq = 0`),
+  and batch-deletes the oldest `(live_count - max_keys)` items via
+  the parent's `_batch_write` (which retries throttled items and
+  raises on retry-budget exhaustion, so audit emission only fires
+  on full success). One audit `MemoryDelete` event per evicted
+  key (BL-040).
+- New regression suite `tests/memory/test_bl224_dynamodb_bounded_sweeper.py`
+  (29 tests, moto-backed): Protocol satisfaction (subclass yes,
+  bare `DynamoDBStore` no but still `SweepableStore`); oldest-first
+  eviction by seq ascending; the overwrite-shifts-to-newest
+  contract; no-op at and under the cap; non-positive cap rejection
+  (parametrized); the counter-row isolation suite (no leak into
+  `list_keys` / `scan` / `sweep_expired`; no collision with a
+  user-written key named `__evict_counter`); expired-but-unswept
+  items excluded from the live count; per-key audit emission;
+  TTLSweeper integration on both age and capacity passes; the
+  seq-consistency suite (every parent mutation path stamps a fresh
+  seq across `write`, `mset` + `mdelete`, `compare_and_set`,
+  `compare_and_delete`, `write_versioned` + `delete_versioned`,
+  `transact`); monotonic counter source (counter advances exactly
+  once per write, exactly N times per `mset`/`transact` batch in
+  one `UpdateItem ADD`); strict FIFO across a tight loop;
+  dict-insertion-order preservation under `mset` / `transact`; the
+  migration contract (a legacy item written via a bare
+  `DynamoDBStore` has no `seq` attribute, is treated as `seq = 0`
+  in eviction sort and evicts first, but rewriting it via the
+  bounded subclass stamps a fresh seq and moves it to newest);
+  empty-batch short-circuit on `mset` (no counter UpdateItem, no
+  batch_write, parity with the BL-198 RedisStore and BL-178
+  SQLiteStore fixes).
+
+### Changed
+
+- `memory.__init__` exports `BoundedDynamoDBStore`.
+- `memory/dynamodb.py` module docstring now notes the opt-in
+  subclass and the per-namespace `seq` attribute design.
+- `LIMITATIONS.md` L5 updated to note the DynamoDB delivery
+  alongside InMemoryStore, SQLiteStore, and Redis; the remaining
+  `S3Store` stays tracked under `BL-135` because it needs an
+  auxiliary index over LIST + DELETE.
+- `memory/README.md` capability bullet now enumerates the four
+  eviction orderings (SQLite by rowid, Redis by index score,
+  DynamoDB by `seq` attribute via server-side counter, InMemoryStore
+  by dict insertion order).
+
+### Documentation
+
+- `docs/backlog.md`: `BL-224` added (resolved) under the existing
+  "Sweeper size bound (2026-05-23)" section; `BL-135`'s
+  delivered / remaining narrative updated to reflect the fourth
+  adapter shipped.
+
 ## [Unreleased] Ninth code audit (ADR 0019, BL-223, 2026-05-24)
 
 The ninth in-depth code audit, by area, against the same green gates

@@ -19,7 +19,7 @@ from memory.acl import (
     RoleACL,
     wrap_acl,
 )
-from memory.dynamodb import DynamoDBStore
+from memory.dynamodb import BoundedDynamoDBStore, DynamoDBStore
 from memory.encryption import (
     EncryptedStore,
     EnvKeyProvider,
@@ -69,6 +69,7 @@ __all__ = [
     "AttributeACL",
     "AttributeRule",
     "BatchMemoryStore",
+    "BoundedDynamoDBStore",
     "BoundedRedisStore",
     "BoundedSweepableStore",
     "CASMemoryStore",
