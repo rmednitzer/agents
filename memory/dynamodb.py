@@ -689,9 +689,7 @@ class BoundedDynamoDBStore(DynamoDBStore):
         end = int(resp["Attributes"]["seq"]["N"])
         return list(range(end - count + 1, end + 1))
 
-    def _item_seq(
-        self, key: str, value: bytes, ttl: float | None, seq: int
-    ) -> dict[str, Any]:
+    def _item_seq(self, key: str, value: bytes, ttl: float | None, seq: int) -> dict[str, Any]:
         """Like ``_item`` but also stamps the ``seq`` attribute.
 
         Reuses the parent's ``_item`` for pk/v/ver/exp so the BL-180
@@ -776,9 +774,7 @@ class BoundedDynamoDBStore(DynamoDBStore):
                 )
                 kw["ExpressionAttributeValues"] = {":now": now}
             else:
-                kw["ConditionExpression"] = (
-                    "v = :e AND (attribute_not_exists(exp) OR exp >= :now)"
-                )
+                kw["ConditionExpression"] = "v = :e AND (attribute_not_exists(exp) OR exp >= :now)"
                 kw["ExpressionAttributeValues"] = {":e": {"B": expected}, ":now": now}
             try:
                 self._db.put_item(**kw)
