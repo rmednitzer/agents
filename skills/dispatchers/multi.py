@@ -101,9 +101,7 @@ class MultiDispatcher:
             ),
             return_exceptions=True,
         )
-        results: list[list[SkillMatch]] = [
-            r if isinstance(r, list) else [] for r in raw_results
-        ]
+        results: list[list[SkillMatch]] = [r if isinstance(r, list) else [] for r in raw_results]
 
         confidences: dict[str, list[float]] = defaultdict(list)
         weighted_sum: dict[str, float] = defaultdict(float)
