@@ -165,6 +165,29 @@ contract = Contract[_S, _S](
 )
 """
 
+_ENV_PROBE_CONTRACT = """\
+import os
+from pydantic import BaseModel
+from harness.contract import Contract, Severity, predicate
+
+
+class _S(BaseModel):
+    n: int
+
+
+@predicate(name="env_isolated", severity=Severity.HARD)
+def _env_isolated(s):
+    return os.environ.get("AGENTS_PARENT_SECRET") is None
+
+
+contract = Contract[_S, _S](
+    name="bl133_env_probe",
+    version="1",
+    preconditions=[_env_isolated],
+    postconditions=[],
+)
+"""
+
 
 # --- Protocol smoke test ---------------------------------------------
 
@@ -481,6 +504,20 @@ def test_subprocess_explicit_close_is_idempotent(tmp_path: Path) -> None:
     # Calling a predicate after close raises the documented boundary.
     with pytest.raises(SkillContractExecutorError, match="closed"):
         proxy(_IpcState(n=1))
+
+
+def test_subprocess_does_not_inherit_parent_secret_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The subprocess executor must not pass parent secret-bearing
+    env vars wholesale to untrusted contract code."""
+    monkeypatch.setenv("AGENTS_PARENT_SECRET", "top-secret-value")
+    skill_dir = _write_skill_bundle(tmp_path, "sub-proc-env", contract_py=_ENV_PROBE_CONTRACT)
+    executor = SubprocessSkillContractExecutor(timeout_seconds=10.0)
+    skill = discover_skill(skill_dir, executor=executor)
+    contract = skill.contract()
+    assert contract is not None
+    assert contract.preconditions[0](_IpcState(n=1)) is True
 
 
 # Quiet ruff F401.
