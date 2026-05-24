@@ -45,7 +45,7 @@ def _read_frame(stream: Any) -> bytes | None:
 
 
 def _apply_rlimits(cpu_seconds: int, memory_mb: int, open_files: int) -> None:
-    """Apply CPU / memory / open-files caps (POSIX best-effort).
+    """Apply CPU / memory / open-files / process-count caps (POSIX best-effort).
 
     Windows has no ``resource`` module; the executor still delivers
     crash isolation there, but the rlimit cap is silently skipped.
@@ -72,6 +72,11 @@ def _apply_rlimits(cpu_seconds: int, memory_mb: int, open_files: int) -> None:
         _cur_soft, cur_hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         cap = min(open_files, cur_hard) if cur_hard != resource.RLIM_INFINITY else open_files
         resource.setrlimit(resource.RLIMIT_NOFILE, (cap, cap))
+    # Process count: best-effort cap to reduce fork-bomb potential.
+    with contextlib.suppress(AttributeError, ValueError, OSError):
+        _cur_soft, cur_hard = resource.getrlimit(resource.RLIMIT_NPROC)
+        cap = min(1, cur_hard) if cur_hard != resource.RLIM_INFINITY else 1
+        resource.setrlimit(resource.RLIMIT_NPROC, (cap, cap))
 
 
 def _load_contract_module(path: Path) -> Any:

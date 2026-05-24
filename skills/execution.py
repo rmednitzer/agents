@@ -216,7 +216,27 @@ class _SubprocessEvaluator:
         open_files: int,
         python_executable: str | None,
     ) -> subprocess.Popen[bytes]:
-        env = os.environ.copy()
+        env: dict[str, str] = {}
+        # Do not forward the full parent environment (contains
+        # operator secrets such as model/provider credentials). Keep a
+        # minimal runtime envelope only.
+        for key in (
+            "PATH",
+            "SYSTEMROOT",
+            "WINDIR",
+            "TMPDIR",
+            "TEMP",
+            "TMP",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "VIRTUAL_ENV",
+        ):
+            value = os.environ.get(key)
+            if value is not None:
+                env[key] = value
         # Hand the child the limits via env; setrlimit happens in the
         # child's preexec stage (POSIX) or via the child's own startup
         # code (the child reads its own env on entry).
@@ -232,6 +252,7 @@ class _SubprocessEvaluator:
             stderr=subprocess.PIPE,
             env=env,
             close_fds=True,
+            start_new_session=True,
         )
 
     def load_metadata(self) -> dict[str, Any]:
@@ -360,8 +381,14 @@ class _SubprocessEvaluator:
 
     def _kill_subprocess(self) -> None:
         import contextlib
+        import signal
 
         if self._proc is None:
+            return
+        pid = self._proc.pid
+        if os.name == "posix":
+            with contextlib.suppress(Exception):
+                os.killpg(pid, signal.SIGKILL)
             return
         with contextlib.suppress(Exception):
             self._proc.kill()
