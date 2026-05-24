@@ -16,12 +16,14 @@ ensemble side: per-member failure must not poison the surviving
 members' contributions. BL-223 is the dual on the audit fan-out side:
 per-sink failure must not poison the surviving sinks' delivery of the
 event. The fix catches ``Exception`` per sink and continues iterating;
-``BaseException`` (KeyboardInterrupt, SystemExit, asyncio.CancelledError)
-still propagates so terminal signals are not swallowed.
+``BaseException`` (KeyboardInterrupt, SystemExit, asyncio.CancelledError
+on Python 3.8+ where it was reclassified per BPO-32528) still
+propagates so terminal signals are not swallowed.
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -54,6 +56,24 @@ class _BaseExceptionSink:
 
     def emit(self, event: HarnessEvent) -> None:
         raise KeyboardInterrupt("terminate")
+
+
+class _CancelledErrorSink:
+    """Test double: every emit raises ``asyncio.CancelledError``.
+
+    On Python 3.8+ (BPO-32528), ``asyncio.CancelledError`` was
+    reclassified from ``Exception`` to ``BaseException`` specifically
+    so a broad ``except Exception`` cannot swallow cancellation. The
+    contract here is the same as ``_BaseExceptionSink``: containment
+    catches ``Exception``, cancellation must reach the caller. Pinned
+    as its own test so a future Python release (or a downstream
+    backport) that re-classifies CancelledError as Exception would
+    fail this test rather than silently swallow cancellation in a
+    production audit pipeline.
+    """
+
+    def emit(self, event: HarnessEvent) -> None:
+        raise asyncio.CancelledError("cancelled")
 
 
 def _event() -> ContractStarted:
@@ -129,6 +149,29 @@ def test_multi_sink_propagates_base_exception() -> None:
     # ``BaseException`` would mask termination; we only need to
     # confirm the in-order siblings are not skipped *before* the
     # terminal signal reaches them).
+    assert len(healthy.events) == 1
+
+
+def test_multi_sink_propagates_cancelled_error() -> None:
+    """``asyncio.CancelledError`` is NOT contained.
+
+    On Python 3.8+ (BPO-32528) ``CancelledError`` is a
+    ``BaseException``, not an ``Exception``, exactly so a broad
+    ``except Exception`` cannot swallow cooperative cancellation.
+    The repo's `requires-python = ">=3.12"` floor is well past
+    that change, so the current ``except Exception`` is correct.
+    Pinned as its own test so a future Python release (or a
+    downstream backport) that re-classifies ``CancelledError`` as
+    ``Exception`` fails here rather than silently swallowing
+    cancellation in a production audit pipeline.
+    """
+    healthy = MemorySink()
+    multi = MultiSink(healthy, _CancelledErrorSink())
+    with pytest.raises(asyncio.CancelledError):
+        multi.emit(_event())
+    # The in-order pre-failure sink still received the event before
+    # the cancellation reached its slot (parity with the
+    # KeyboardInterrupt case above).
     assert len(healthy.events) == 1
 
 
