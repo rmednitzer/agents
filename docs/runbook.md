@@ -6,7 +6,7 @@ This is a runbook, not a roadmap. The roadmap lives in [`docs/backlog.md`](./bac
 
 Audience: a maintainer or contributor opening a fresh PR cycle, an auditor preparing the next in-depth code audit, or a Claude agent running `/ultrareview` or the `code-review` skill against the working tree.
 
-Last reviewed: 2026-05-23 (ADR 0016 `BL-133` skill execution isolation landed; next audit slot is ADR 0017).
+Last reviewed: 2026-05-24 (ADR 0019 ninth audit landed; next audit slot is ADR 0020).
 
 ## 0. Conventions this runbook respects
 
@@ -24,15 +24,15 @@ Open in order, top to bottom:
 2. `STATUS.md`. Phase and document maturity, today's date for "Last reviewed".
 3. `LIMITATIONS.md`. The scope-boundary contract; every audit measures against this list.
 4. `docs/backlog.md`. The line-item tracker. Filter for `[pending]` / `[in-progress]`.
-5. `docs/adr/README.md`, then the most recent ADRs (`0011`, `0012`, `0013`) for the cross-cutting decisions in force.
+5. `docs/adr/README.md`, then the most recent ADRs (`0017`, `0018`, `0019`) for the cross-cutting decisions in force.
 6. `CHANGELOG.md` [Unreleased] section. What landed but is not yet tagged.
 7. `SECURITY.md`. The hardening posture and the untrusted-content stance.
 
-`make help` lists the developer targets. `git log --oneline -20 --decorate` shows the last ~20 merges and the audit-wave cadence (PR #20 the L2 wave, the audit ADRs 0009-0013).
+`make help` lists the developer targets. `git log --oneline -20 --decorate` shows the last ~20 merges and the audit-wave cadence (PR #20 the L2 wave, the audit ADRs 0009-0015).
 
 ## 2. Phase A: audit
 
-The repo's audit cadence is in `docs/backlog.md`: ADR 0009 (first), ADR 0010 (second), ADR 0011 (third), ADR 0013 (fifth), ADR 0015 (sixth). A "fourth" audit pass was folded into the cross-repo review in ADR 0012 (run-provenance + provider-batch capabilities). ADR 0014 is the BL-180 capability ADR (durable Versioned + new Transactional Protocol). ADR 0016 is the BL-133 capability ADR (skill execution isolation). The next audit slot is ADR 0017.
+The repo's audit cadence is in `docs/backlog.md`: ADR 0009 (first), ADR 0010 (second), ADR 0011 (third), ADR 0013 (fifth), ADR 0015 (sixth), ADR 0017 (seventh), ADR 0018 (eighth), ADR 0019 (ninth). A "fourth" audit pass was folded into the cross-repo review in ADR 0012 (run-provenance + provider-batch capabilities). ADR 0014 is the BL-180 capability ADR (durable Versioned + new Transactional Protocol). ADR 0016 is the BL-133 capability ADR (skill execution isolation). The next audit slot is ADR 0020.
 
 ### 2.1 Plan the audit
 
@@ -72,7 +72,8 @@ Maintain a running checklist; an audit is just running it carefully and finding 
 | Audit-content over-permissiveness | Reserved keys not rejected, only-dict walk in redaction | `BL-159` (Redactor walk), `BL-167` (reserved keys) |
 | Empty-batch lock | A no-op batch still takes the write lock | `BL-178` |
 | First-occurrence-vs-strictest | Composition keeps the first, not the strictest | `BL-166`, `BL-174` |
-| Open backlog item: classes still unresolved | The four pending Tier 1/2 items each represent a class boundary | `BL-114` (replay vs deduplicated resume), `BL-132/171` (cache hit/miss), `BL-135` (LRU/size on sweeper), `BL-155` (preemption vs cooperation) |
+| Fan-out per-member failure containment | A single failing fan-out member cancels siblings, breaks downstream telemetry / audit-vs-raise parity | `BL-222` (`MultiDispatcher` ensemble), `BL-223` (`MultiSink` audit fan-out) |
+| Open backlog item: classes still unresolved | The pending Tier 1/2 items each represent a class boundary | `BL-114` (replay vs deduplicated resume), `BL-132/171` (cache hit/miss), `BL-135` (compaction / summarisation / tiering, plus durable `BoundedSweepableStore` on Dynamo/S3; size-bound half is delivered via `BL-212`-`BL-214`), `BL-155` (preemption vs cooperation) |
 
 ### 2.4 Fix discipline
 
@@ -84,7 +85,7 @@ Maintain a running checklist; an audit is just running it carefully and finding 
 
 ### 2.5 Author the audit ADR
 
-Use `docs/adr/0013-fifth-code-audit.md` as the template:
+Use `docs/adr/0017-seventh-code-audit.md` as the template:
 
 1. Status: Accepted (set on merge).
 2. Context: what triggered this pass (dependency bump, sibling-repo review, the class-extension principle).
@@ -128,19 +129,18 @@ Open `docs/backlog.md`, filter to `[pending]` / `[in-progress]`. The current ope
 | ID | Tier | Size | One-line shape | Dependency |
 |---|---|---|---|---|
 | `BL-120` | Tier 1 | L | A real reference workload exercising the wired runtime against a live model | A funded provider key, a credentialed CI gate skipped without it |
-| `BL-133` | Tier 0 | M | True isolation (subprocess / container) for opted-in skill contracts | `subprocess` + capability scoping; the gate-not-sandbox boundary in `LIMITATIONS.md` L3 |
 | `BL-150` | Tier 0 | S | Commit-SHA pinning for every GitHub Action | A maintainer / Dependabot action (the run env cannot resolve third-party action SHAs honestly) |
 | `BL-132` / `BL-171` | Tier 1 | M | Prompt and response caching on the runtime adapter | A verified PydanticAI provider-cache API + a live model to validate |
 | `BL-113` | Tier 2 | L | True OTel spans + trace-context propagation | The OTel logs SDK stabilising (the GA cut) |
 | `BL-138` | Tier 2 | M | OTel GenAI semantic conventions on `BL-113`'s spans | Same upstream as `BL-113`; depends on it |
 | `BL-114` | Tier 2 | L | Deeper PydanticAI resume via `DeferredToolRequests` / `message_history` | PydanticAI's pause/resume primitive stabilising |
-| `BL-135` | Tier 2 | L | Memory compaction / summarisation / tiering, size or LRU bound on the sweeper | None (in-tree); pairs with `BL-131` (semantic memory) |
+| `BL-135` | Tier 2 | L | Memory compaction / summarisation / tiering, plus `BoundedSweepableStore` on `DynamoDBStore` / `S3Store` (size-bound on InMemory/SQLite/Redis delivered via `BL-212`-`BL-214`) | None (in-tree); pairs with `BL-131` (semantic memory) |
 | `BL-155` | Tier 2 | L | True wall-clock preemption for non-cooperative tools | A thread/process execution boundary (not the asyncio await pattern) |
 | `BL-179` | Tier 2 | M | `RetryPolicy` token / step accounting from intermediate attempts | Upstream PydanticAI partial-usage on the exception path |
 
 ### 4.2 Item-level workflow
 
-For an item with no upstream dependency (the "ready" set today: `BL-120`, `BL-135`, `BL-133`, `BL-150`):
+For an item with no upstream dependency (the "ready" set today: `BL-120`, `BL-135`, `BL-150`):
 
 1. Move `[pending]` to `[in-progress]` with the branch name. Push the change as a separate commit so an open backlog state is visible.
 2. Design the surface. Write the new Protocol or the new optional keyword before any implementation. Surface it in the module docstring; an L3 keyword is read once, supported forever.
@@ -305,17 +305,17 @@ Run this sweep once per audit (before authoring the ADR), and once per dependenc
 
 The list below covers every `.md` file in the repository (excluding `LICENSES/` and `.git/`). For each, the table records: the path, the maturity (per `STATUS.md`), the specific items the sweep checks, and the trigger to update it.
 
-### 8.1 Top-level documents (six files)
+### 8.1 Top-level documents (seven files)
 
 | Path | Maturity | What this sweep checks | Update trigger |
 |---|---|---|---|
-| `README.md` | stable | Status paragraph cites the latest ADR (today `0013` + `BL-193`); the capability bullets match the present `harness/` / `memory/` / `skills/` / `evaluation/` exports; the install line lists every optional extra (`redis`, `aws`, `crypto`, `otel`, `anthropic`, `openai`); the seven-dispatcher count (`BL-160` errata) | A new ADR, a new top-level capability, a new extra |
-| `CLAUDE.md` | stable | The ADR enumeration (today `0007`-`0013`); the layout block matches `ls`; the `evaluation/` line ships; the additive-to-L1 rule wording is the current canonical phrasing | A new ADR, a new top-level component, a layout change |
-| `STATUS.md` | living | Last-reviewed date is today; the phase-tracking table cites the latest ADR; the document-maturity table covers every `.md` in the tree (the table mentions `0001-0013`); the L3-open row is the current `[pending]` set | Every audit, every release rehearsal |
+| `README.md` | stable | Status paragraph cites the latest ADR (today `0019` + `BL-223`, plus the ADR 0018 `BL-219`-`BL-222` wave and the BL-212-BL-214 size-bound wave and ADR 0017's `BL-215`-`BL-218`); the capability bullets match the present `harness/` / `memory/` / `skills/` / `evaluation/` exports (including `BoundedSweepableStore` and `BoundedRedisStore`); the install line lists every optional extra (`redis`, `aws`, `crypto`, `otel`, `anthropic`, `openai`); the seven-dispatcher count (`BL-160` errata) | A new ADR, a new top-level capability, a new extra |
+| `CLAUDE.md` | stable | The ADR enumeration (today `0007`-`0019`); the layout block matches `ls`; the `evaluation/` line ships; the additive-to-L1 rule wording is the current canonical phrasing | A new ADR, a new top-level component, a layout change |
+| `STATUS.md` | living | Last-reviewed date is today; the phase-tracking table cites the latest ADR; the document-maturity table covers every `.md` in the tree (the table mentions `0001-0019`); the L3-open row is the current `[pending]` set | Every audit, every release rehearsal |
 | `LIMITATIONS.md` | living | Last-reviewed date is today; the L-entries map to the open `BL-1xx` set; an L-entry the audit closed is removed (and the close noted in the ADR); a new L-entry is added only for a contract-level remainder | Every audit |
 | `CHANGELOG.md` | living | `[Unreleased]` covers everything not yet tagged; the per-section subsections (`Added` / `Fixed` / `Security` / `Changed` / `Documentation`) match the diff; ISO dates; no em-dashes | Every PR with a material change |
 | `CONTRIBUTING.md` | stable | DCO sign-off line; the REUSE compliance note; the green-gate set matches `.github/workflows/ci.yml` (today: lint, type-check, test, dependency-audit, evaluation); the governance section | A change to CI, a change to the contributing flow |
-| `SECURITY.md` | stable | The hardening posture list covers the latest defence-in-depth fix (today `BL-193` approval-resume binding); the untrusted-content section is the current canonical wording; the scope section covers every load surface; the supported-version line matches `STATUS.md` | A change to a load surface, an audit that adds a hardening item |
+| `SECURITY.md` | stable | The hardening posture list covers the latest defence-in-depth fixes (today the ADR 0019 ninth-audit addition: `BL-223` `MultiSink` per-sink failure containment on the audit fan-out side; plus the ADR 0018 eighth-audit set `BL-219` / `BL-220` / `BL-221` / `BL-222` and the ADR 0017 set `BL-216` / `BL-217`); the untrusted-content section is the current canonical wording; the scope section covers every load surface; the supported-version line matches `STATUS.md` | A change to a load surface, an audit that adds a hardening item |
 
 ### 8.2 `docs/` (six files plus the ADR set)
 
@@ -328,7 +328,7 @@ The list below covers every `.md` file in the repository (excluding `LICENSES/` 
 | `docs/runtime-providers.md` | stable | The `provider:model` table covers the supported provider prefixes; the credential-variable list matches PydanticAI; the line on the `_model_free_dispatcher` honouring a `keyword` / `embedding` manifest dispatcher (`BL-161`); the current state on `BL-120` | A change to the runtime adapter, a PydanticAI provider matrix change |
 | `docs/schema/README.md` | stable | The generated artefacts (today: `workload-manifest.json`, `skill-manifest.json`, `run-record.json`); the "do not edit by hand" line; the `gen_schema.py` regeneration command | A new Pydantic model exposed to schema |
 | `docs/adr/README.md` | stable | The ADR table covers every `docs/adr/00NN-*.md`; the latest row is the latest ADR | A new ADR |
-| `docs/adr/0001`-`0013` | stable, Accepted | Frozen; errata are recorded in the next ADR, not edited in place (`ADR 0009 -> 0010` errata template) | Never |
+| `docs/adr/0001`-`0017` | stable, Accepted | Frozen; errata are recorded in the next ADR, not edited in place (`ADR 0009 -> 0010` errata template) | Never |
 
 ### 8.3 Component `README.md` (eight files)
 

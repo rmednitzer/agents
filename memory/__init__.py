@@ -19,7 +19,7 @@ from memory.acl import (
     RoleACL,
     wrap_acl,
 )
-from memory.dynamodb import DynamoDBStore
+from memory.dynamodb import BoundedDynamoDBStore, DynamoDBStore
 from memory.encryption import (
     EncryptedStore,
     EnvKeyProvider,
@@ -32,12 +32,13 @@ from memory.encryption import (
 )
 from memory.errors import AccessDenied, MemoryError, NamespaceViolation
 from memory.inmemory import InMemoryStore
-from memory.redis import RedisStore
+from memory.redis import BoundedRedisStore, RedisStore
 from memory.s3 import S3Store
 from memory.semantic import Embedder, InMemorySemanticStore
 from memory.sqlite import SQLiteStore
 from memory.store import (
     BatchMemoryStore,
+    BoundedSweepableStore,
     CASMemoryStore,
     ContentAddressableStore,
     MemoryStore,
@@ -68,6 +69,9 @@ __all__ = [
     "AttributeACL",
     "AttributeRule",
     "BatchMemoryStore",
+    "BoundedDynamoDBStore",
+    "BoundedRedisStore",
+    "BoundedSweepableStore",
     "CASMemoryStore",
     "ContentAddressableStore",
     "DynamoDBStore",

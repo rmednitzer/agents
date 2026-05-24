@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from typing import cast
 
-from memory.store import SweepableStore
+from memory.store import BoundedSweepableStore, SweepableStore
 
 __all__ = ["TTLSweeper"]
 
@@ -39,25 +40,53 @@ class TTLSweeper:
         async with TTLSweeper(store, interval_seconds=60):
             ...
 
+    With ``max_keys`` set, the sweeper additionally calls
+    ``store.evict_to_capacity(max_keys)`` after the age-only sweep on
+    each interval (`BL-212`, the size-bound half of `BL-135`). The
+    store must implement ``BoundedSweepableStore``; a non-bounded
+    store with ``max_keys`` set raises ``TypeError`` at construction
+    so the configuration error surfaces at load time, not mid-run
+    (ADR 0007). ``evicted_total`` accumulates the number of entries
+    removed by the capacity pass for observability and tests; it is
+    distinct from ``swept_total`` (the age-only counter) so an
+    operator can tell whether growth is TTL-driven or write-rate-driven.
+
     ``swept_total`` accumulates the number of entries removed across all
-    sweeps for observability and tests. ``failures_total`` accumulates
-    the number of consecutive sweep attempts that raised so an
-    operator can detect a persistently broken backend (`BL-199`); the
-    counter resets to zero on the next successful sweep so a transient
-    blip self-heals without manual intervention. ``last_error`` carries
-    the most recent exception (or ``None`` if the last sweep
+    age-only sweeps for observability and tests. ``failures_total``
+    accumulates the number of consecutive maintenance attempts (sweep
+    or capacity pass) that raised so an operator can detect a
+    persistently broken backend (`BL-199`); the counter resets to zero
+    on the next fully-successful interval so a transient blip
+    self-heals without manual intervention. ``last_error`` carries the
+    most recent exception (or ``None`` if the last interval
     succeeded), so a caller can introspect the failure without parsing
     logs.
     """
 
-    def __init__(self, store: SweepableStore, *, interval_seconds: float) -> None:
+    def __init__(
+        self,
+        store: SweepableStore,
+        *,
+        interval_seconds: float,
+        max_keys: int | None = None,
+    ) -> None:
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be positive")
+        if max_keys is not None:
+            if max_keys <= 0:
+                raise ValueError("max_keys must be positive")
+            if not isinstance(store, BoundedSweepableStore):
+                raise TypeError(
+                    "max_keys requires a BoundedSweepableStore; "
+                    f"{type(store).__name__} does not implement evict_to_capacity"
+                )
         self._store = store
         self._interval = interval_seconds
+        self._max_keys = max_keys
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
         self.swept_total = 0
+        self.evicted_total = 0
         # BL-199: surface the failure path without killing the loop.
         # ``failures_total`` is the consecutive-failure counter (reset
         # on the next success); ``last_error`` is the most recent
@@ -82,6 +111,13 @@ class TTLSweeper:
                 break
             try:
                 self.swept_total += await self._store.sweep_expired()
+                if self._max_keys is not None:
+                    # BL-212: capacity pass after age-only sweep. The
+                    # isinstance check at __init__ guarantees the
+                    # method exists; runtime cast keeps mypy happy
+                    # without a second narrowing pass per interval.
+                    bounded = cast(BoundedSweepableStore, self._store)
+                    self.evicted_total += await bounded.evict_to_capacity(self._max_keys)
             except asyncio.CancelledError:
                 # Cancellation is the documented stop signal; do not
                 # swallow it so ``aclose`` can complete.

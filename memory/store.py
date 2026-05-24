@@ -19,6 +19,9 @@ simply does not implement it rather than faking it:
 - ContentAddressableStore: write_content -> sha256 key (BL-083).
 - CASMemoryStore: compare-and-set / compare-and-delete (BL-072).
 - SweepableStore: sweep_expired for the active TTL sweeper (BL-080).
+- BoundedSweepableStore: SweepableStore + evict_to_capacity for a
+  size-bound on the keyspace beyond age-only expiry (BL-212, the
+  size-bound half of BL-135).
 - SemanticMemoryStore: vector write + similarity query (BL-131).
 - VersionedMemoryStore: MVCC read/write/delete by version token
   (BL-124, BL-180).
@@ -372,3 +375,36 @@ class SweepableStore(Protocol):
     """
 
     async def sweep_expired(self) -> int: ...
+
+
+@runtime_checkable
+class BoundedSweepableStore(SweepableStore, Protocol):
+    """A SweepableStore that also enforces a size bound on its keyspace
+    (BL-212, the size-bound half of BL-135).
+
+    Lazy expiry plus age-only ``sweep_expired`` is sufficient for
+    correctness; the bound is a space cap for long-horizon workloads
+    whose write rate outpaces their TTL (or whose entries have no TTL
+    and are written once, read many). ``evict_to_capacity`` removes the
+    oldest entries (in insertion order, equivalent to FIFO by first
+    write of a given key) until the live keyspace is at most
+    ``max_keys``, returning the count evicted. ``memory.sweep.TTLSweeper``
+    can drive it on an interval after the age-only pass when its
+    ``max_keys`` kwarg is set.
+
+    The eviction order is insertion order, not LRU: an in-place
+    overwrite of an existing key keeps the original position, matching
+    Python's dict semantics. A backend wanting strict last-write-out
+    FIFO must delete-then-write on overwrite (the InMemoryStore
+    reference takes the dict-native ordering; durable adapters
+    document their own ordering when they implement this Protocol).
+
+    Returns the number of entries removed; the call is a no-op (returns
+    0) when the live keyspace is already at or under ``max_keys``.
+    ``max_keys`` must be positive (zero would clear the store, not
+    bound it; the caller can ``mdelete`` the whole keyspace if that is
+    the intent). The reference InMemoryStore raises ``ValueError`` on
+    a non-positive cap; a backend MAY raise the same.
+    """
+
+    async def evict_to_capacity(self, max_keys: int) -> int: ...

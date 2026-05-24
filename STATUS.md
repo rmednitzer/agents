@@ -1,7 +1,7 @@
 # Status
 
 Maturity of the repository and its documents. Updated when a phase
-opens or closes. Last reviewed: 2026-05-23.
+opens or closes. Last reviewed: 2026-05-24 (`BL-224` BoundedDynamoDBStore).
 
 ## Maturity taxonomy
 
@@ -30,14 +30,18 @@ opens or closes. Last reviewed: 2026-05-23.
 | Sixth code audit (`BL-197`-`BL-208`) | Twelve additive findings: Namespace TTL validation + `resolve_ttl` consolidation, RedisStore.mset empty short-circuit, TTLSweeper failure resilience, Redactor recursion cap, OpenAI batch non-dict line, wall-clock boundary event parity, ContractStarted orphan, parse_skill_md recursion, MultiDispatcher NaN weights, evaluate_trajectory input mislabel, InstrumentedDispatcher failure telemetry, routing-lane dispatcher exclusion. All class extensions of prior fixes or novel diagnostic-gap findings; 45 new regression tests | stable | ADR 0015 |
 | ADR 0015 deferred close (`BL-209`-`BL-211`) | The three items ADR 0015 flagged as deferred (M3 / M6 / H5): EncryptedStore BL-196 multi-key loop catches KeyError alongside InvalidTag for out-of-tree KMS providers; `wrap_encrypted` docstring extended to flag Versioned / Transactional alongside CAS as deliberately not-forwarded; `MarkdownValidatorRuntime` per-line comment tracker rewritten as a position-aware scanner. 12 new regression tests; no new ADR (folded into the ADR 0015 record) | stable | ADR 0015 deferred |
 | Skill contract execution isolation (`BL-133`) | New `skills.execution.SkillContractExecutor` Protocol with two in-tree references: `InProcessSkillContractExecutor` (default, backward-compatible) and `SubprocessSkillContractExecutor` (load + evaluate in a long-lived Python subprocess with `resource.setrlimit` caps on POSIX). Crash isolation is real; resource limits are bounded; capability isolation (fs / network / syscall) stays the out-of-tree extension point. `LIMITATIONS.md` L3 rewritten | stable | ADR 0016 |
-| L3 open | Live-model workload, memory compaction/tiering, true OTel spans, prompt caching, true preemption, non-replay resume | planned | `docs/backlog.md` (`BL-120`, `BL-135`, `BL-113`/`138`, `BL-132`/`171`, `BL-155`, `BL-114`) |
+| Sweeper size bound on four adapters (`BL-212`-`BL-214`, `BL-224`) | New `BoundedSweepableStore` extension Protocol + `TTLSweeper(max_keys=...)` capacity pass. `InMemoryStore` (Python dict-order FIFO with overwrite-keeps-position), `SQLiteStore` (rowid ASC with overwrite-shifts-to-newest), `BoundedRedisStore` opt-in subclass (sorted-set index scored by a per-namespace server-side INCR counter, robust against client clock skew), `BoundedDynamoDBStore` opt-in subclass (per-namespace `seq` Number attribute on every item, allocated via atomic `UpdateItem ADD seq :n` on a per-namespace counter row; scan + client-side sort + batch_write_item delete). Closes the size-bound half of `BL-135` for InMemory + SQLite + Redis + DynamoDB; `S3Store` and the compaction / summarisation / tiering half stay tracked | stable | PRs #58/#59/#60/#NN |
+| Seventh code audit (`BL-215`-`BL-218`) | Four additive findings: `SkillLoader` UTF-8 decode boundary, subprocess IPC frame length bound, `SubprocessSkillContractExecutor` metadata validation, `read_text` UTF-8 encoding consistency. Brings the IPC trust boundary introduced by ADR 0016 to the same "external-input-must-not-crash" invariant as the audit-path and bulk-decode sides; 15 new regression tests | stable | ADR 0017 |
+| Eighth code audit (`BL-219`-`BL-222`) | Four additive findings: `JsonlSink` UTF-8 write-side encoding, subprocess child-side partial-header EOF treatment, `BudgetTracker` finite/non-negative validation on caller-fed `usd` / `wall_clock_seconds`, `MultiDispatcher` per-member failure containment. Brings the BL-218 read-side standard to the write side, generalises BL-216 truncated-header handling to the child, applies the BL-159 / BL-205 NaN-clamp class to the budget input boundary, and makes the BL-207 / BL-208 telemetry-on-failure guarantee robust against ensemble-level cancellation; 20 new regression tests | stable | ADR 0018 |
+| Ninth code audit (`BL-223`) | One additive finding: `MultiSink` per-sink failure containment on the audit fan-out side, the BL-222 ensemble-side guarantee generalised to the sequential sink fan-out so a single failing sink (OTel exporter, JsonlSink with disk full) does not block downstream sinks from receiving the event. `BaseException` (KeyboardInterrupt / SystemExit / CancelledError) still propagates; terminal signals are not swallowed. 7 new regression tests; the audit-vs-raise parity invariant (BL-202 / BL-167) now holds at every fan-out leg | stable | ADR 0019 |
+| L3 open | Live-model workload, memory compaction/tiering + `BoundedSweepableStore` on S3, true OTel spans, prompt caching, true preemption, non-replay resume | planned | `docs/backlog.md` (`BL-120`, `BL-135`, `BL-113`/`138`, `BL-132`/`171`, `BL-155`, `BL-114`) |
 
 ## Document maturity
 
 | Document | Maturity |
 | --- | --- |
 | `CLAUDE.md`, `README.md`, component `README.md` | stable |
-| `docs/adr/0001`-`0014` | stable (Accepted) |
+| `docs/adr/0001`-`0019` | stable (Accepted) |
 | `docs/releasing.md` | stable |
 | `docs/backlog.md` | living tracker |
 | `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE` section (in `CONTRIBUTING.md`) | stable |

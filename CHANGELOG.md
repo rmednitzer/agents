@@ -3,6 +3,530 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] BL-224: BoundedDynamoDBStore (BL-135 size-bound on DynamoDB, 2026-05-24)
+
+The network-durable DynamoDB extension to BL-214's Redis reference and
+BL-213's SQLite reference, parallel to how BL-180 extended BL-124 from
+the in-tree reference to the network-durable adapters. DynamoDB has no
+native insertion-order column either, so the adapter ships as an
+opt-in subclass that stamps a per-namespace monotonic `seq` Number
+attribute on every data item, allocated via an atomic
+`UpdateItem ADD seq :n` on a per-namespace counter row. The bare
+`DynamoDBStore` is unchanged for every existing caller. Closes the
+DynamoDB half of `BL-135` (the size-bound half); `S3Store` stays
+tracked under `BL-135` as the remaining durable backend.
+
+### Added
+
+- `memory.BoundedDynamoDBStore`: opt-in subclass of `DynamoDBStore`
+  that stamps a per-namespace monotonic `seq` Number attribute on
+  every data item and maintains a per-namespace counter row at
+  `pk = "__evict_counter::<namespace>"` (placed outside the
+  `<namespace>::*` data prefix, so it cannot collide with a user
+  data item: the namespace-name validator's `^[a-z0-9]` rule makes
+  a colliding namespace structurally impossible, and the counter row
+  does not appear in `list_keys` / `scan` / `sweep_expired` results,
+  all of which filter by `begins_with(pk, "<namespace>::")`). Seq allocation
+  uses DynamoDB's atomic `UpdateItem ADD seq :one` action (creates
+  the counter with `seq = 1` on first use; increments server-side
+  thereafter), so ordering is strict insertion-order FIFO across
+  concurrent writers without clock skew. Every keyspace-mutating
+  method (`write`, `mset`, `compare_and_set`, `write_versioned`,
+  `transact`) is overridden to allocate a seq before the PutItem
+  and stamp it onto the item. A rewrite of an existing key
+  allocates a fresh seq and the PutItem replaces the whole item,
+  so the rewritten key orders as *newest* by seq, matching the
+  BL-213 SQLite `INSERT OR REPLACE` semantic and the BL-214 Redis
+  ZADD-rescore semantic and diverging from the BL-212 InMemoryStore
+  first-write FIFO.
+- `BoundedDynamoDBStore.evict_to_capacity`: scans the namespace's
+  data items (the counter row is outside the namespace prefix so
+  the FilterExpression naturally excludes it), projects only
+  `pk` / `seq` / `exp` (kept small via `ProjectionExpression`),
+  client-side filters expired-but-unswept items (the BL-195
+  read-vs-listing parity in DynamoDB form so a dead row does not
+  double-evict a live one), sorts the live entries by `(seq, key)`
+  ascending (secondary key sort is a deterministic tie-break for
+  the migration case where multiple legacy items share `seq = 0`),
+  and batch-deletes the oldest `(live_count - max_keys)` items via
+  the parent's `_batch_write` (which retries throttled items and
+  raises on retry-budget exhaustion, so audit emission only fires
+  on full success). One audit `MemoryDelete` event per evicted
+  key (BL-040).
+- New regression suite `tests/memory/test_bl224_dynamodb_bounded_sweeper.py`
+  (29 tests, moto-backed): Protocol satisfaction (subclass yes,
+  bare `DynamoDBStore` no but still `SweepableStore`); oldest-first
+  eviction by seq ascending; the overwrite-shifts-to-newest
+  contract; no-op at and under the cap; non-positive cap rejection
+  (parametrized); the counter-row isolation suite (no leak into
+  `list_keys` / `scan` / `sweep_expired`; no collision with a
+  user-written key named `__evict_counter`); expired-but-unswept
+  items excluded from the live count; per-key audit emission;
+  TTLSweeper integration on both age and capacity passes; the
+  seq-consistency suite (every parent mutation path stamps a fresh
+  seq across `write`, `mset` + `mdelete`, `compare_and_set`,
+  `compare_and_delete`, `write_versioned` + `delete_versioned`,
+  `transact`); monotonic counter source (counter advances exactly
+  once per write, exactly N times per `mset`/`transact` batch in
+  one `UpdateItem ADD`); strict FIFO across a tight loop;
+  dict-insertion-order preservation under `mset` / `transact`; the
+  migration contract (a legacy item written via a bare
+  `DynamoDBStore` has no `seq` attribute, is treated as `seq = 0`
+  in eviction sort and evicts first, but rewriting it via the
+  bounded subclass stamps a fresh seq and moves it to newest);
+  empty-batch short-circuit on `mset` (no counter UpdateItem, no
+  batch_write, parity with the BL-198 RedisStore and BL-178
+  SQLiteStore fixes).
+
+### Changed
+
+- `memory.__init__` exports `BoundedDynamoDBStore`.
+- `memory/dynamodb.py` module docstring now notes the opt-in
+  subclass and the per-namespace `seq` attribute design.
+- `LIMITATIONS.md` L5 updated to note the DynamoDB delivery
+  alongside InMemoryStore, SQLiteStore, and Redis; the remaining
+  `S3Store` stays tracked under `BL-135` because it needs an
+  auxiliary index over LIST + DELETE.
+- `memory/README.md` capability bullet now enumerates the four
+  eviction orderings (SQLite by rowid, Redis by index score,
+  DynamoDB by `seq` attribute via server-side counter, InMemoryStore
+  by dict insertion order).
+
+### Documentation
+
+- `docs/backlog.md`: `BL-224` added (resolved) under the existing
+  "Sweeper size bound (2026-05-23)" section; `BL-135`'s
+  delivered / remaining narrative updated to reflect the fourth
+  adapter shipped.
+
+## [Unreleased] Ninth code audit (ADR 0019, BL-223, 2026-05-24)
+
+The ninth in-depth code audit, by area, against the same green gates
+(ruff, ruff format, mypy strict, pytest at `cov-fail-under=94`,
+schema-drift, REUSE 3.x, `pip-audit`, the dispatch evaluation gate).
+The clear bug was fixed additively in the same increment; ADR 0019 is
+the cross-cutting why. This audit re-walked the same *classes* the
+prior audits fixed pointwise, with particular attention to the BL-222
+"per-member failure containment" guarantee from ADR 0018 and whether
+the class generalises to other fan-out paths in the tree. One finding,
+a class extension on the audit-sink fan-out side.
+
+### Fixed
+
+- `BL-223`: `harness.sinks.MultiSink.emit` now contains per-sink
+  `Exception` failures so a single failing sink (a flaky OTel
+  exporter, a disk-full `JsonlSink`, any sink with a transient
+  network or filesystem error) does not prevent downstream sinks
+  from receiving the event. Without the containment, the
+  enforcement loop's `active_sink.emit(BudgetExceededEvent(...))`
+  or `active_sink.emit(GovernanceViolated(...))` could be lost on
+  the OTLP sink because the in-process JsonlSink failed first, or
+  vice versa: a bare `raise BudgetExceeded(...)` then arrived in
+  the caller without a matching event in the downstream-of-the-
+  failure sinks, breaking the BL-202 / BL-167 audit-vs-raise
+  parity invariant ("every state-affecting raise has a matching
+  audit event") at the fan-out boundary. The fix wraps each
+  `sink.emit(event)` in a per-sink `try / except Exception` and
+  continues; `BaseException` (`KeyboardInterrupt`, `SystemExit`,
+  `asyncio.CancelledError`) still propagates so terminal signals
+  are not swallowed (parity with the runtime's BL-165 "do not
+  reinterpret cancellation as a pause" invariant). BL-222 class
+  extension on the audit fan-out side.
+
+### Tests
+
+- 7 new regression tests
+  (`tests/harness/test_bl223_multi_sink_failure.py`): failing
+  middle sink does not block downstream sinks, failing first sink
+  does not block subsequent sinks, all-failing returns cleanly,
+  `KeyboardInterrupt` propagates, happy-path fan-out unchanged,
+  empty fan-out is a no-op, multi-event sequence with one
+  intermittent failing sink delivers every healthy event in order.
+- Coverage at 94.94% (above the 94% gate; the absolute number
+  fluctuates with pytest discovery and the new tests, the gate is
+  what matters).
+
+## [Unreleased] Eighth code audit (ADR 0018, BL-219-BL-222, 2026-05-24)
+
+The eighth in-depth code audit, by area, against the same green
+gates (ruff, ruff format, mypy strict, pytest at `cov-fail-under=94`,
+schema-drift, REUSE 3.x, `pip-audit`, the dispatch evaluation gate).
+The clear bugs were fixed additively in the same increment; ADR 0018
+is the cross-cutting why. This audit re-walked the same *classes*
+the prior audits fixed pointwise and the code paths exercised by the
+BL-212-BL-214 sweeper-size-bound wave plus the ADR 0016 (`BL-133`)
+IPC surface. Four findings, all class extensions of bugs the prior
+audits fixed elsewhere.
+
+### Fixed
+
+- `BL-219`: `harness.sinks.JsonlSink.emit` now pins `encoding="utf-8"`
+  on its `Path.open("a", ...)` call. Without the explicit encoding,
+  a non-UTF-8 platform locale (Windows cp1252, C locale ASCII) would
+  either raise `UnicodeEncodeError` past the sink boundary or
+  silently mis-encode a non-ASCII event payload (a localised error
+  message, a unicode prompt template, a redacted span carrying high
+  bytes), corrupting the audit stream. BL-218 class extension on the
+  write side: the read-side standard (`Path.read_text(
+  encoding="utf-8")` everywhere) now applies to the write side too.
+- `BL-220`: `skills._executor_child._read_frame` now treats a
+  1 / 2 / 3-byte partial header as EOF (the parent crashed mid-write
+  after sending part of the 4-byte length prefix), mirroring the
+  empty-header branch and the parent's reciprocal handling at the
+  documented `SkillContractExecutorError` boundary in
+  `skills.execution._read_frame`. Without the check,
+  `_FRAME_LEN.unpack(header)` raised `struct.error` past the child's
+  clean EOF path, crashing the child with an unhandled exception
+  instead of exiting through the main loop's EOF branch. BL-216
+  class extension on the child side.
+- `BL-221`: `harness.budgets.BudgetTracker.consume_cost(usd)` and
+  `consume_tool_call(..., wall_clock_seconds=)` now validate
+  `math.isfinite(...)` and non-negativity at the entry boundary,
+  raising `ValueError` with a diagnostic naming the argument.
+  Without the validation, a single NaN cost report or wall-clock
+  attribution (a buggy pricing helper, a misconfigured adapter that
+  emits NaN on a zero-token request) silently disabled the budget
+  ceiling for the rest of the run: NaN is truthy in Python (so the
+  `if usd:` short-circuit did not skip it), NaN propagates through
+  `+` (so the accumulator becomes NaN for the rest of the run), and
+  `NaN > limit` is always `False` (so the `_check` strict-greater
+  comparison never trips). BL-159 / BL-205 class extension on the
+  budget input boundary.
+- `BL-222`: `skills.dispatchers.multi.MultiDispatcher.dispatch` now
+  uses `asyncio.gather(*, return_exceptions=True)` and skips
+  exceptional results in the aggregation loop. Without the change,
+  a single flaky member (an LLM-backed inner that raised
+  `DispatchError`, an embedding provider that timed out) cancelled
+  every sibling task and crashed the entire ensemble. The cancelled
+  siblings' `InstrumentedDispatcher` `try/finally` wrappers (BL-207)
+  then emitted `fell_back=True / matched=0` events, polluting the
+  routing-health telemetry with cancellation-as-fallback noise. An
+  `Exception` member now contributes 0 to the AVERAGE / WEIGHTED /
+  VOTE blend, parity with the documented "a member that did not
+  return the skill contributes 0" semantic; the exception is
+  contained at the ensemble boundary. BL-207 / BL-208 class
+  extension on the ensemble side.
+
+### Tests
+
+- 20 new regression tests:
+  `tests/harness/test_bl219_bl221_audit8.py` (11 tests on the JsonlSink
+  UTF-8 encoding and the BudgetTracker finite/non-negative validation),
+  `tests/skills/test_bl220_executor_child_partial_header.py` (5 tests
+  on the child-side partial-header EOF treatment), and
+  `tests/skills/test_bl222_multi_member_failure.py` (4 tests on the
+  MultiDispatcher member-failure containment).
+- Coverage at 94.98% (above the 94% gate, up from 94.97%).
+
+## [Unreleased] Seventh code audit (ADR 0017, BL-215-BL-218, 2026-05-23)
+
+The seventh in-depth code audit, by area, against the same green
+gates (ruff, ruff format, mypy strict, pytest at `cov-fail-under=94`,
+schema-drift, REUSE 3.x, `pip-audit`, the dispatch evaluation gate).
+The clear bugs were fixed additively in the same increment; ADR 0017
+is the cross-cutting why. This audit targeted the *classes* the
+prior audits fixed pointwise and the new IPC surface introduced by
+ADR 0016 (`BL-133`). Four findings, all in `skills/` or the
+`read_text` encoding boundary.
+
+### Fixed
+
+- `BL-215`: `skills.loader.parse_skill_md` and the lazy
+  `_read_body_only` (used by `Skill.body()`) now catch
+  `UnicodeDecodeError` and re-raise as `SkillLoadError`. A SKILL.md
+  that is not valid UTF-8 (latin-1, a binary file misnamed, a
+  UTF-16 BOM at the head) previously leaked a Python-internal
+  exception past the documented `SkillLoadError` boundary; the fix
+  translates to the documented "unreadable file" branch.
+  BL-204 class extension.
+- `BL-216`: `skills.execution._read_frame` (parent side, reading
+  from the subprocess) and `skills._executor_child._read_frame`
+  (child side, reading from the parent) now cap the body length at
+  64 MiB (`_FRAME_MAX_BODY_BYTES`). The 4-byte big-endian length
+  prefix can encode up to ~4 GiB; without the cap, a compromised
+  child writing `2**32 - 1` would drive the parent into a multi-GiB
+  allocation before discovering the truncation. The parent raises
+  `SkillContractExecutorError` and kills the subprocess; the child
+  treats an oversize header as EOF (defence in depth). New class
+  introduced by ADR 0016; the "external-input-must-not-crash"
+  invariant from BL-167 / BL-200 / BL-201 generalised to the new
+  IPC boundary.
+- `BL-217`: `skills.execution.SubprocessSkillContractExecutor.load`'s
+  `_proxies` closure now validates every metadata item from the
+  child structurally before constructing `_PredicateProxy`: non-dict
+  raises, missing `name` / `severity` raises, non-string types
+  raise, unknown severity raises, all with a diagnostic naming the
+  slot and the failure mode. Without the check, a malformed item
+  (a buggy or malicious child) leaked `KeyError` / `ValueError`
+  past the documented `SkillContractExecutorError` boundary.
+  BL-159 / BL-205 class extension applied to the new IPC metadata
+  frame.
+
+### Changed
+
+- `BL-218`: `workloads.loader._build_loaded_workload`,
+  `evaluation.dataset.load_dispatch_golden`, and
+  `workloads/_example/__main__.py` now specify
+  `encoding="utf-8"` on their `Path.read_text` calls, restoring
+  consistency with the project's
+  explicit-UTF-8 convention (the `check_run_records.py` /
+  `gen_schema.py` / `skills.loader` precedents). A non-default
+  platform locale (Windows cp1252, a C locale ASCII) would have
+  silently mis-decoded non-ASCII content in any of the three
+  affected reads.
+
+### Added
+
+- 15 new regression tests across three new test modules:
+  `tests/skills/test_bl215_loader_unicode.py` (4 tests),
+  `tests/skills/test_bl216_subprocess_frame_bound.py` (6 tests),
+  `tests/skills/test_bl217_subprocess_metadata_validation.py`
+  (5 tests). Total test count: 925 (up from 910).
+- ADR 0017: the seventh-audit narrative and the consequences for
+  the IPC trust boundary.
+
+### Documentation
+
+- `docs/backlog.md`: new "Seventh code audit (ADR 0017,
+  2026-05-23)" section with `BL-215` through `BL-218` resolved.
+- `docs/adr/README.md`: ADR 0017 row added.
+- `STATUS.md`, `README.md`, `CLAUDE.md`, `LIMITATIONS.md`:
+  phase tracking, ADR enumeration, and document-maturity refreshed
+  for the seventh audit.
+- `docs/runbook.md`: section 8.1 off-by-one fix ("six" -> "seven"
+  files), seventh-audit slot recorded, last-reviewed bumped.
+
+## [Unreleased] BL-214: BoundedRedisStore (BL-135 size-bound on Redis, 2026-05-23)
+
+The network-durable Redis extension to BL-213's SQLite reference,
+parallel to how BL-180 extended BL-124 from the in-tree reference to
+the network-durable adapters. Redis has no native insertion-order
+column, so the adapter ships as an opt-in subclass that maintains a
+per-namespace insertion-order sorted-set index alongside the data
+writes. The bare `RedisStore` is unchanged for every existing caller.
+
+PR #60 review: the score source changed from client-side
+``time.time()`` to a per-namespace server-side INCR counter before
+merge (Copilot + Codex P1/P2 on clock skew + sub-microsecond
+tie-breaks). The change closes three review findings in one design
+swap: multi-writer deployments stay correct under clock skew, a
+tight write loop on a single writer gets unique monotonic scores,
+and a batched ``mset`` / ``transact`` no longer collapses every
+member onto a shared score that Redis tie-breaks lexicographically.
+The cost is one extra Redis round trip per write or per batch (the
+INCR / INCRBY). The auxiliary counter key is
+``__evict_counter::<namespace>``, placed under the same outside-the-
+namespace-prefix isolation convention as the index key.
+
+### Added
+
+- `memory.BoundedRedisStore`: opt-in subclass of `RedisStore` that
+  maintains a single per-namespace sorted-set index at
+  `"__evict_index::<namespace>"` and a server-side INCR counter at
+  `"__evict_counter::<namespace>"` (both placed outside the
+  `<namespace>::*` keyspace prefix, so neither can collide with a
+  user-written key and neither appears in `list_keys` / `scan`
+  results: the namespace-name validator's `^[a-z0-9]` rule makes a
+  colliding namespace structurally impossible) and implements
+  `SweepableStore` plus `BoundedSweepableStore`. Index scores come
+  from the server-side counter (INCR for a single write, INCRBY for
+  a batch), so ordering is strict insertion-order FIFO even across
+  clock skew, sub-microsecond ties, or batched writes; eviction is
+  ZRANGE ascending by score. A re-write of an existing key allocates
+  a new score so a rewritten key orders as *newest* by index,
+  matching the BL-213 SQLite overwrite-shifts-to-newest semantic and
+  diverging from the BL-212 InMemoryStore first-write FIFO. Every
+  keyspace-mutating method on the parent (`write`, `mset`, `delete`,
+  `mdelete`, `compare_and_set`, `compare_and_delete`,
+  `write_versioned`, `delete_versioned`, `transact`) is overridden
+  to call `super()` then update the index via INCR / INCRBY + ZADD
+  (or ZREM for deletes), so the index stays consistent across every
+  mutation path.
+- `BoundedRedisStore.sweep_expired`: cleans stale index members
+  whose underlying Redis data keys have already been auto-evicted
+  by Redis itself (catch-up bookkeeping; the data key is gone via
+  Redis's own expiry, only the auxiliary entry remains).
+- `BoundedRedisStore.evict_to_capacity`: walks the index
+  oldest-first via ZRANGE, performs the same staleness filter as
+  `sweep_expired` so an expired-but-unswept member does not count
+  toward the cap (the BL-195 read-vs-listing parity in Redis form),
+  pipelines DEL on the live oldest block plus a final ZREM on the
+  index, and emits one audit `MemoryDelete` per evicted key.
+- New regression suite `tests/memory/test_bl214_redis_bounded_sweeper.py`
+  (22 tests, fakeredis-backed): Protocol satisfaction (subclass yes,
+  bare `RedisStore` no); oldest-first eviction by index score; the
+  overwrite-shifts-to-newest contract; no-op at and under the cap;
+  non-positive cap rejection (parametrized); the index-isolation pair
+  (no leak into `list_keys` / `scan`; no collision with a user-written
+  key named `__evict_index`); `sweep_expired` stale-cleanup; zero on
+  a clean index; expired-but-unswept members excluded from the live
+  count; per-key audit emission; sweeper integration on both age and
+  capacity passes against a Redis store; the index-consistency suite
+  (every parent mutation path keeps the index aligned across `write`,
+  `mset` + `mdelete`, `compare_and_set`, `compare_and_delete`,
+  `write_versioned` + `delete_versioned`, and `transact`).
+
+### Changed
+
+- `memory.__init__` exports `BoundedRedisStore`.
+- `memory/redis.py` module docstring now notes the opt-in subclass
+  and the per-namespace insertion-order sorted-set index.
+- `LIMITATIONS.md` L5 updated to note the Redis delivery alongside
+  InMemoryStore and SQLiteStore; the remaining `DynamoDBStore` and
+  `S3Store` stay tracked under `BL-135` because neither has a native
+  insertion-order column.
+- `memory/README.md` capability bullet now enumerates the three
+  eviction orderings (SQLite by rowid, Redis by index score,
+  InMemoryStore by dict insertion order).
+
+### Documentation
+
+- `docs/backlog.md`: `BL-214` added (resolved) under the existing
+  "Sweeper size bound (2026-05-23)" section; `BL-135`'s
+  delivered / remaining narrative updated to reflect the third
+  adapter shipped.
+
+## [Unreleased] BL-213: BoundedSweepableStore on SQLiteStore (2026-05-23)
+
+The natural durable-single-host counterpart to `BL-212`'s
+`InMemoryStore` reference (parallel to the `BL-124` SQLite reference
+for the version-token Protocol). Adds the second adapter behind the
+new Protocol; the remaining durable backends stay tracked under
+`BL-135` and each needs an auxiliary index because none has a native
+insertion-order column the way SQLite's rowid does.
+
+### Added
+
+- `SQLiteStore.evict_to_capacity(max_keys: int) -> int`: runs the
+  count + select-oldest + delete inside one `BEGIN IMMEDIATE`
+  transaction (parity with the BL-161 mset/mdelete transactional
+  shape) so a concurrent writer cannot interleave between the
+  live-count read and the delete. ``now`` is sampled after the
+  `BEGIN IMMEDIATE` lock is held (Codex PR #59 P2), so a contended
+  write lock that blocks for up to the sqlite3 default 5-second
+  timeout cannot strand a stale timestamp that lets just-expired
+  keys still count as live. Oldest-first is by SQLite rowid;
+  ``INSERT OR REPLACE`` is implemented as delete-then-insert, and
+  the inserted row's rowid is strictly greater than every other
+  rowid currently in the table, so an overwrite orders as newest
+  by rowid (this is the ordering property; SQLite does not
+  guarantee monotonic / never-reused rowids without
+  ``AUTOINCREMENT``, per the Copilot wording fix). The SQL
+  counterpart of the BL-195 `is_live` predicate
+  (`expires_at IS NULL OR expires_at >= :now`) filters
+  expired-but-unswept rows out of the live count and the
+  eviction candidate set. The DELETE chunks the rowid IN list
+  (chunk size 500, conservative under
+  `SQLITE_LIMIT_VARIABLE_NUMBER`'s pre-3.32 default of 999) so a
+  large overflow does not raise `OperationalError: too many SQL
+  variables` (Codex PR #59 P1); all chunks share the same
+  transaction so atomicity holds across them. Audit emission per
+  evicted key (BL-040).
+- New regression suite `tests/memory/test_bl213_sqlite_bounded_sweeper.py`
+  (13 tests): Protocol satisfaction; oldest-first eviction by rowid;
+  the overwrite-orders-as-newest contract (the SQLite divergence
+  from InMemoryStore's first-write FIFO, pinned by test); no-op at
+  and under the cap; non-positive cap rejection; expired-but-unswept
+  rows excluded from the live count; per-key audit emission; sweeper
+  integration on both age and capacity passes against a durable
+  SQLite store; the chunked-DELETE path (monkeypatching the chunk
+  constant to a small value and verifying eviction crosses multiple
+  chunk boundaries without raising).
+
+### Changed
+
+- `memory/sqlite.py` module docstring now lists `BoundedSweepable`
+  among the implemented extension Protocols, with the rowid-based
+  ordering and the `INSERT OR REPLACE` overwrite-shifts-to-newest
+  semantic divergence from `InMemoryStore` called out explicitly.
+- `LIMITATIONS.md` L5 notes the SQLite delivery alongside
+  InMemoryStore; the remaining durable adapters (`RedisStore`,
+  `DynamoDBStore`, `S3Store`) stay tracked because none has a native
+  insertion-order column.
+- `memory/README.md` capability bullet now lists `InMemoryStore` and
+  `SQLiteStore` as the two backends behind `BoundedSweepableStore`,
+  with a note on the SQLite-specific ordering semantic.
+
+### Documentation
+
+- `docs/backlog.md`: `BL-213` added (resolved) under the existing
+  "Sweeper size bound (2026-05-23)" section; `BL-135`'s
+  delivered/remaining narrative updated to reflect the second
+  adapter shipped.
+
+## [Unreleased] BL-212: sweeper size bound (BL-135 size-bound half, 2026-05-23)
+
+The size-bound half of `BL-135` lands as a separate ID (`BL-212`) so
+the long-horizon compaction / summarisation / tiering half stays
+tracked under `BL-135`. The new Protocol is a strict superset of
+`SweepableStore`; the default `TTLSweeper` behaviour is unchanged for
+every existing caller.
+
+### Added
+
+- `memory.BoundedSweepableStore` extension Protocol: a
+  `SweepableStore` that also supports `evict_to_capacity(max_keys) -> int`,
+  removing the oldest entries (insertion order, Python dict
+  semantics: in-place overwrite keeps the key's original position)
+  until the live keyspace is at most `max_keys`. The reference
+  implementation lands on `InMemoryStore`; durable adapters are
+  tracked under `BL-135` (the BL-124 -> BL-180 Protocol-plus-reference
+  cadence).
+- `TTLSweeper(max_keys: int | None = None)` kwarg: when set, the
+  sweeper runs `evict_to_capacity` after the age-only `sweep_expired`
+  on each interval. The store must implement
+  `BoundedSweepableStore`; a non-bounded store with `max_keys` set
+  raises `TypeError` at construction (ADR 0007 load-time validation),
+  and a non-positive `max_keys` raises `ValueError`.
+- `TTLSweeper.evicted_total` counter, distinct from `swept_total`,
+  so an operator can attribute reclamation to write-rate (capacity)
+  versus TTL (age).
+- `_ACLBoundedMixin` (in `memory.acl`) and `_EncBoundedMixin` (in
+  `memory.encryption`) forward `evict_to_capacity` through `wrap_acl`
+  and `wrap_encrypted`. The size-bound is content-agnostic, so unlike
+  the CAS / Versioned / Transactional Protocols (which depend on the
+  ciphertext token's stability) `wrap_encrypted` *does* forward
+  `BoundedSweepableStore`. Each mixin is mutually exclusive with the
+  plain sweep mixin in the wrap factories so `isinstance` stays
+  truthful on a sweep-only inner.
+- New regression suite `tests/memory/test_bl212_bounded_sweeper.py`
+  (19 tests): Protocol satisfaction; oldest-first eviction; the
+  overwrite-keeps-position contract; no-op at and under the cap;
+  non-positive cap rejection; expired-entries-do-not-count (so a
+  TTL'd entry does not double-evict a live one); audit-event
+  emission per evicted key; sweeper integration on both age and
+  capacity passes; load-time configuration errors (non-bounded store
+  with `max_keys`, non-positive `max_keys`); `max_keys=None`
+  byte-for-byte parity with the BL-080 / BL-199 path; `wrap_acl`
+  and `wrap_encrypted` forwarding (including the truthful-isinstance
+  shape on a sweep-only inner).
+
+### Changed
+
+- `memory.__init__` exports `BoundedSweepableStore`.
+- `memory.acl.wrap_acl` chooses `_ACLBoundedMixin` over
+  `_ACLSweepMixin` when the inner satisfies the bounded Protocol;
+  the two are mutually exclusive at composition.
+- `memory.encryption.wrap_encrypted` chooses `_EncBoundedMixin` over
+  `_EncSweepMixin` when the inner satisfies the bounded Protocol;
+  the docstring now lists `BoundedSweepable` as a forwarded
+  Protocol (the GCM-nonce-conflict reasoning that excludes CAS /
+  Versioned / Transactional does not apply to a content-agnostic
+  count-based eviction).
+- `LIMITATIONS.md` L5 is updated to note the size-bound delivery and
+  the remaining compaction / summarisation / tiering / durable-
+  adapter scope.
+
+### Documentation
+
+- `docs/backlog.md`: `BL-212` added (resolved) under a new
+  "Sweeper size bound (2026-05-23)" section; `BL-135` moves from
+  `[pending]` to `[in-progress]` with the delivered slice and the
+  remaining scope (compaction / summarisation / tiering + durable
+  adapters) noted (the `BL-150` partial-close template).
+- `memory/README.md` capability bullet now mentions
+  `BoundedSweepableStore` and the `max_keys` kwarg on `TTLSweeper`.
+
 ## [Unreleased] BL-133: skill contract execution isolation (ADR 0016, 2026-05-23)
 
 The long-standing L3 "the gate is defence in depth, not a sandbox"
@@ -53,6 +577,30 @@ behaviour is unchanged for every existing caller.
   out-of-tree container for capability isolation".
 - `docs/schema/skill-manifest.json` is unchanged; no manifest-level
   surface changed.
+
+### Documentation
+
+- `docs/runbook.md`: post-ADR-0016 sweep. The "ready" set in section
+  4.1 drops the now-resolved `BL-133` row; the open-backlog listing
+  in 4.2 mirrors that change. Section 1's "most recent ADRs" hint
+  bumps to (`0014`, `0015`, `0016`); section 2.5's audit-ADR
+  template recommendation bumps to ADR 0015 (the latest audit
+  template); the audit-wave-cadence enumeration on line 31 bumps to
+  `0009-0015`. The Phase G sweep checks in section 8 now cite today's
+  state: the README check is `0016` + `BL-133`, the CLAUDE check is
+  `0007`-`0016`, the STATUS check is `0001-0016`, the SECURITY
+  check cites the BL-133 skill execution isolation hardening, and
+  the ADR-immutability row covers `0001`-`0016`.
+- `SECURITY.md` "Skill contracts" bullet: the in-tree opt-in second
+  isolation tier is now named explicitly. The bullet calls out
+  `InProcessSkillContractExecutor` (default, backward-compatible),
+  the `SubprocessSkillContractExecutor` `resource.setrlimit` caps
+  (CPU, address space, open files on POSIX), and the
+  length-prefixed parent->child pickle / child->parent JSON IPC
+  framing that prevents a malicious bundle from RCEing the parent
+  (`BL-133`, ADR 0016). Capability isolation (container / seccomp)
+  is restated as the out-of-tree extension point, parallel to the
+  CLAUDE.md wording.
 
 ## [Unreleased] ADR 0015 deferred close (BL-209-BL-211, 2026-05-23)
 

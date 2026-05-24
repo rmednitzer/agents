@@ -332,3 +332,21 @@ class InMemoryStore:
             for k in expired:
                 del self._data[k]
             return len(expired)
+
+    # --- BoundedSweepableStore (BL-212, BL-135 size-bound half) -------
+
+    async def evict_to_capacity(self, max_keys: int) -> int:
+        if max_keys <= 0:
+            raise ValueError("max_keys must be positive")
+        async with self._lock:
+            now = time.time()
+            live_keys = [k for k, entry in self._data.items() if is_live(now, entry.expires_at)]
+            overflow = len(live_keys) - max_keys
+            if overflow <= 0:
+                return 0
+            to_evict = live_keys[:overflow]
+            for k in to_evict:
+                del self._data[k]
+            for k in to_evict:
+                self._audit.delete(k, existed=True)
+            return overflow

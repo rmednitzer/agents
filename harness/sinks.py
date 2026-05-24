@@ -52,16 +52,50 @@ class JsonlSink:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def emit(self, event: HarnessEvent) -> None:
-        with self.path.open("a") as f:
+        # BL-219: pin UTF-8 explicitly so a non-default platform locale
+        # (Windows cp1252, C locale ASCII) cannot mis-encode a JSONL
+        # event carrying non-ASCII content (a unicode prompt template,
+        # a localised error message, a redacted span containing high
+        # bytes). The BL-218 read-side standard applied to the write
+        # side; the project's explicit-UTF-8 convention now spans both
+        # legs of every file I/O.
+        with self.path.open("a", encoding="utf-8") as f:
             f.write(event.model_dump_json() + "\n")
 
 
 class MultiSink:
-    """Fan-out: emit each event to all wrapped sinks, in order."""
+    """Fan-out: emit each event to all wrapped sinks, in order.
+
+    Per-sink failure is contained (`BL-223`, BL-222 class extension on
+    the audit fan-out side): a single sink raising ``Exception``
+    (e.g., a flaky OTel exporter, a disk-full ``JsonlSink``, a
+    third-party sink with a transient network error) does NOT prevent
+    downstream sinks from receiving the event. The audit-vs-raise
+    parity invariant (BL-202 / BL-167: every state-affecting raise
+    has a matching audit event) requires the fan-out to deliver
+    maximally, not skip on the first failure.
+
+    ``BaseException`` (KeyboardInterrupt, SystemExit,
+    asyncio.CancelledError) is NOT contained: those are authoritative
+    termination signals and must reach the caller, parity with the
+    runtime's BL-165 "do not reinterpret cancellation as a pause"
+    invariant.
+    """
 
     def __init__(self, *sinks: EventSink) -> None:
         self.sinks: tuple[EventSink, ...] = sinks
 
     def emit(self, event: HarnessEvent) -> None:
         for sink in self.sinks:
-            sink.emit(event)
+            try:
+                sink.emit(event)
+            except Exception:
+                # Per-sink containment (`BL-223`): an Exception from
+                # one sink must not block the rest of the fan-out, or
+                # an OTLP sink with a transient network failure could
+                # silently swallow a BudgetExceededEvent or
+                # GovernanceViolated from the in-memory / JSONL sinks
+                # paired with it. BaseException (the line above only
+                # catches Exception) still propagates so terminal
+                # signals are not swallowed.
+                continue
