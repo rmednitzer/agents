@@ -52,7 +52,14 @@ class JsonlSink:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def emit(self, event: HarnessEvent) -> None:
-        with self.path.open("a") as f:
+        # BL-219: pin UTF-8 explicitly so a non-default platform locale
+        # (Windows cp1252, C locale ASCII) cannot mis-encode a JSONL
+        # event carrying non-ASCII content (a unicode prompt template,
+        # a localised error message, a redacted span containing high
+        # bytes). The BL-218 read-side standard applied to the write
+        # side; the project's explicit-UTF-8 convention now spans both
+        # legs of every file I/O.
+        with self.path.open("a", encoding="utf-8") as f:
             f.write(event.model_dump_json() + "\n")
 
 

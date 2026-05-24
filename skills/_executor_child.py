@@ -45,6 +45,20 @@ def _read_frame(stream: Any) -> bytes | None:
     header = stream.read(_FRAME_LEN.size)
     if not header:
         return None
+    if len(header) != _FRAME_LEN.size:
+        # BL-220 (child side): a partial header (parent died mid-write
+        # after sending 1, 2, or 3 bytes of the 4-byte length prefix)
+        # would otherwise raise `struct.error` from the unpack below,
+        # crashing the child with an unhandled exception instead of
+        # exiting cleanly through the main loop's EOF branch. Mirror
+        # the empty-header EOF treatment so partial-header is the same
+        # graceful exit (defence in depth on the trusted-input side,
+        # parity with the parent's `SkillContractExecutorError` on the
+        # same case in `skills.execution._read_frame`). BL-216 class
+        # extension on the child side: every IPC decode boundary the
+        # codebase adds is a re-instance of "malformed external input
+        # must not crash this side".
+        return None
     (n,) = _FRAME_LEN.unpack(header)
     if n > _FRAME_MAX_BODY_BYTES:
         # BL-216 (child side): treat an oversize header as EOF so the
