@@ -135,8 +135,8 @@ open L3 work into delivery tiers:
 
 - Tier 0, security: `BL-112`, `BL-133`, `BL-134`, `BL-150`. `BL-134`
   resolved; `BL-112` resolved (ADR 0010: marketplace source + signature
-  hook delivered); `BL-150` partial (blocking dependency-audit gate
-  delivered; commit-SHA pinning is the tracked remainder); `BL-133`
+  hook delivered); `BL-150` resolved (blocking dependency-audit gate +
+  commit-SHA pinning delivered); `BL-133`
   resolved (ADR 0016: `SkillContractExecutor` Protocol +
   `SubprocessSkillContractExecutor` opt-in for crash + rlimit
   isolation; container / seccomp isolation stays the out-of-tree
@@ -212,7 +212,7 @@ depth, not a sandbox (`LIMITATIONS.md` L3).
 - `BL-112` [resolved] [M] Marketplace `SkillSource` and integrity verification on install. Delivered (ADR 0008): bounded download / member / size caps and optional `sha256`. Delivered (ADR 0010): the hardened download/extract factored into one audited path, a `SignatureVerifier` hook (`signature` / `verify_signature`, framework binds no crypto vendor), and a generic `MarketplaceSkillSource` (configurable URL template, `strip_components`) over the same hardened path. Extends `BL-054`. (ADR 0006, ADR 0008, ADR 0010)
 - `BL-133` [resolved] [M] Skill execution isolation. Delivered (ADR 0008): `discover_skill(allow_contract=...)` and an `install_skill` default of `allow_contract=False` so an untrusted bundle's `contract.py` is not executed. Delivered (ADR 0016): the `skills.execution.SkillContractExecutor` Protocol with two in-tree references -- `InProcessSkillContractExecutor` (default, backward-compatible, the L1 behaviour) and `SubprocessSkillContractExecutor` (load + every predicate evaluation in a long-lived Python subprocess; `resource.setrlimit` bounds CPU time, address space, and open files on POSIX; IPC framing is length-prefixed, parent->child pickle, child->parent JSON so a malicious bundle cannot RCE the parent). `Skill.contract()`, `discover_skill(executor=...)`, and `install_skill(executor=...)` forward the executor; defaults preserve every existing call site's behaviour. Capability isolation (filesystem / network / syscall) stays the out-of-tree extension point by ADR 0001 (the same pattern as `KeyProvider` / `Embedder` / `SkillSource`). 12 new tests cover Protocol satisfaction, in-process / subprocess load + evaluate, missing-export / malformed-import / predicate-raise / child-crash boundaries, and loader-level forwarding. (ADR 0008, ADR 0016)
 - `BL-134` [resolved] [S] Secret and PII redaction for event content: `harness.Redactor` and `harness.RedactingSink`, scrubbing sensitive argument names, secret-shaped values, and over-long scalars before a sink. Closes plaintext leakage of tool arguments into sinks. (ADR 0008)
-- `BL-150` [in-progress] [S] Pin GitHub Actions to commit SHAs and add a blocking dependency-audit gate. Delivered (ADR 0010): a blocking `dependency-audit` job (`pip-audit` over the exported `uv.lock`, wired into the `ci-success` aggregate) plus the `release` workflow's provenance attestation. Remaining: commit-SHA pinning of every GitHub Action, deferred not faked (the run environment cannot resolve third-party action SHAs; a fabricated 40-char hash is worse than an honest tag pin, so this is a maintainer/Dependabot action like `BL-162`). (ADR 0008, ADR 0010)
+- `BL-150` [resolved] [S] Pin GitHub Actions to commit SHAs and add a blocking dependency-audit gate. Delivered (ADR 0010): a blocking `dependency-audit` job (`pip-audit` over the exported `uv.lock`, wired into the `ci-success` aggregate) plus the `release` workflow's provenance attestation. Delivered (2026-05-25): commit-SHA pinning of every GitHub Action reference in CI, release, and CodeQL workflows. (ADR 0008, ADR 0010)
 
 ## AI quality and safety (Tier 1)
 
