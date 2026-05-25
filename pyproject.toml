@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "pydantic-ai>=1.99.0",
+    "pydantic-ai>=1.102.0",
     "pydantic>=2.13.4",
     "logfire>=4.33.0",
     "pyyaml>=6.0.3",
@@ -36,7 +36,7 @@ redis = [
     "redis>=7.4.0",
 ]
 aws = [
-    "boto3>=1.43.9",
+    "boto3>=1.43.14",
 ]
 otel = [
     "opentelemetry-sdk>=1.30.0",
@@ -54,7 +54,7 @@ crypto = [
 # friendly declaration, not a claim that the SDK is otherwise absent
 # (ADR 0007 / ADR 0012).
 anthropic = [
-    "anthropic>=0.102.0",
+    "anthropic>=0.104.1",
 ]
 # OpenAI Batch API capability (BL-187). harness.openai_api lazily
 # imports the SDK in from_env and is decoupled from it via a Protocol,
@@ -67,18 +67,18 @@ dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.1.0",
-    "ruff>=0.15.13",
+    "ruff>=0.15.14",
     "mypy>=2.1.0",
     "types-PyYAML>=6.0.12.20260518",
     # Backends + test doubles so CI exercises every adapter.
     "redis>=7.4.0",
     "fakeredis>=2.35.1",
-    "boto3>=1.43.9",
+    "boto3>=1.43.14",
     "moto[s3,dynamodb]>=5.2.1",
     "opentelemetry-sdk>=1.30.0",
     "opentelemetry-exporter-otlp-proto-http>=1.30.0",
     "cryptography>=48.0.0",
-    "anthropic>=0.102.0",
+    "anthropic>=0.104.1",
     "openai>=2.37.0",
 ]
 
