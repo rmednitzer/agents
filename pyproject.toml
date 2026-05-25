@@ -39,7 +39,7 @@ aws = [
     "boto3>=1.43.14",
 ]
 otel = [
-    "opentelemetry-sdk>=1.30.0",
+    "opentelemetry-sdk>=1.42.1",
     "opentelemetry-exporter-otlp-proto-http>=1.30.0",
 ]
 crypto = [
@@ -75,7 +75,7 @@ dev = [
     "fakeredis>=2.35.1",
     "boto3>=1.43.14",
     "moto[s3,dynamodb]>=5.2.1",
-    "opentelemetry-sdk>=1.30.0",
+    "opentelemetry-sdk>=1.42.1",
     "opentelemetry-exporter-otlp-proto-http>=1.30.0",
     "cryptography>=48.0.0",
     "anthropic>=0.104.1",
