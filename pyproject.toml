@@ -36,7 +36,7 @@ redis = [
     "redis>=7.4.0",
 ]
 aws = [
-    "boto3>=1.43.9",
+    "boto3>=1.43.14",
 ]
 otel = [
     "opentelemetry-sdk>=1.30.0",
@@ -73,7 +73,7 @@ dev = [
     # Backends + test doubles so CI exercises every adapter.
     "redis>=7.4.0",
     "fakeredis>=2.35.1",
-    "boto3>=1.43.9",
+    "boto3>=1.43.14",
     "moto[s3,dynamodb]>=5.2.1",
     "opentelemetry-sdk>=1.30.0",
     "opentelemetry-exporter-otlp-proto-http>=1.30.0",
