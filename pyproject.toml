@@ -61,7 +61,7 @@ anthropic = [
 # so the module imports and type-checks regardless of the SDK
 # (ADR 0007 / ADR 0012).
 openai = [
-    "openai>=2.37.0",
+    "openai>=2.38.0",
 ]
 dev = [
     "pytest>=9.0.3",
@@ -79,7 +79,7 @@ dev = [
     "opentelemetry-exporter-otlp-proto-http>=1.30.0",
     "cryptography>=48.0.0",
     "anthropic>=0.104.1",
-    "openai>=2.37.0",
+    "openai>=2.38.0",
 ]
 
 [project.urls]
