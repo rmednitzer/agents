@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import time
 from typing import Any
 
@@ -39,6 +40,51 @@ __all__ = ["BoundedS3Store", "S3Store"]
 
 _EXPIRES_META = "expires-at"
 _SEQ_META = "insertion-order"
+
+
+def _safe_float(v: str | None) -> float | None:
+    """Parse a float from untrusted S3 user metadata.
+
+    Returns ``None`` if the value is missing, not parseable as a
+    float, or not finite (NaN, +inf, -inf). The non-finite rejection
+    closes the BL-159 / BL-205 / BL-221 NaN-bypass class on the
+    metadata-read trust boundary (tenth audit, BL-226): a corrupted
+    or hand-written ``x-amz-meta-expires-at = "nan"`` would otherwise
+    sail through ``float()`` and then through ``now > exp`` (NaN
+    comparisons are always ``False``), permanently masking the object
+    from lazy / sweep / capacity expiry. Treating non-finite and
+    unparseable as ``None`` is the safest cold-storage default
+    (consistent with "no TTL recorded": the object stays live, an
+    operator can re-write it with valid metadata).
+    """
+    if v is None:
+        return None
+    try:
+        parsed = float(v)
+    except (ValueError, TypeError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
+
+
+def _safe_int(v: str | None) -> int:
+    """Parse an int from untrusted S3 user metadata.
+
+    Returns ``0`` if the value is missing or not parseable as an int.
+    Zero matches the BL-225 legacy-migration default (an object
+    written by a bare ``S3Store`` has no ``insertion-order`` metadata
+    and is treated as the oldest entry, evicting first); a corrupted
+    metadata value cannot crash the eviction scan past the documented
+    ``S3Store`` exception contract (tenth audit, BL-226 class of
+    BL-201 / BL-215 / BL-217 untrusted-input parsing).
+    """
+    if v is None:
+        return 0
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        return 0
 
 
 class S3Store:
@@ -99,8 +145,8 @@ class S3Store:
             if code in ("NoSuchKey", "404", "NotFound"):
                 return None
             raise
-        exp = obj.get("Metadata", {}).get(_EXPIRES_META)
-        if is_expired(time.time(), float(exp) if exp is not None else None):
+        exp = _safe_float(obj.get("Metadata", {}).get(_EXPIRES_META))
+        if is_expired(time.time(), exp):
             self._s3.delete_object(Bucket=self._bucket, Key=self._okey(key))
             return None
         body = obj["Body"].read()
@@ -236,8 +282,8 @@ class S3Store:
             resp = self._s3.list_objects_v2(**kw)
             for item in resp.get("Contents", []):
                 head = self._s3.head_object(Bucket=self._bucket, Key=item["Key"])
-                exp = head.get("Metadata", {}).get(_EXPIRES_META)
-                if is_expired(time.time(), float(exp) if exp is not None else None):
+                exp = _safe_float(head.get("Metadata", {}).get(_EXPIRES_META))
+                if is_expired(time.time(), exp):
                     self._s3.delete_object(Bucket=self._bucket, Key=item["Key"])
                     removed += 1
             if not resp.get("IsTruncated"):
@@ -346,7 +392,10 @@ class BoundedS3Store(S3Store):
         the nominal slot (the BL-195 read-vs-listing parity in S3
         form). A legacy object without ``insertion-order`` is
         treated as ``seq = 0`` (oldest, evicts first) per the
-        migration contract.
+        migration contract; ``_safe_int`` / ``_safe_float`` apply the
+        BL-226 trust-boundary parsing so a corrupted metadata value
+        does not crash the scan past the documented exception
+        contract.
         """
         entries: list[tuple[int, str]] = []
         now = time.time()
@@ -359,11 +408,10 @@ class BoundedS3Store(S3Store):
             for item in resp.get("Contents", []):
                 head = self._s3.head_object(Bucket=self._bucket, Key=item["Key"])
                 md = head.get("Metadata", {})
-                exp = md.get(_EXPIRES_META)
-                if is_expired(now, float(exp) if exp is not None else None):
+                exp = _safe_float(md.get(_EXPIRES_META))
+                if is_expired(now, exp):
                     continue
-                seq_raw = md.get(_SEQ_META)
-                seq = int(seq_raw) if seq_raw is not None else 0
+                seq = _safe_int(md.get(_SEQ_META))
                 short = item["Key"][len(self._prefix) :]
                 entries.append((seq, short))
             if not resp.get("IsTruncated"):
@@ -386,11 +434,26 @@ class BoundedS3Store(S3Store):
         entries.sort(key=lambda e: (e[0], e[1]))
         to_evict = [k for _seq, k in entries[:overflow]]
 
-        def _delete_all() -> None:
+        def _delete_all() -> list[str]:
+            # Per-item failure containment (BL-227, the BL-222 /
+            # BL-223 audit-vs-raise parity class): a transient S3
+            # error on key K must not lose the audit for keys
+            # already deleted. The failed key stays alive (the size
+            # cap may not be fully met this cycle); the next
+            # TTLSweeper interval retries it. Catches ``Exception``
+            # so ``BaseException`` (KeyboardInterrupt, SystemExit,
+            # asyncio.CancelledError) still propagates per the
+            # BL-165 / BL-223 invariant.
+            deleted: list[str] = []
             for k in to_evict:
-                self._s3.delete_object(Bucket=self._bucket, Key=self._okey(k))
+                try:
+                    self._s3.delete_object(Bucket=self._bucket, Key=self._okey(k))
+                    deleted.append(k)
+                except Exception:
+                    continue
+            return deleted
 
-        await asyncio.to_thread(_delete_all)
-        for k in to_evict:
+        actually_deleted = await asyncio.to_thread(_delete_all)
+        for k in actually_deleted:
             self._audit.delete(k, existed=True)
-        return len(to_evict)
+        return len(actually_deleted)
