@@ -188,7 +188,9 @@ async def test_corrupted_insertion_order_metadata_does_not_crash_evict(
     # ``insertion-order`` as 0 (the BL-225 legacy-migration default),
     # so the corrupted entry simply evicts as the oldest.
     s = BoundedS3Store(
-        Namespace(name="ns", workload="w"), _BUCKET, client=s3_client  # type: ignore[arg-type]
+        Namespace(name="ns", workload="w"),
+        _BUCKET,
+        client=s3_client,  # type: ignore[arg-type]
     )
     _write_with_metadata(s3_client, "corrupt", b"v", {"insertion-order": "abc"})
     await s.write("fresh1", b"v")
@@ -209,7 +211,9 @@ async def test_corrupted_expires_at_metadata_does_not_crash_evict(s3_client: obj
     # (object stays in the live count). Cap = 1 evicts the oldest
     # of the two live entries.
     s = BoundedS3Store(
-        Namespace(name="ns", workload="w"), _BUCKET, client=s3_client  # type: ignore[arg-type]
+        Namespace(name="ns", workload="w"),
+        _BUCKET,
+        client=s3_client,  # type: ignore[arg-type]
     )
     _write_with_metadata(s3_client, "bad_ttl", b"v", {"expires-at": "not-a-number"})
     await s.write("fresh", b"v")
@@ -228,7 +232,9 @@ async def test_nan_insertion_order_treated_as_legacy(s3_client: object) -> None:
     # int-not-float parsing path: ``int("nan")`` raises ValueError
     # which the helper swallows.
     s = BoundedS3Store(
-        Namespace(name="ns", workload="w"), _BUCKET, client=s3_client  # type: ignore[arg-type]
+        Namespace(name="ns", workload="w"),
+        _BUCKET,
+        client=s3_client,  # type: ignore[arg-type]
     )
     _write_with_metadata(s3_client, "nan_seq", b"v", {"insertion-order": "nan"})
     await s.write("fresh", b"v")
@@ -288,7 +294,9 @@ async def test_partial_delete_failure_audits_successes_only(s3_client: object) -
     }
     # Write 4 keys via the real client first, so the data exists.
     s_setup = BoundedS3Store(
-        Namespace(name="ns", workload="w"), _BUCKET, client=s3_client  # type: ignore[arg-type]
+        Namespace(name="ns", workload="w"),
+        _BUCKET,
+        client=s3_client,  # type: ignore[arg-type]
     )
     for i in range(4):
         await s_setup.write(f"k{i}", b"v")
@@ -353,7 +361,9 @@ async def test_all_deletes_failing_emits_no_audit_and_returns_zero(
             )
 
     s_setup = BoundedS3Store(
-        Namespace(name="ns", workload="w"), _BUCKET, client=s3_client  # type: ignore[arg-type]
+        Namespace(name="ns", workload="w"),
+        _BUCKET,
+        client=s3_client,  # type: ignore[arg-type]
     )
     for i in range(3):
         await s_setup.write(f"k{i}", b"v")
@@ -425,13 +435,17 @@ async def test_base_exception_still_propagates(s3_client: object) -> None:
             raise SystemExit("terminal")
 
     s_setup = BoundedS3Store(
-        Namespace(name="ns", workload="w"), _BUCKET, client=s3_client  # type: ignore[arg-type]
+        Namespace(name="ns", workload="w"),
+        _BUCKET,
+        client=s3_client,  # type: ignore[arg-type]
     )
     await s_setup.write("k0", b"v")
     await s_setup.write("k1", b"v")
     crashing = _ExitOnDelete(s3_client)
     s = BoundedS3Store(
-        Namespace(name="ns", workload="w"), _BUCKET, client=crashing  # type: ignore[arg-type]
+        Namespace(name="ns", workload="w"),
+        _BUCKET,
+        client=crashing,  # type: ignore[arg-type]
     )
     with pytest.raises(SystemExit):
         await s.evict_to_capacity(1)
