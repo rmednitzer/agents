@@ -15,6 +15,12 @@ Semantics deviation (documented per ADR 0004):
   cold-storage / audit-pack backend.
 - No CAS (S3 has no atomic compare-and-set on object content), so
   CASMemoryStore is intentionally not implemented.
+
+``BoundedS3Store`` (``BL-225``) is the opt-in subclass that adds
+``BoundedSweepableStore`` via a per-object ``insertion-order``
+metadata attribute (nanosecond wall-clock at write time), closing the
+S3 half of ``BL-135`` (the size-bound half) for the cold-storage
+backend. The bare ``S3Store`` keeps its prior design unchanged.
 """
 
 from __future__ import annotations
@@ -29,9 +35,10 @@ from memory._expiry import is_expired
 from memory.types import Namespace
 from memory.validators import validate_key
 
-__all__ = ["S3Store"]
+__all__ = ["BoundedS3Store", "S3Store"]
 
 _EXPIRES_META = "expires-at"
+_SEQ_META = "insertion-order"
 
 
 class S3Store:
@@ -240,3 +247,150 @@ class S3Store:
 
     async def sweep_expired(self) -> int:
         return await asyncio.to_thread(self._sweep_sync)
+
+
+class BoundedS3Store(S3Store):
+    """S3Store + per-object ``insertion-order`` metadata for size-bound
+    eviction (``BL-225``, ``BL-135`` size-bound on S3).
+
+    S3 counterpart to ``BL-213`` (SQLite), ``BL-214`` (Redis), and
+    ``BL-224`` (DynamoDB), closing the S3 half of ``BL-135`` (the
+    size-bound half) for the cold-storage backend. The bare
+    ``S3Store`` keeps its prior design unchanged: no per-write
+    overhead and no ``insertion-order`` metadata stamp. The subclass
+    is the explicit opt-in (same pattern as ``BoundedRedisStore`` /
+    ``BoundedDynamoDBStore``).
+
+    The adapter stamps an ``insertion-order`` user-metadata attribute
+    on every PUT, set to ``time.time_ns()`` at write time.
+    Eviction LISTs the namespace prefix, HEADs each object to read
+    the ``insertion-order`` and ``expires-at`` attributes, filters
+    out expired-but-unswept objects (the BL-195 read-vs-listing
+    parity in S3 form), sorts the live set by
+    ``(insertion-order, key)`` ascending, and DELETEs the oldest
+    ``overflow`` objects in one parallelised thread call. No
+    auxiliary object is needed: every data object carries its own
+    ordering attribute, so there is no auxiliary-index staleness
+    problem (the rewrite-shifts-to-newest semantic is automatic --
+    a fresh PUT overwrites the previous metadata stamp).
+
+    Cost model: every write costs the same one ``PutObject`` round
+    trip as the bare ``S3Store`` (the small extra metadata bytes are
+    well under S3's 2 KiB user-metadata cap). Eviction costs one
+    LIST followed by one HEAD per object plus the DELETE calls,
+    matching the parent ``sweep_expired`` shape (LIST +
+    HEAD-per-object + DELETE per expired). Use ``S3Store`` directly
+    when the size-bound is not needed; the bare class avoids the
+    metadata stamp.
+
+    Eviction order: by ``insertion-order`` ASC (nanosecond
+    wall-clock at write time), with key-ascending tie-break for
+    same-nanosecond writes (resolves both the rare nanosecond
+    collision and the migration case where multiple legacy items
+    share ``insertion-order = 0``). A re-write of an existing key
+    gets a fresh ``insertion-order``, so the rewritten key orders
+    as *newest*, matching the SQLite ``INSERT OR REPLACE``
+    semantic (``BL-213``), the Redis ZADD-rescore semantic
+    (``BL-214``), and the DynamoDB seq-replacement semantic
+    (``BL-224``); diverges from the ``BL-212`` InMemoryStore
+    first-write FIFO.
+
+    Clock skew: ``time.time_ns()`` is wall-clock based. Multi-
+    writer deployments with clock skew can re-order writes across
+    writers (a writer with a fast clock orders newer than a writer
+    with a slow clock for back-to-back writes). The ``BL-214``
+    (Redis) and ``BL-224`` (DynamoDB) adapters use server-side
+    atomic counters to avoid this; S3 has no equivalent primitive
+    (conditional writes are recent and not universally available),
+    so the cold-storage adapter uses wall-clock with nanosecond
+    precision and accepts the multi-writer divergence in line with
+    the existing S3Store eventual-consistency contract. Single-
+    writer deployments stay strictly monotonic on any platform
+    whose ``time.time_ns()`` advances per call (Linux and macOS;
+    Windows resolution varies by platform).
+
+    Migration: a pre-existing object written via a bare ``S3Store``
+    has no ``insertion-order`` user-metadata attribute.
+    ``evict_to_capacity`` treats such objects as
+    ``insertion-order = 0`` (oldest), so they evict first until
+    rewritten. A subsequent write via ``BoundedS3Store`` stamps a
+    fresh ``insertion-order`` and the key moves to the newest
+    position. Same migration shape as ``BoundedDynamoDBStore`` for
+    ``seq`` (``LIMITATIONS.md`` L17 class extension).
+    """
+
+    name: str = "s3-bounded"
+
+    async def write(self, key: str, value: bytes, *, ttl_seconds: float | None = None) -> None:
+        validate_key(key)
+        ttl = self._ttl(ttl_seconds)
+        metadata: dict[str, str] = {_SEQ_META: str(time.time_ns())}
+        if ttl is not None:
+            metadata[_EXPIRES_META] = str(time.time() + ttl)
+        await asyncio.to_thread(
+            self._s3.put_object,
+            Bucket=self._bucket,
+            Key=self._okey(key),
+            Body=value,
+            Metadata=metadata,
+        )
+        self._audit.write(key, value_bytes=len(value), ttl_seconds=ttl)
+
+    def _collect_live_sync(self) -> list[tuple[int, str]]:
+        """LIST the namespace prefix and HEAD each object to read
+        ``insertion-order`` and ``expires-at`` metadata. Returns the
+        live (non-expired) set as ``(seq, short_key)`` pairs.
+
+        Expired-but-unswept objects are excluded so the cap does not
+        double-evict a live key while the dead object still occupies
+        the nominal slot (the BL-195 read-vs-listing parity in S3
+        form). A legacy object without ``insertion-order`` is
+        treated as ``seq = 0`` (oldest, evicts first) per the
+        migration contract.
+        """
+        entries: list[tuple[int, str]] = []
+        now = time.time()
+        token: str | None = None
+        while True:
+            kw: dict[str, Any] = {"Bucket": self._bucket, "Prefix": self._prefix}
+            if token:
+                kw["ContinuationToken"] = token
+            resp = self._s3.list_objects_v2(**kw)
+            for item in resp.get("Contents", []):
+                head = self._s3.head_object(Bucket=self._bucket, Key=item["Key"])
+                md = head.get("Metadata", {})
+                exp = md.get(_EXPIRES_META)
+                if is_expired(now, float(exp) if exp is not None else None):
+                    continue
+                seq_raw = md.get(_SEQ_META)
+                seq = int(seq_raw) if seq_raw is not None else 0
+                short = item["Key"][len(self._prefix) :]
+                entries.append((seq, short))
+            if not resp.get("IsTruncated"):
+                break
+            token = resp.get("NextContinuationToken")
+        return entries
+
+    async def evict_to_capacity(self, max_keys: int) -> int:
+        if max_keys <= 0:
+            raise ValueError("max_keys must be positive")
+        entries = await asyncio.to_thread(self._collect_live_sync)
+        overflow = len(entries) - max_keys
+        if overflow <= 0:
+            return 0
+        # Sort by (seq, key) ascending. The secondary key sort is a
+        # deterministic tie-break for the migration case where
+        # multiple legacy items share seq=0 and for the rare
+        # same-nanosecond collision on a fast host (parallel to the
+        # BL-224 ``entries.sort(key=lambda e: (e[0], e[1]))``).
+        entries.sort(key=lambda e: (e[0], e[1]))
+        to_evict = [k for _seq, k in entries[:overflow]]
+
+        def _delete_all() -> None:
+            for k in to_evict:
+                self._s3.delete_object(Bucket=self._bucket, Key=self._okey(k))
+
+        await asyncio.to_thread(_delete_all)
+        for k in to_evict:
+            self._audit.delete(k, existed=True)
+        return len(to_evict)
