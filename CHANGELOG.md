@@ -3,6 +3,92 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Tenth code audit (ADR 0020, BL-226 / BL-227, 2026-05-26)
+
+The tenth in-depth code audit, by area, against the same green gates
+(ruff, ruff format, mypy strict, pytest at `cov-fail-under=94`,
+schema-drift, REUSE 3.x, `pip-audit`, the dispatch evaluation gate).
+The clear bugs were fixed additively in the same increment; ADR 0020
+is the cross-cutting why. This audit re-walked the same *classes* the
+prior audits fixed pointwise, with particular attention to the just-
+merged `BL-225` `BoundedS3Store` and whether the same
+"untrusted-input must not crash" / "audit-vs-raise parity" /
+"per-item failure containment" invariants applied to its new
+boundaries. Two new findings in `memory/s3.py`.
+
+### Added
+
+- `memory.s3._safe_float(v: str | None) -> float | None`: parses a
+  float from untrusted S3 user metadata, returning `None` on missing
+  / unparseable / non-finite (NaN / +inf / -inf via `math.isfinite`).
+  The non-finite rejection closes the BL-159 / BL-205 / BL-221
+  NaN-bypass class on the metadata-read trust boundary: a corrupted
+  `x-amz-meta-expires-at = "nan"` would otherwise sail through
+  `float()` and then through `now > NaN` (always `False`),
+  permanently masking the object from lazy / sweep / capacity
+  expiry.
+- `memory.s3._safe_int(v: str | None) -> int`: parses an int from
+  untrusted S3 user metadata, returning `0` on missing /
+  unparseable. Zero matches the BL-225 legacy-migration default (an
+  object without `insertion-order` is treated as the oldest and
+  evicts first), so a corrupted value falls back to the most
+  defensive eviction-order semantic.
+- 33 new regression tests
+  (`tests/memory/test_bl226_bl227_audit10.py`): 13 parametrized
+  `_safe_float` cases (None, empty, unparseable, NaN with mixed
+  case, +inf / -inf / Infinity, plus valid floats including 0,
+  negative, large exponents); 9 parametrized `_safe_int` cases
+  (None, empty, unparseable, float-string-not-an-int, NaN, inf,
+  plus valid ints); 3 parent-`S3Store` cases (corrupt `expires-at`
+  does not crash `read` / `sweep_expired`; NaN `expires-at` does
+  not silently mask); 3 `BoundedS3Store` cases (corrupt
+  `insertion-order` / `expires-at` do not crash
+  `evict_to_capacity`; NaN `insertion-order` is treated as legacy
+  seq=0); 4 BL-227 cases (partial-failure audits only successes;
+  all-fail returns 0 and emits no audit; happy path unchanged;
+  `SystemExit` still propagates).
+
+### Changed
+
+- `memory/s3.py`: every metadata-read call site (`S3Store._get_live`,
+  `S3Store._sweep_sync`, `BoundedS3Store._collect_live_sync`) now
+  routes through `_safe_float` / `_safe_int`. Before: a corrupted or
+  hand-written `expires-at` / `insertion-order` would raise
+  `ValueError` past the documented exception contract, crashing the
+  whole keyspace's read / sweep / eviction scan on the first bad
+  entry. After: a corrupted entry parses to None (no TTL) / 0
+  (legacy default), and the scan completes normally. NaN /
+  +inf / -inf in `expires-at` no longer silently masks the object
+  from expiry; the non-finite value is rejected at the parse
+  boundary instead of leaking into `is_expired` where the IEEE 754
+  `now > NaN = False` invariant would mask the entry forever.
+- `BoundedS3Store.evict_to_capacity` (BL-227): the per-key
+  `delete_object` loop inside `asyncio.to_thread` now contains
+  per-key exceptions, collects the actually-deleted keys, and emits
+  audit only for them. Before: a single failing DELETE (S3
+  throttle, transient access drift, network blip) propagated out of
+  the thread and the audit-emit loop below was never reached --
+  partial state mutation with no audit at all, breaking the BL-202
+  / BL-167 audit-vs-raise parity invariant. After: per-key
+  containment of `Exception` (parity with BL-222 `MultiDispatcher`
+  and BL-223 `MultiSink`); `BaseException` (`KeyboardInterrupt`,
+  `SystemExit`, `asyncio.CancelledError`) still propagates for the
+  BL-165 / BL-223 terminal-signal invariant. The function returns
+  the count of *actual* deletions, not *attempted* ones, so
+  `TTLSweeper.evicted_total` is truthful. A failed key stays alive
+  and the next `TTLSweeper` cycle retries it, matching the BL-199
+  sweeper-resilience contract already applied to the age-only sweep
+  path.
+
+### Documentation
+
+- `docs/adr/0020-tenth-code-audit.md`: cross-cutting reasoning for
+  the audit, the class-of-fault generalisations, the open
+  revisit-triggers.
+- `docs/adr/README.md`: ADR 0020 added to the index.
+- `docs/backlog.md`: `BL-226` / `BL-227` added (resolved) under a new
+  "Tenth code audit (ADR 0020, 2026-05-26)" section.
+
 ## [Unreleased] BL-225: BoundedS3Store (BL-135 size-bound on S3, 2026-05-26)
 
 The cold-storage S3 extension to BL-214's Redis reference, BL-213's

@@ -54,9 +54,16 @@ provider-batch and provenance-gate hardening), `0014` (`BL-180`:
 `0018` (eighth audit; `JsonlSink` UTF-8 write-side encoding,
 subprocess child partial-header EOF treatment, `BudgetTracker`
 finite/non-negative validation on caller-fed floats, `MultiDispatcher`
-per-member failure containment), and `0019` (ninth audit; `MultiSink`
+per-member failure containment), `0019` (ninth audit; `MultiSink`
 per-sink failure containment on the audit fan-out side, the BL-222
-ensemble-side guarantee generalised to the sequential sink fan-out).
+ensemble-side guarantee generalised to the sequential sink fan-out),
+and `0020` (tenth audit; S3 user-metadata trust-boundary parsing via
+`_safe_float` / `_safe_int` applied at every metadata-read site to
+generalise the BL-159 / BL-201 / BL-205 / BL-215 / BL-217 / BL-221
+invariants to the S3 boundary, plus `BoundedS3Store.evict_to_capacity`
+per-key DELETE containment generalising the BL-222 / BL-223 fan-out
+failure invariant and the BL-202 / BL-167 audit-vs-raise parity to the
+new BL-225 sequential-DELETE path).
 
 ## Conventions
 
