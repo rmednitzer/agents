@@ -79,28 +79,33 @@ sweeper's size-bound half landed as `BL-212` (InMemoryStore reference),
 extended to the durable single-host adapter as `BL-213` (SQLiteStore),
 extended to the network-durable Redis adapter as `BL-214`
 (`BoundedRedisStore`, an opt-in subclass that maintains a per-namespace
-insertion-order sorted-set index outside the namespace prefix), and
+insertion-order sorted-set index outside the namespace prefix),
 extended to the AWS-native DynamoDB adapter as `BL-224`
 (`BoundedDynamoDBStore`, an opt-in subclass that stamps a per-namespace
 monotonic `seq` Number attribute on every item, allocated via atomic
 `UpdateItem ADD seq :n` on a per-namespace counter row outside the
 namespace prefix; eviction scans the namespace, sorts by `seq`
-ascending, and batch-deletes the oldest entries). The
-`BoundedSweepableStore` extension Protocol plus
+ascending, and batch-deletes the oldest entries), and extended to the
+cold-storage S3 adapter as `BL-225` (`BoundedS3Store`, an opt-in
+subclass that stamps a per-object `insertion-order` user-metadata
+attribute on every PUT, set to `time.time_ns()` at write time;
+eviction LISTs the namespace prefix, HEADs each object, sorts the
+live set by `(insertion-order, key)` ascending, and DELETEs the
+oldest entries; the wall-clock ordering source diverges from the
+server-side atomic counters of BL-214 / BL-224 because S3 has no
+equivalent primitive, so multi-writer deployments with clock skew can
+reorder writes per the existing S3 eventual-consistency contract).
+The `BoundedSweepableStore` extension Protocol plus
 `TTLSweeper(max_keys=...)` enforces a keyspace cap beyond age-only
 expiry, so a write-rate-driven workload no longer grows unbounded on
-any of the four backends. There is still no summarisation or tiering,
-the remaining durable adapter (`S3Store`) does not yet implement
-`BoundedSweepableStore` (S3 has no native insertion-order column;
-implementing the Protocol there means an auxiliary timestamp-prefixed
-object per data key over LIST + DELETE),
-the durable adapters do not implement `SemanticMemoryStore`, and an
-LRU policy (versus the shipped insertion-order FIFO) is not in-tree. Implication: in-tree
-just-in-time retrieval and size-bounded reclamation work for a
-single process; long-horizon compaction, summarisation, and a
-durable vector / S3 capacity backend are open. Tracking: `BL-135`
-(compaction / summarisation / tiering, plus `BoundedSweepableStore`
-on S3), `BL-131` notes the embedder scope.
+any of the five in-tree backends. There is still no summarisation or
+tiering, the durable adapters do not implement `SemanticMemoryStore`,
+and an LRU policy (versus the shipped insertion-order FIFO) is not
+in-tree. Implication: in-tree just-in-time retrieval and size-bounded
+reclamation work for a single process across every in-tree adapter;
+long-horizon compaction, summarisation, and a durable vector backend
+are open. Tracking: `BL-135` (compaction / summarisation / tiering),
+`BL-131` notes the embedder scope.
 
 ## L6. The behavioural gate is deterministic-only
 

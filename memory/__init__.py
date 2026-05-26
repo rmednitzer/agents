@@ -33,7 +33,7 @@ from memory.encryption import (
 from memory.errors import AccessDenied, MemoryError, NamespaceViolation
 from memory.inmemory import InMemoryStore
 from memory.redis import BoundedRedisStore, RedisStore
-from memory.s3 import S3Store
+from memory.s3 import BoundedS3Store, S3Store
 from memory.semantic import Embedder, InMemorySemanticStore
 from memory.sqlite import SQLiteStore
 from memory.store import (
@@ -71,6 +71,7 @@ __all__ = [
     "BatchMemoryStore",
     "BoundedDynamoDBStore",
     "BoundedRedisStore",
+    "BoundedS3Store",
     "BoundedSweepableStore",
     "CASMemoryStore",
     "ContentAddressableStore",

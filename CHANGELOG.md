@@ -3,6 +3,97 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] BL-225: BoundedS3Store (BL-135 size-bound on S3, 2026-05-26)
+
+The cold-storage S3 extension to BL-214's Redis reference, BL-213's
+SQLite reference, and BL-224's DynamoDB reference, closing the S3 half
+of `BL-135` (the size-bound half) so every in-tree adapter now
+supports the size cap. S3 has no native insertion-order column or
+server-side atomic counter primitive, so the adapter ships as an opt-in
+subclass that stamps a per-object `insertion-order` user-metadata
+attribute on every PUT, set to `time.time_ns()` at write time. No
+auxiliary index is needed: every data object carries its own ordering
+attribute directly. The bare `S3Store` is unchanged for every existing
+caller. The single S3-specific divergence is the wall-clock ordering
+source: S3 has no equivalent atomic counter primitive (conditional
+writes are recent and not universally available), so multi-writer
+deployments with clock skew can reorder writes across writers,
+consistent with the S3Store eventual-consistency contract.
+
+### Added
+
+- `memory.BoundedS3Store`: opt-in subclass of `S3Store` that overrides
+  `write` to stamp an `insertion-order` user-metadata attribute on
+  every `PutObject`, set to `time.time_ns()` at write time. The
+  metadata stamp coexists with the existing `expires-at` TTL stamp;
+  S3's 2 KiB user-metadata cap is well above both. The bare `S3Store`
+  ignores the new attribute, so existing readers / sweepers continue
+  to work byte-for-byte the same. A rewrite of an existing key gets
+  a fresh `insertion-order`, so the rewritten key orders as *newest*,
+  matching the BL-213 SQLite `INSERT OR REPLACE` semantic, the
+  BL-214 Redis ZADD-rescore semantic, and the BL-224 DynamoDB
+  seq-replacement semantic and diverging from the BL-212 InMemoryStore
+  first-write FIFO.
+- `BoundedS3Store.evict_to_capacity`: LISTs the namespace prefix,
+  HEADs each object to read `insertion-order` and `expires-at`,
+  filters expired-but-unswept items client-side (the BL-195
+  read-vs-listing parity in S3 form so a dead object does not
+  double-evict a live one), sorts the live entries by
+  `(insertion-order, key)` ascending (the secondary key sort is the
+  deterministic tie-break for the migration case where multiple
+  legacy items share `insertion-order = 0` and for the rare
+  same-nanosecond collision on a fast host), and DELETEs the oldest
+  `(live_count - max_keys)` objects in one parallelised thread call.
+  One audit `MemoryDelete` event per evicted key (BL-040). The cost
+  shape (LIST + HEAD-per-object + DELETE-per-evicted) mirrors the
+  parent's `sweep_expired`, so eviction is no more expensive than
+  the existing age-only sweep.
+- New regression suite `tests/memory/test_bl225_s3_bounded_sweeper.py`
+  (23 tests, moto-backed): Protocol satisfaction (subclass yes, bare
+  `S3Store` no but still `SweepableStore`); oldest-first eviction by
+  insertion-order ascending; the overwrite-shifts-to-newest contract;
+  no-op at and under the cap; non-positive cap rejection
+  (parametrized); expired-but-unswept items excluded from the live
+  count; per-key audit emission; TTLSweeper integration on both age
+  and capacity passes; `mset` preserves dict insertion order under
+  FIFO (loop-of-write through the overridden `write` stamps a fresh
+  insertion-order per item in dict iteration order); `write_content`
+  carries the insertion-order (delegates through `write`); the
+  migration contract (a legacy object written via a bare `S3Store`
+  has no `insertion-order` attribute, is treated as
+  `insertion-order = 0` in eviction sort and evicts first, but
+  rewriting it via the bounded subclass stamps a fresh value and
+  moves it to newest); namespace prefix isolation (one namespace's
+  eviction does not touch another); parent surface unchanged
+  (read / write / delete / TTL / list_keys roundtrip); and the
+  `wrap_acl` / `wrap_encrypted` forwarding (BL-156, the existing
+  `_ACLBoundedMixin` and `_EncBoundedMixin` infrastructure picks up
+  the new subclass automatically through `isinstance(...,
+  BoundedSweepableStore)`).
+
+### Changed
+
+- `memory.__init__` exports `BoundedS3Store`.
+- `memory/s3.py` module docstring now notes the opt-in subclass and
+  the per-object `insertion-order` metadata design.
+- `LIMITATIONS.md` L5 updated to note the S3 delivery alongside
+  InMemoryStore, SQLiteStore, Redis, and DynamoDB. The size-bound
+  half of `BL-135` is now closed across every in-tree adapter; the
+  long-horizon compaction / summarisation / tiering half stays
+  tracked under `BL-135`.
+- `memory/README.md` capability bullet now enumerates the five
+  eviction orderings (SQLite by rowid, Redis by index score,
+  DynamoDB by `seq` attribute via server-side counter, S3 by
+  per-object `insertion-order` user-metadata attribute, InMemoryStore
+  by dict insertion order).
+
+### Documentation
+
+- `docs/backlog.md`: `BL-225` added (resolved) under the existing
+  "Sweeper size bound (2026-05-23)" section; `BL-135`'s
+  delivered / remaining narrative updated to reflect the fifth and
+  final adapter shipped (closing the size-bound half of `BL-135`).
+
 ## [Unreleased] BL-224: BoundedDynamoDBStore (BL-135 size-bound on DynamoDB, 2026-05-24)
 
 The network-durable DynamoDB extension to BL-214's Redis reference and
