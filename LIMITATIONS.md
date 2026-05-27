@@ -3,7 +3,7 @@
 Explicit scope boundaries and known gaps. Each limit states the current
 state, the implication, and the tracking item. This is pre-1.0
 infrastructure; the list is expected to shrink as L3 lands. Last
-reviewed: 2026-05-24 (ADR 0019 ninth code audit).
+reviewed: 2026-05-27 (ADR 0020 tenth code audit, `BL-226` / `BL-227`).
 
 ## L1. Pre-1.0, no release lifecycle
 
@@ -60,11 +60,11 @@ State: dependencies are lockfile-pinned (`uv.lock`); Dependabot covers
 dependency-audit gate (`pip-audit` over the exported lockfile, wired
 into `ci-success`; ADR 0010) run in CI; the repo is REUSE 3.x compliant
 (`reuse lint` gated); the `release` workflow emits a CycloneDX SBOM and
-attests build provenance. Remaining: GitHub Actions are tag-pinned not
-commit-SHA-pinned (the run environment cannot resolve third-party
-action SHAs; deferred, not faked) and there is no signed
-publish-to-index. Implication: not yet SLSA Build L2. Tracking:
-`BL-150` (SHA pinning remainder), `BL-151`.
+attests build provenance; every GitHub Action `uses:` reference in
+`.github/workflows/ci.yml`, `codeql.yml`, and `release.yml` is commit-SHA
+pinned with the version recorded in a trailing comment (`BL-150`
+resolved, 2026-05-25). Remaining: no signed publish-to-index.
+Implication: not yet SLSA Build L2. Tracking: `BL-151`.
 
 ## L5. Semantic memory is in-tree; compaction/tiering is not
 

@@ -1,7 +1,7 @@
 # Status
 
 Maturity of the repository and its documents. Updated when a phase
-opens or closes. Last reviewed: 2026-05-24 (`BL-224` BoundedDynamoDBStore).
+opens or closes. Last reviewed: 2026-05-27 (ADR 0020 tenth code audit, `BL-226` / `BL-227`).
 
 ## Maturity taxonomy
 
@@ -16,7 +16,7 @@ opens or closes. Last reviewed: 2026-05-24 (`BL-224` BoundedDynamoDBStore).
 | --- | --- | --- | --- |
 | L1 | Contract surface, budgets, memory namespace, workloads, skills, runtime Protocol | stable | ADR 0001-0006 |
 | L2 | Guard and budget wiring, durable backends, observability, composition, skill install | stable | ADR 0007, PR #20 (`af1df9d`) |
-| L3 Tier 0 | Skill-install and event security hardening, the audit fixes, REUSE + dependency-audit gate | stable (commit-SHA pinning is the tracked remainder) | ADR 0008, ADR 0009, ADR 0010 |
+| L3 Tier 0 | Skill-install and event security hardening, the audit fixes, REUSE + dependency-audit gate, commit-SHA-pinned GitHub Actions | stable | ADR 0008, ADR 0009, ADR 0010 |
 | L3 default-path wiring | `BL-100`-`BL-104` (composition, drift, recovery directives, default dispatcher, run lifecycles), additive | stable | ADR 0010 |
 | L3 Tier 1-2 | Cost/per-tool budgets, retry policy, structured soft-reject, concrete embedding provider, entry-point + CLI extensions | stable | ADR 0010 |
 | L3 Tier 3-4 | Governance (REUSE), release lifecycle and operations | stable | ADR 0010 |
