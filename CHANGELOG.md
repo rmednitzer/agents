@@ -88,6 +88,29 @@ boundaries. Two new findings in `memory/s3.py`.
 - `docs/adr/README.md`: ADR 0020 added to the index.
 - `docs/backlog.md`: `BL-226` / `BL-227` added (resolved) under a new
   "Tenth code audit (ADR 0020, 2026-05-26)" section.
+- `STATUS.md` / `LIMITATIONS.md` / `README.md` / `docs/README.md` /
+  `docs/runbook.md`: post-ADR-0020 sweep per the runbook §8
+  procedure. The "today" / ADR-enumeration / capability markers
+  advance to ADR 0020 + `BL-226` / `BL-227`; the README status
+  paragraph and the runbook §8.1 README row pick up
+  `BoundedDynamoDBStore` and `BoundedS3Store` alongside the prior
+  `BoundedRedisStore`; the runbook §2.3 fan-out per-member-failure
+  fault-class row extends to include `BL-227`
+  (`BoundedS3Store.evict_to_capacity` sequential DELETE); the
+  runbook §2.3 open-backlog row for `BL-135` is updated to reflect
+  that the size-bound half is now fully delivered across every
+  in-tree adapter via `BL-212`-`BL-214` / `BL-224` / `BL-225`.
+  Living-doc "Last reviewed" dates advanced to 2026-05-27.
+- `STATUS.md` L3 Tier 0 row, `LIMITATIONS.md` L4, `SECURITY.md`
+  "Supply chain" bullet, `docs/releasing.md` tracking line, and the
+  `docs/runbook.md` §4.1 "ready" set: drop the now-resolved
+  `BL-150` reference. Every workflow `uses:` line in
+  `.github/workflows/ci.yml`, `codeql.yml`, and `release.yml` is
+  commit-SHA pinned with the version in a trailing comment
+  (`BL-150` resolved 2026-05-25, PR #66); the supply-chain
+  remainder reduces to `BL-151` (signed publish-to-index). The
+  pinning itself is not new in this sweep; only the surface
+  documentation now catches up.
 
 ## [Unreleased] BL-225: BoundedS3Store (BL-135 size-bound on S3, 2026-05-26)
 

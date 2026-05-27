@@ -64,6 +64,8 @@ The framework is a library plus a CLI, not a long-running service, so
 
 ## Tracking
 
-Signed-artifact publishing to an index, full SLSA Build L2+ provenance,
-and GitHub Actions commit-SHA pinning are the open remainder of the
-supply-chain hardening: `BL-150`, `BL-151`, `LIMITATIONS.md` L1/L4.
+Signed-artifact publishing to an index and full SLSA Build L2+ provenance
+are the open remainder of the supply-chain hardening: `BL-151`,
+`LIMITATIONS.md` L1/L4. `BL-150` (GitHub Actions commit-SHA pinning) was
+resolved 2026-05-25 (PR #66); every workflow `uses:` reference is
+SHA-pinned with the version recorded in a trailing comment.
