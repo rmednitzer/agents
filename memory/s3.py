@@ -152,6 +152,44 @@ class S3Store:
         body = obj["Body"].read()
         return bytes(body)
 
+    def _head_metadata(self, s3_key: str) -> dict[str, str] | None:
+        """HEAD an object by full S3 key, returning its user metadata.
+
+        Returns ``None`` if the object is not found. A not-found result
+        means the object was deleted between the LIST that produced
+        ``s3_key`` and this HEAD: S3's documented concurrent-access /
+        eventual-consistency window (another writer, a concurrent
+        ``read`` lazy-expiry delete, or a concurrent ``sweep_expired``
+        run). HeadObject returns HTTP 404 (``NoSuchKey``) for a missing
+        key, so without this guard a single concurrently-deleted object
+        would raise out of the per-object HEAD loop and crash the whole
+        ``sweep_expired`` / ``evict_to_capacity`` scan (``BL-229``,
+        eleventh audit; the BL-170 S3-listing-robustness class on the
+        HEAD-during-scan boundary).
+
+        Treating not-found as "gone, skip it" matches the not-found
+        handling ``_get_live`` already applies on the read path. Any
+        other ``ClientError`` (throttle, AccessDenied, outage,
+        ``NoSuchBucket``) propagates, so a backend failure is never
+        silently reported as an absent object: the same
+        propagate-the-real-error stance as ``_get_live`` (and the
+        deliberately narrow scope that leaves the "should the parent
+        sweep be best-effort for transient errors too?" question of the
+        ADR 0020 revisit trigger open, rather than swallowing real
+        backend errors here).
+        """
+        try:
+            head = self._s3.head_object(Bucket=self._bucket, Key=s3_key)
+        except self._s3.exceptions.NoSuchKey:
+            return None
+        except self._s3.exceptions.ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in ("NoSuchKey", "404", "NotFound"):
+                return None
+            raise
+        metadata: dict[str, str] = head.get("Metadata", {})
+        return metadata
+
     # boto3 is synchronous; every blocking call is offloaded to a worker
     # thread so an asyncio workload's event loop is never stalled by S3
     # network I/O. Audit emission stays on the loop (fast, in-memory).
@@ -281,8 +319,13 @@ class S3Store:
                 kw["ContinuationToken"] = token
             resp = self._s3.list_objects_v2(**kw)
             for item in resp.get("Contents", []):
-                head = self._s3.head_object(Bucket=self._bucket, Key=item["Key"])
-                exp = _safe_float(head.get("Metadata", {}).get(_EXPIRES_META))
+                md = self._head_metadata(item["Key"])
+                if md is None:
+                    # Deleted between LIST and HEAD (BL-229): already
+                    # gone, nothing to sweep. The DELETE below is S3-
+                    # idempotent so it needs no equivalent guard.
+                    continue
+                exp = _safe_float(md.get(_EXPIRES_META))
                 if is_expired(time.time(), exp):
                     self._s3.delete_object(Bucket=self._bucket, Key=item["Key"])
                     removed += 1
@@ -406,8 +449,15 @@ class BoundedS3Store(S3Store):
                 kw["ContinuationToken"] = token
             resp = self._s3.list_objects_v2(**kw)
             for item in resp.get("Contents", []):
-                head = self._s3.head_object(Bucket=self._bucket, Key=item["Key"])
-                md = head.get("Metadata", {})
+                md = self._head_metadata(item["Key"])
+                if md is None:
+                    # Deleted between LIST and HEAD (BL-229): not part
+                    # of the live set, so it cannot count toward the
+                    # capacity cap. BL-227 contained the per-key DELETE
+                    # in evict_to_capacity but not this collect-phase
+                    # HEAD, so a concurrently-deleted object still
+                    # crashed the whole eviction scan until this guard.
+                    continue
                 exp = _safe_float(md.get(_EXPIRES_META))
                 if is_expired(now, exp):
                     continue
