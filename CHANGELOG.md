@@ -3,6 +3,86 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Eleventh code audit (ADR 0021, BL-228 / BL-229, 2026-05-31)
+
+The eleventh in-depth code audit, by area, against the same green
+gates (ruff, ruff format, mypy strict, pytest at `cov-fail-under=94`,
+schema-drift, REUSE 3.x, `pip-audit`, the dispatch evaluation gate).
+It closed the two open ADR 0020 revisit triggers and re-walked the
+recurring fault classes (fan-out containment, audit-vs-raise parity,
+LIST-then-HEAD concurrency, NaN / unparseable input) against any
+surface a prior audit fixed only pointwise. ADR 0021 is the
+cross-cutting why. Two findings (`skills/dispatchers/chain.py`,
+`memory/s3.py`) plus one documented non-finding (`memory/dynamodb.py`).
+
+### Changed
+
+- `skills.dispatchers.chain.RoutingChainDispatcher.dispatch` (`BL-228`)
+  contains a per-link failure: a link that raises `Exception` (a
+  network `LLMDispatcher` raising `DispatchError` or timing out, an
+  embedding provider blip) is treated as "produced no usable match" and
+  the chain falls through to the next link, preserving the best-effort
+  matches already gathered from cheaper links. `BaseException`
+  (`KeyboardInterrupt`, `SystemExit`, `asyncio.CancelledError`) still
+  propagates (the BL-165 / BL-222 / BL-223 terminal-signal invariant).
+  This is the BL-222 / BL-223 / BL-227 fan-out containment class on the
+  sequential cheap-first chain and the resolution of the deferred ADR
+  0019 / ADR 0020 revisit trigger. `default_dispatcher` (BL-103)
+  composes a `RoutingChainDispatcher`, so an LLM-tier failure on the
+  recommended default path now degrades to the keyword / embedding tier
+  instead of surfacing as a whole-dispatch crash. The happy path and
+  the empty-list-return path are unchanged.
+- `memory.s3.S3Store._sweep_sync` and
+  `memory.s3.BoundedS3Store._collect_live_sync` (`BL-229`) route their
+  per-object HEAD through the new `S3Store._head_metadata` helper, which
+  returns `None` when the object is not found. A concurrently-deleted
+  object (the LIST-then-HEAD window, where HeadObject returns HTTP
+  `404 NoSuchKey`) is now skipped instead of crashing the whole
+  `sweep_expired` / `evict_to_capacity` scan. The `_collect_live_sync`
+  half was new (BL-227 contained only `evict_to_capacity`'s per-key
+  DELETE loop, not the collect-phase HEAD); the `_sweep_sync` half is
+  the narrow resolution of the ADR 0020 revisit trigger. A
+  non-not-found `ClientError` (throttle, `AccessDenied`, outage) still
+  propagates, matching `_get_live`'s "do not misreport an outage as an
+  absent key" stance. S3 DeleteObject is idempotent, so only the HEAD
+  needs the guard.
+
+### Added
+
+- `memory.s3.S3Store._head_metadata(s3_key: str) -> dict[str, str] | None`:
+  HEADs an object and returns its user metadata, or `None` when not
+  found (typed `NoSuchKey`, or a `ClientError` whose code is
+  `NoSuchKey` / `404` / `NotFound`), mirroring the `_get_live`
+  not-found idiom; any other `ClientError` propagates.
+- 16 new regression tests:
+  `tests/skills/test_bl228_chain_member_failure.py` (7: failing middle
+  link falls through to a later success, failing last link preserves
+  the earlier best-effort match, failing first link does not abort, all
+  links fail returns empty, a high-confidence cheap winner
+  short-circuits before the failing link, `BaseException` parametrized
+  over `KeyboardInterrupt` / `SystemExit` / `CancelledError`
+  propagates, happy path unchanged) and
+  `tests/memory/test_bl229_s3_head_toctou.py` (9: `_head_metadata`
+  returns metadata / `None` on 404 / `None` on typed `NoSuchKey` /
+  propagates a non-404 error; `sweep_expired` skips a
+  concurrently-deleted object, propagates a non-404 HEAD error, happy
+  path unchanged; `evict_to_capacity` skips a concurrently-deleted
+  object, propagates a non-404 HEAD error).
+
+### Not changed (documented non-finding)
+
+- `memory.dynamodb` `float(exp)` (`BL-230`): the four bare-`float`
+  metadata reads (`_live_item`, `_list_sync`, `_scan_sync`, the
+  `compare_and_set` match branch) are the same shape BL-226 fixed in
+  S3, but the DynamoDB `N` type is server-validated to a documented
+  finite range (positive `1E-130` to `~9.9E+125`; "exceeding this
+  results in an exception"), so NaN / +inf / -inf / unparseable cannot
+  be stored through its API, and `item.get("exp", {}).get("N")` already
+  reads a wrong-type (String) attribute as no-TTL. The BL-226 class is
+  inapplicable because the boundary's own type system forbids the
+  offending values, unlike S3's free-form user-metadata. Recorded so a
+  future audit does not re-flag it; no code change.
+
 ## [Unreleased] Tenth code audit (ADR 0020, BL-226 / BL-227, 2026-05-26)
 
 The tenth in-depth code audit, by area, against the same green gates

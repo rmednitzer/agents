@@ -3,7 +3,7 @@
 Explicit scope boundaries and known gaps. Each limit states the current
 state, the implication, and the tracking item. This is pre-1.0
 infrastructure; the list is expected to shrink as L3 lands. Last
-reviewed: 2026-05-27 (ADR 0020 tenth code audit, `BL-226` / `BL-227`).
+reviewed: 2026-05-31 (ADR 0021 eleventh code audit, `BL-228` / `BL-229`).
 
 ## L1. Pre-1.0, no release lifecycle
 
