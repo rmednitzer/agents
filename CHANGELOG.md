@@ -147,8 +147,8 @@ boundaries. Two new findings in `memory/s3.py`.
   per-key exceptions, collects the actually-deleted keys, and emits
   audit only for them. Before: a single failing DELETE (S3
   throttle, transient access drift, network blip) propagated out of
-  the thread and the audit-emit loop below was never reached --
-  partial state mutation with no audit at all, breaking the BL-202
+  the thread and the audit-emit loop below was never reached,
+  leaving partial state mutation with no audit at all, breaking the BL-202
   / BL-167 audit-vs-raise parity invariant. After: per-key
   containment of `Exception` (parity with BL-222 `MultiDispatcher`
   and BL-223 `MultiSink`); `BaseException` (`KeyboardInterrupt`,
