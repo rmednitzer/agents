@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from memory._audit import MemoryAudit
 from memory.store import TxnDelete, TxnWrite
@@ -632,7 +632,7 @@ class BoundedRedisStore(RedisStore):
     # --- helpers ------------------------------------------------------
 
     async def _members(self) -> list[str]:
-        raw = await self._r.zrange(self._idx, 0, -1)
+        raw = cast(list[bytes | str], await self._r.zrange(self._idx, 0, -1))
         return [m.decode() if isinstance(m, bytes) else m for m in raw]
 
     async def _live_map(self, members: list[str]) -> dict[str, bool]:
