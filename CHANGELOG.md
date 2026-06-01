@@ -3,6 +3,94 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Twelfth code audit (ADR 0022, BL-231 / BL-232, 2026-06-01)
+
+The twelfth in-depth code audit, by area, against the same green
+gates (ruff, ruff format, mypy strict, pytest at `cov-fail-under=94`,
+schema-drift, REUSE 3.x, `pip-audit`, the dispatch evaluation gate).
+It re-walked the non-finite-numeric class (`NaN` / `+inf` subverts a
+numeric control because every ordered comparison with `NaN` is False
+and `+inf <= 0` is also False) against the numeric *configuration*
+boundaries the prior NaN audits (BL-159 cosine, BL-205 weights,
+BL-221 consume-cost, BL-226 S3 metadata, all on value / data
+boundaries) had not reached, the peers of the
+`Namespace.retention_seconds` boundary BL-197 hardened. ADR 0022 is
+the cross-cutting why. Two findings, split by sub-mechanism.
+
+### Changed
+
+- `harness.budgets.ActionBudget` (`BL-231`) gains a
+  `model_validator(mode="after")` that rejects a `NaN` / `+inf` / `-inf` /
+  negative value on every numeric limit (`max_cost_usd`,
+  `max_wall_clock_seconds`, the per-tool wall-clock map, and the
+  integer count limits / maps) at construction. Before, a
+  `NaN` / `+inf` limit constructed cleanly and the tracker's
+  `consumed > limit` check was always False, so the ceiling the
+  operator declared was silently disabled for the whole run. This is
+  the dual of `BL-221`, which hardened the *consumed* side of the same
+  comparison but left the *limit* side open. `None` (unlimited) and
+  `0` (a zero ceiling, e.g. `max_cost_usd=0.0`) stay valid, so every
+  existing budget is unaffected. The validator is a runtime check, not
+  a JSON-Schema constraint, so the generated schema is unchanged by it.
+- `harness.runtime.RetryPolicy` (`BL-231`) gains a `__post_init__` that
+  rejects negative `max_retries`, `NaN` / `+inf` / `-inf` / negative
+  `backoff_base_seconds` / `backoff_max_seconds`, and a
+  `circuit_breaker_threshold` that is not `None` or `>= 1`. A `NaN`
+  backoff made `delay_for` non-finite, and `asyncio.sleep(NaN)` returns
+  immediately, turning the bounded exponential backoff of `BL-136` into
+  a no-delay retry storm against the failing provider.
+- `harness.mcp.MCPServerSpec` (`BL-232`) timeout validator gains a
+  `math.isfinite` conjunct: `timeout_seconds <= 0` alone let `NaN` and
+  `+inf` through (both comparisons are False), passing a guard whose
+  docstring claims "must be positive". The message becomes "a positive,
+  finite number"; the docstring change propagates to the generated
+  `workload-manifest.json` schema `description` (the only schema diff
+  in this wave).
+- `memory.sweep.TTLSweeper` (`BL-232`) interval validator gains the
+  same `math.isfinite` conjunct. A `NaN` interval slipped the `<= 0`
+  guard and drove `asyncio.wait_for(self._stop.wait(), timeout=NaN)`,
+  which raises `TimeoutError` immediately, turning the maintenance loop
+  into a no-delay busy-sweep that hammers the backend's `sweep_expired`
+  (Redis / DynamoDB / S3 network I/O) as fast as the event loop allows.
+  `max_keys` is unchanged (an `int | None` with no `NaN`
+  representation; its `<= 0` guard already covers the meaningless
+  integers).
+
+### Added
+
+- 39 new regression tests:
+  `tests/harness/test_bl231_bl232_numeric_config.py` (33: `ActionBudget`
+  rejects `NaN` / `+inf` / `-inf` / negative on every limit and per-tool map
+  value and still accepts `None` / `0` / finite-positive, with a pinned
+  demonstration that a `NaN` cost limit would have disabled the ceiling
+  and a finite ceiling still fires; `RetryPolicy` rejects bad backoff /
+  `max_retries` / `circuit_breaker_threshold` and still accepts the
+  documented defaults; `MCPServerSpec` rejects `NaN` / `+inf` and still
+  rejects `0` / negative and accepts a positive finite timeout) and
+  `tests/memory/test_bl232_sweeper_interval.py` (6: `TTLSweeper` rejects
+  `NaN` / `+inf` / `-inf` and still rejects `0` / negative and accepts a positive
+  finite interval).
+- ADR 0022 (`docs/adr/0022-twelfth-code-audit.md`): the twelfth-audit
+  narrative, the value-vs-configuration boundary generalisation, the
+  deliberate scope boundary on bare-float control parameters, and the
+  event-model-output non-finding.
+
+### Documentation
+
+- `docs/adr/README.md`: ADR 0022 row added.
+- `docs/backlog.md`: `BL-231` / `BL-232` added (resolved) under a new
+  "Twelfth code audit (ADR 0022, 2026-06-01)" section; source `S10`
+  (Python comparison semantics + `math.isfinite`) added; the header
+  date line extended.
+- `STATUS.md` / `LIMITATIONS.md` / `README.md` / `docs/README.md` /
+  `docs/runbook.md` / `SECURITY.md`: post-ADR-0022 sweep per the runbook
+  §8 procedure. The phase table gains the twelfth-audit row; the
+  ADR-enumeration markers advance to `0022`; the runbook §2.3
+  fault-class table gains the BL-231 / BL-232 numeric-configuration
+  row; living-doc "Last reviewed" dates advance to 2026-06-01.
+- `CLAUDE.md`: both ADR-enumeration paragraphs extended through ADR
+  0022.
+
 ## [Unreleased] Eleventh code audit (ADR 0021, BL-228 / BL-229, 2026-05-31)
 
 The eleventh in-depth code audit, by area, against the same green
