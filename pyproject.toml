@@ -65,7 +65,7 @@ openai = [
 ]
 dev = [
     "pytest>=9.0.3",
-    "pytest-asyncio>=1.3.0",
+    "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.14",
     "mypy>=2.1.0",
