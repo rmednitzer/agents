@@ -17,7 +17,7 @@ import math
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from harness.errors import BudgetExceeded
 from harness.events import BudgetExceededEvent
@@ -30,6 +30,36 @@ __all__ = [
 ]
 
 BudgetKind = Literal["steps", "tokens", "wall_clock", "tool_calls", "cost"]
+
+
+def _validate_float_limit(field: str, value: float | None) -> None:
+    """Reject a non-finite or negative float *limit* (BL-231).
+
+    The dual of BL-221: that fix hardened the *consumed* side of every
+    ``consumed > limit`` check (the caller-fed floats into the tracker);
+    the *limit* side (the spec) was unvalidated. A ``NaN`` or ``+inf``
+    limit makes ``consumed > limit`` always False, so the ceiling is
+    silently disabled for the whole run, the exact NaN-comparison trap
+    of BL-159 / BL-205 / BL-221 / BL-226. ``None`` (unlimited) and
+    ``0`` (a zero ceiling) stay valid.
+    """
+    if value is None:
+        return
+    if not math.isfinite(value):
+        raise ValueError(f"{field} must be finite when set (got {value!r})")
+    if value < 0:
+        raise ValueError(f"{field} must be non-negative when set (got {value!r})")
+
+
+def _validate_int_limit(field: str, value: int | None) -> None:
+    """Reject a negative integer *limit* (BL-231).
+
+    Integers cannot be NaN / inf, so only the negative case applies; a
+    negative count limit is a meaningless spec. ``None`` (unlimited) and
+    ``0`` (a zero ceiling) stay valid.
+    """
+    if value is not None and value < 0:
+        raise ValueError(f"{field} must be non-negative when set (got {value!r})")
 
 
 class ActionBudget(BaseModel):
@@ -79,6 +109,32 @@ class ActionBudget(BaseModel):
     max_cost_usd: float | None = None
     max_tokens_per_tool: dict[str, int] | None = None
     max_wall_clock_seconds_per_tool: dict[str, float] | None = None
+
+    @model_validator(mode="after")
+    def _check_limits(self) -> ActionBudget:
+        """Reject a non-finite or negative limit at construction (BL-231).
+
+        BL-221 validated the floats a caller *consumes* into the tracker;
+        this validates the *limits* the spec declares, closing the dual.
+        Surfacing the error at construction (not mid-run) matches the
+        ADR 0007 "configuration errors at load time" rule and the
+        ``Namespace.resolve_ttl`` (BL-197) / ``MultiDispatcher`` weight
+        (BL-205) precedents. A ``None`` (unlimited) or ``0`` (zero
+        ceiling) limit stays valid, so every existing budget is
+        unaffected; only a NaN / +inf / negative spec is rejected.
+        """
+        _validate_int_limit("max_steps", self.max_steps)
+        _validate_int_limit("max_tokens", self.max_tokens)
+        _validate_int_limit("max_tool_calls", self.max_tool_calls)
+        _validate_float_limit("max_wall_clock_seconds", self.max_wall_clock_seconds)
+        _validate_float_limit("max_cost_usd", self.max_cost_usd)
+        for tool, call_cap in (self.max_tool_calls_per_tool or {}).items():
+            _validate_int_limit(f"max_tool_calls_per_tool[{tool!r}]", call_cap)
+        for tool, token_cap in (self.max_tokens_per_tool or {}).items():
+            _validate_int_limit(f"max_tokens_per_tool[{tool!r}]", token_cap)
+        for tool, sec_cap in (self.max_wall_clock_seconds_per_tool or {}).items():
+            _validate_float_limit(f"max_wall_clock_seconds_per_tool[{tool!r}]", sec_cap)
+        return self
 
 
 class BudgetTracker:

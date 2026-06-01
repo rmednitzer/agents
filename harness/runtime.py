@@ -36,6 +36,7 @@ import asyncio
 import contextlib
 import functools
 import inspect
+import math
 import time
 import uuid
 import warnings
@@ -98,6 +99,36 @@ class RetryPolicy:
     backoff_max_seconds: float = 30.0
     retry_on: tuple[type[BaseException], ...] = ()
     circuit_breaker_threshold: int | None = None
+
+    def __post_init__(self) -> None:
+        """Reject non-finite / negative policy parameters (BL-231).
+
+        The config-side dual of BL-221. A non-finite
+        ``backoff_base_seconds`` / ``backoff_max_seconds`` makes
+        ``delay_for`` non-finite, and ``asyncio.sleep(NaN)`` returns
+        immediately (``min(NaN, deadline)`` keeps the NaN), so a NaN
+        backoff turns the bounded exponential backoff this policy
+        promises into a no-delay retry storm against the failing
+        provider. A negative ``max_retries`` or a
+        ``circuit_breaker_threshold < 1`` is a meaningless spec.
+        Validated at construction (ADR 0007), mirroring the
+        ``Namespace`` (BL-197) and ``MultiDispatcher`` (BL-205) guards.
+        """
+        if self.max_retries < 0:
+            raise ValueError(f"max_retries must be non-negative (got {self.max_retries!r})")
+        for field_name, value in (
+            ("backoff_base_seconds", self.backoff_base_seconds),
+            ("backoff_max_seconds", self.backoff_max_seconds),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(f"{field_name} must be finite (got {value!r})")
+            if value < 0:
+                raise ValueError(f"{field_name} must be non-negative (got {value!r})")
+        if self.circuit_breaker_threshold is not None and self.circuit_breaker_threshold < 1:
+            raise ValueError(
+                f"circuit_breaker_threshold must be >= 1 or None "
+                f"(got {self.circuit_breaker_threshold!r})"
+            )
 
     def delay_for(self, attempt: int) -> float:
         """Backoff before retry ``attempt`` (1-based): base * 2**(n-1)."""

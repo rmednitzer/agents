@@ -9,6 +9,7 @@ PydanticAIRuntime implements it via PydanticAI's own MCP integration
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
@@ -39,7 +40,7 @@ class MCPServerSpec(BaseModel):
 
     - stdio transport requires command.
     - http and sse transports require url.
-    - timeout_seconds must be positive.
+    - timeout_seconds must be a positive, finite number.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -59,8 +60,14 @@ class MCPServerSpec(BaseModel):
             raise ValueError("stdio transport requires command")
         if self.transport in (MCPTransport.HTTP, MCPTransport.SSE) and not self.url:
             raise ValueError(f"{self.transport.value} transport requires url")
-        if self.timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive")
+        # BL-232: ``<= 0`` alone has a NaN / +inf hole, since every
+        # comparison with NaN is False and ``+inf <= 0`` is False, so a
+        # non-finite timeout slipped past a guard that claims "must be
+        # positive". The ``math.isfinite`` conjunct closes it (the
+        # Namespace.retention_seconds BL-197 / cosine BL-159 class on the
+        # config boundary).
+        if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be a positive, finite number")
         return self
 
 
