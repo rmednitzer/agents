@@ -113,7 +113,7 @@
       "type": "object"
     },
     "MCPServerSpec": {
-      "description": "Declarative MCP server specification.\n\nValidated at construction:\n\n- stdio transport requires command.\n- http and sse transports require url.\n- timeout_seconds must be positive.",
+      "description": "Declarative MCP server specification.\n\nValidated at construction:\n\n- stdio transport requires command.\n- http and sse transports require url.\n- timeout_seconds must be a positive, finite number.",
       "properties": {
         "allowed_tools": {
           "anyOf": [

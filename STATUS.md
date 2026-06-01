@@ -1,7 +1,7 @@
 # Status
 
 Maturity of the repository and its documents. Updated when a phase
-opens or closes. Last reviewed: 2026-05-31 (ADR 0021 eleventh code audit, `BL-228` / `BL-229`).
+opens or closes. Last reviewed: 2026-06-01 (ADR 0022 twelfth code audit, `BL-231` / `BL-232`).
 
 ## Maturity taxonomy
 
@@ -36,6 +36,7 @@ opens or closes. Last reviewed: 2026-05-31 (ADR 0021 eleventh code audit, `BL-22
 | Ninth code audit (`BL-223`) | One additive finding: `MultiSink` per-sink failure containment on the audit fan-out side, the BL-222 ensemble-side guarantee generalised to the sequential sink fan-out so a single failing sink (OTel exporter, JsonlSink with disk full) does not block downstream sinks from receiving the event. `BaseException` (KeyboardInterrupt / SystemExit / CancelledError) still propagates; terminal signals are not swallowed. 7 new regression tests; the audit-vs-raise parity invariant (BL-202 / BL-167) now holds at every fan-out leg | stable | ADR 0019 |
 | Tenth code audit (`BL-226`-`BL-227`) | Two additive findings against the just-merged `BL-225` `BoundedS3Store`: S3 user-metadata trust-boundary parsing (`_safe_float` rejects NaN / +inf / -inf / unparseable; `_safe_int` defaults to 0, the legacy-migration sentinel) applied at every metadata-read site, generalising the BL-159 / BL-201 / BL-205 / BL-215 / BL-217 / BL-221 invariants to the S3 metadata boundary; `BoundedS3Store.evict_to_capacity` per-key DELETE containment, generalising the BL-222 / BL-223 fan-out failure invariant and the BL-202 / BL-167 audit-vs-raise parity to the new BL-225 sequential-DELETE path. 33 new regression tests | stable | ADR 0020 |
 | Eleventh code audit (`BL-228`-`BL-229`) | Two additive findings closing the two open ADR 0020 revisit triggers: `RoutingChainDispatcher` per-link failure containment (the BL-222 / BL-223 / BL-227 fan-out class on the sequential cheap-first chain; a raising link falls through to the next, `BaseException` still propagates) and S3 metadata-scan HEAD not-found containment (`S3Store._head_metadata` treats a LIST-then-HEAD concurrently-deleted object as absent, mirroring `_get_live`, so `sweep_expired` / `evict_to_capacity` no longer crash on a 404; non-not-found `ClientError`s still propagate). DynamoDB `float(exp)` left unchanged with a documented rationale (`BL-230`; the `N` type is server-validated to a finite range). 16 new regression tests | stable | ADR 0021 |
+| Twelfth code audit (`BL-231`-`BL-232`) | Two additive findings extending the non-finite-numeric class (`NaN` / `+inf` subverts a numeric control: every ordered comparison with `NaN` is False, `+inf <= 0` is False) from the value / data boundaries (BL-159 / BL-205 / BL-221 / BL-226) to the numeric *configuration* boundaries, the peers of the `Namespace.retention_seconds` boundary BL-197 hardened. `BL-231` (no guard): `ActionBudget` and `RetryPolicy` reject `NaN` / `+inf` / `-inf` / negative limits at construction (the dual of BL-221, which hardened the *consumed* side of `consumed > limit` but left the *limit* side open, so a `NaN` limit silently disabled the ceiling). `BL-232` (a `<= 0` guard with a `NaN` hole): `MCPServerSpec.timeout_seconds` and `TTLSweeper.interval_seconds` gain a `math.isfinite` conjunct (a `NaN` sweep interval drove a no-delay busy-sweep). Additive, validated at load time (ADR 0007); `None` / `0` / finite-positive unaffected. 39 new regression tests | stable | ADR 0022 |
 | L3 open | Live-model workload, memory compaction / summarisation / tiering, true OTel spans, prompt caching, true preemption, non-replay resume | planned | `docs/backlog.md` (`BL-120`, `BL-135`, `BL-113`/`138`, `BL-132`/`171`, `BL-155`, `BL-114`) |
 
 ## Document maturity
@@ -43,7 +44,7 @@ opens or closes. Last reviewed: 2026-05-31 (ADR 0021 eleventh code audit, `BL-22
 | Document | Maturity |
 | --- | --- |
 | `CLAUDE.md`, `README.md`, component `README.md` | stable |
-| `docs/adr/0001`-`0021` | stable (Accepted) |
+| `docs/adr/0001`-`0022` | stable (Accepted) |
 | `docs/releasing.md` | stable |
 | `docs/backlog.md` | living tracker |
 | `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE` section (in `CONTRIBUTING.md`) | stable |

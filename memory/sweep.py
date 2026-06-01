@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 from typing import cast
 
 from memory.store import BoundedSweepableStore, SweepableStore
@@ -70,8 +71,15 @@ class TTLSweeper:
         interval_seconds: float,
         max_keys: int | None = None,
     ) -> None:
-        if interval_seconds <= 0:
-            raise ValueError("interval_seconds must be positive")
+        # BL-232: ``<= 0`` alone has a NaN / +inf hole (``NaN <= 0`` and
+        # ``+inf <= 0`` are both False). A NaN interval slipped through
+        # and ``asyncio.wait_for(..., timeout=NaN)`` raises TimeoutError
+        # immediately, turning the loop into a no-delay busy-sweep that
+        # hammers the backend. The ``math.isfinite`` conjunct closes it
+        # (the MCPServerSpec.timeout_seconds twin; BL-197 / BL-159 class
+        # on the config boundary).
+        if not math.isfinite(interval_seconds) or interval_seconds <= 0:
+            raise ValueError("interval_seconds must be a positive finite number")
         if max_keys is not None:
             if max_keys <= 0:
                 raise ValueError("max_keys must be positive")
