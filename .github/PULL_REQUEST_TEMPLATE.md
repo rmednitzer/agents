@@ -16,4 +16,4 @@
 - [ ] `make check` passes (ruff, mypy, pytest)
 - [ ] Changes are additive to the L1 Protocols (ADR 0007)
 - [ ] Contract changes are documented in an ADR under `docs/adr/`, with blast radius stated
-- [ ] `make schema` run if a manifest model changed
+- [ ] Ran `make schema` if a manifest model changed
