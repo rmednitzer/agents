@@ -19,7 +19,7 @@ In scope:
 - Skill loading vulnerabilities (path traversal via skill name or archive member, symlink dereference via a crafted local mirror or a non-file archive member, code execution via crafted SKILL.md or bundled assets) and out-of-tree workload loading (filesystem path or installed-package entry point).
 
 Out of scope:
-- Issues in upstream dependencies (report upstream first; reference here once a fix lands). Dependencies are lockfile-pinned (`uv.lock`); Dependabot proposes `pip` and `github-actions` updates.
+- Issues in upstream dependencies (report upstream first; reference here once a fix lands). Dependencies are lockfile-pinned (`uv.lock`); Renovate proposes `pip` and `github-actions` updates.
 - Findings requiring physical access to a host running the harness.
 
 ## Hardening posture

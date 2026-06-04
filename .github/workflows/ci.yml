@@ -59,7 +59,7 @@ jobs:
           name: coverage-xml-${{ matrix.python }}
           path: coverage.xml
 
-  # BL-150: a BLOCKING dependency-audit gate. Dependabot proposes
+  # BL-150: a BLOCKING dependency-audit gate. Renovate proposes
   # updates but is not a gate; this fails CI when a locked dependency
   # has a known advisory. The lockfile (uv.lock) is exported to a pinned
   # requirements set and audited with pip-audit, so the gate matches
