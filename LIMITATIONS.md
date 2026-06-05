@@ -55,8 +55,8 @@ tier is delivered).
 
 ## L4. Supply-chain attestation incomplete
 
-State: dependencies are lockfile-pinned (`uv.lock`); Dependabot covers
-`pip` and `github-actions`; CodeQL (ADR 0008) and a blocking
+State: dependencies are lockfile-pinned (`uv.lock`); Renovate covers
+Python and `github-actions`; CodeQL (ADR 0008) and a blocking
 dependency-audit gate (`pip-audit` over the exported lockfile, wired
 into `ci-success`; ADR 0010) run in CI; the repo is REUSE 3.x compliant
 (`reuse lint` gated); the `release` workflow emits a CycloneDX SBOM and

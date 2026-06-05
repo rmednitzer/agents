@@ -398,7 +398,7 @@ A `grep -RIn -e '\-\-' -e '—' --include='*.md'` (excluding `LICENSES/`, `.git/
 | Per backlog item closed | `[pending]` -> `[resolved]` | Phase C (4.2 or 4.3), the per-item workflow. |
 | Per quarter | Q1 / Q2 / Q3 / Q4 | Phase A (audit) and Phase G (docs sweep). The audit's ADR is the deliverable. |
 | Per release rehearsal | A `v0.0.x` tag candidate | Phase D end-to-end plus `docs/releasing.md` step 2 (bump, CHANGELOG promotion). |
-| Per dependency bump cluster | A cluster of Dependabot PRs landed | A targeted Phase A pass on the paths the bumps exercise (the ADR 0013 trigger). |
+| Per dependency bump cluster | A cluster of Renovate PRs landed | A targeted Phase A pass on the paths the bumps exercise (the ADR 0013 trigger). |
 
 ## 10. References
 
