@@ -28,9 +28,13 @@
       "Read(~/.config/gh/**)",
       "Read(**/*.pem)",
       "Read(**/id_rsa*)",
+      "Bash(curl)",
       "Bash(curl:*)",
+      "Bash(wget)",
       "Bash(wget:*)",
+      "Bash(git push --force)",
       "Bash(git push --force:*)",
+      "Bash(git push -f)",
       "Bash(git push -f:*)"
     ]
   }
