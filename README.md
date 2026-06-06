@@ -22,9 +22,11 @@ ninth-code-audit hardening (`BL-223`), the tenth-code-audit
 hardening (`BL-226` / `BL-227`, against the just-merged
 `BoundedS3Store`), the eleventh-code-audit hardening
 (`BL-228` / `BL-229`, closing the two open ADR 0020 revisit
-triggers), and the twelfth-code-audit hardening
+triggers), the twelfth-code-audit hardening
 (`BL-231` / `BL-232`, non-finite numeric configuration
-validation) on `main` (see
+validation), and the thirteenth-code-audit hardening
+(`BL-233`, sweep per-item DELETE containment on the network
+adapters) on `main` (see
 [docs/backlog.md](./docs/backlog.md),
 [ADR 0007](./docs/adr/0007-l2-implementation-wave.md),
 [ADR 0010](./docs/adr/0010-l3-default-path-wiring-and-audit-wave.md),
@@ -39,7 +41,8 @@ validation) on `main` (see
 [ADR 0019](./docs/adr/0019-ninth-code-audit.md),
 [ADR 0020](./docs/adr/0020-tenth-code-audit.md),
 [ADR 0021](./docs/adr/0021-eleventh-code-audit.md),
-[ADR 0022](./docs/adr/0022-twelfth-code-audit.md)).
+[ADR 0022](./docs/adr/0022-twelfth-code-audit.md),
+[ADR 0023](./docs/adr/0023-thirteenth-code-audit.md)).
 Every L2/L3 change is additive to the L1 Protocols: new optional
 parameters, new modules, and side-by-side Protocols; nothing in the L1
 surface was removed. The package imports and type-checks with no

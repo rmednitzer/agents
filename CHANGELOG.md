@@ -3,6 +3,66 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Thirteenth code audit (ADR 0023, BL-233, 2026-06-06)
+
+The thirteenth in-depth code audit, by area, against the same green
+gates (ruff, ruff format, mypy strict, pytest at `cov-fail-under=94`,
+schema-drift, REUSE 3.x, `pip-audit`, the dispatch evaluation gate). It
+re-walked the fan-out per-member failure containment class (`BL-222`
+`MultiDispatcher`, `BL-223` `MultiSink`, `BL-227`
+`BoundedS3Store.evict_to_capacity`, `BL-228` `RoutingChainDispatcher`)
+against the one sibling surface no prior audit had reached: the
+periodic TTL sweep. ADR 0023 is the cross-cutting why. One finding,
+spanning the two network adapters with the per-item-loop shape.
+
+### Fixed
+
+- `memory.s3.S3Store._sweep_sync` and
+  `memory.dynamodb.DynamoDBStore._sweep_sync` (`BL-233`) now contain a
+  per-item network DELETE failure (`try/except Exception: continue`,
+  counting only successful deletes), mirroring
+  `BoundedS3Store.evict_to_capacity._delete_all` (`BL-227`). Before, the
+  per-item `delete_object` / `delete_item` was bare, so a single
+  transient backend error (S3 `SlowDown` / throttle, DynamoDB
+  `ProvisionedThroughputExceeded`, a network blip) on one expired item
+  propagated out of the loop and aborted the entire sweep pass: every
+  later expired item in the same listing / scan was left un-swept for
+  the cycle, and the count of items already deleted in this pass was
+  discarded. The `TTLSweeper` loop survived (`BL-199`) but each retry
+  re-LISTed / re-HEADed the whole keyspace, so a steady low rate of
+  transient errors could keep a large keyspace's tail permanently
+  un-swept. This is the `BL-227` containment class unreached on the
+  sibling sweep path, and the precise question ADR 0020 / 0021 / 0022
+  deferred from the `BL-229` `_head_metadata` scope.
+
+### Changed
+
+- The inspection step of each sweep stays fail-loud by design (the S3
+  HEAD via `_head_metadata`, the DynamoDB `Scan`): an object the
+  sweeper cannot *inspect* (a real AccessDenied / NoSuchBucket, not a
+  not-found) still surfaces as an error, so the sweep never silently
+  skips a keyspace it has lost read access to. Only the idempotent
+  DELETE *action* is best-effort. `BaseException` (`KeyboardInterrupt`,
+  `SystemExit`, `asyncio.CancelledError`) still propagates per the
+  `BL-165` / `BL-223` invariant. `DynamoDBStore`'s eviction stays
+  all-or-nothing via `_batch_write`-with-retry (a bounded cap-meeting
+  operation differs from unbounded periodic sweep), so S3 is internally
+  consistent (per-item best-effort sweep + evict) while DynamoDB's
+  sweep is best-effort and its evict batched, each the right shape for
+  the operation. The happy path (no DELETE error) is byte-identical.
+
+### Tests
+
+- 8 new regression tests
+  (`tests/memory/test_bl233_sweep_delete_containment.py`), 4 per
+  adapter via the BL-226 / BL-227 `moto` + flaky-client pattern: a
+  partial failure sweeps the rest and returns the success count without
+  raising (the failed item stays alive); every DELETE failing returns 0
+  without raising (all items retried next cycle); the happy path is
+  unchanged; a `SystemExit` on DELETE still propagates. Verified to fail
+  against the pre-fix code (the four containment cases raise the
+  injected `ClientError`).
+
 ## [Unreleased] Twelfth code audit (ADR 0022, BL-231 / BL-232, 2026-06-01)
 
 The twelfth in-depth code audit, by area, against the same green

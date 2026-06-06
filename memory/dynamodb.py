@@ -572,9 +572,27 @@ class DynamoDBStore:
             resp = self._scan_page(start, None)
             for item in resp.get("Items", []):
                 exp = item.get("exp", {}).get("N")
-                if is_expired(now, float(exp) if exp is not None else None):
+                if not is_expired(now, float(exp) if exp is not None else None):
+                    continue
+                # BL-233: contain a per-item DELETE failure (the BL-227
+                # fan-out-containment class on the sibling sweep path,
+                # the DynamoDB twin of the S3Store._sweep_sync fix). A
+                # transient error (ProvisionedThroughputExceeded
+                # throttle, a network blip) on one expired item must not
+                # abort the whole sweep pass and leave every later
+                # expired item un-swept for the cycle; the failed item
+                # stays alive (DynamoDB's native TTL or the next
+                # TTLSweeper interval retries it, the BL-199 contract).
+                # The Scan above stays fail-loud. Catches Exception so
+                # BaseException still propagates (BL-165 / BL-223). The
+                # parent evict_to_capacity stays all-or-nothing via
+                # _batch_write-with-retry: a bounded operation that must
+                # meet a cap differs from unbounded periodic sweep.
+                try:
                     self._db.delete_item(TableName=self._table, Key={"pk": item["pk"]})
-                    removed += 1
+                except Exception:
+                    continue
+                removed += 1
             start = resp.get("LastEvaluatedKey")
             if not start:
                 break
