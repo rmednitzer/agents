@@ -326,9 +326,31 @@ class S3Store:
                     # idempotent so it needs no equivalent guard.
                     continue
                 exp = _safe_float(md.get(_EXPIRES_META))
-                if is_expired(time.time(), exp):
+                if not is_expired(time.time(), exp):
+                    continue
+                # BL-233: contain a per-object DELETE failure (the
+                # BL-227 fan-out-containment class on the sibling sweep
+                # path, answering the "should the parent sweep be
+                # best-effort for transient errors too?" question the
+                # BL-229 _head_metadata scope left open). A transient
+                # backend error (SlowDown / throttle, a network blip) on
+                # one expired object must not abort the whole pass and
+                # leave every later expired object in the listing
+                # un-swept for the cycle; the failed object stays alive
+                # and the next TTLSweeper interval retries it (the
+                # BL-199 resilience contract, extended one level down).
+                # The HEAD above stays fail-loud, so an un-inspectable
+                # object (real AccessDenied / NoSuchBucket) still
+                # surfaces; only the idempotent DELETE action is
+                # best-effort, exactly as evict_to_capacity already is.
+                # Catches Exception so BaseException (KeyboardInterrupt /
+                # SystemExit / asyncio.CancelledError) still propagates
+                # per the BL-165 / BL-223 invariant.
+                try:
                     self._s3.delete_object(Bucket=self._bucket, Key=item["Key"])
-                    removed += 1
+                except Exception:
+                    continue
+                removed += 1
             if not resp.get("IsTruncated"):
                 break
             token = resp.get("NextContinuationToken")
