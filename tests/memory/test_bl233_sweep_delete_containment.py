@@ -115,8 +115,19 @@ def _exists(client: object, key: str) -> bool:
     try:
         client.head_object(Bucket=_BUCKET, Key=key)  # type: ignore[attr-defined]
         return True
-    except ClientError:
-        return False
+    except ClientError as exc:
+        # Return False only for a genuine not-found; re-raise any other
+        # backend error (wrong bucket, AccessDenied, outage) so a real
+        # failure fails the test loudly instead of masquerading as
+        # "object absent" and letting `assert not _exists(...)` pass for
+        # the wrong reason. Mirrors the production fail-loud-on-inspection
+        # stance this suite exercises (`S3Store._head_metadata` /
+        # `_get_live`: only `404` / `NoSuchKey` is absent, the rest
+        # propagate).
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code in ("NoSuchKey", "404", "NotFound"):
+            return False
+        raise
 
 
 # ---- S3: BL-233 sweep containment ------------------------------------------
