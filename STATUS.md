@@ -1,7 +1,7 @@
 # Status
 
 Maturity of the repository and its documents. Updated when a phase
-opens or closes. Last reviewed: 2026-06-06 (ADR 0023 thirteenth code audit, `BL-233`).
+opens or closes. Last reviewed: 2026-06-09 (ADR 0024 compaction / summarisation / tiering, `BL-234` / `BL-235`).
 
 ## Maturity taxonomy
 
@@ -38,14 +38,15 @@ opens or closes. Last reviewed: 2026-06-06 (ADR 0023 thirteenth code audit, `BL-
 | Eleventh code audit (`BL-228`-`BL-229`) | Two additive findings closing the two open ADR 0020 revisit triggers: `RoutingChainDispatcher` per-link failure containment (the BL-222 / BL-223 / BL-227 fan-out class on the sequential cheap-first chain; a raising link falls through to the next, `BaseException` still propagates) and S3 metadata-scan HEAD not-found containment (`S3Store._head_metadata` treats a LIST-then-HEAD concurrently-deleted object as absent, mirroring `_get_live`, so `sweep_expired` / `evict_to_capacity` no longer crash on a 404; non-not-found `ClientError`s still propagate). DynamoDB `float(exp)` left unchanged with a documented rationale (`BL-230`; the `N` type is server-validated to a finite range). 16 new regression tests | stable | ADR 0021 |
 | Twelfth code audit (`BL-231`-`BL-232`) | Two additive findings extending the non-finite-numeric class (`NaN` / `+inf` subverts a numeric control: every ordered comparison with `NaN` is False, `+inf <= 0` is False) from the value / data boundaries (BL-159 / BL-205 / BL-221 / BL-226) to the numeric *configuration* boundaries, the peers of the `Namespace.retention_seconds` boundary BL-197 hardened. `BL-231` (no guard): `ActionBudget` and `RetryPolicy` reject `NaN` / `+inf` / `-inf` / negative limits at construction (the dual of BL-221, which hardened the *consumed* side of `consumed > limit` but left the *limit* side open, so a `NaN` limit silently disabled the ceiling). `BL-232` (a `<= 0` guard with a `NaN` hole): `MCPServerSpec.timeout_seconds` and `TTLSweeper.interval_seconds` gain a `math.isfinite` conjunct (a `NaN` sweep interval drove a no-delay busy-sweep). Additive, validated at load time (ADR 0007); `None` / `0` / finite-positive unaffected. 39 new regression tests | stable | ADR 0022 |
 | Thirteenth code audit (`BL-233`) | One additive finding extending the fan-out per-member failure containment class (BL-222 / BL-223 / BL-227 / BL-228) from `evict_to_capacity` to the sibling periodic-TTL-sweep path: `S3Store._sweep_sync` and `DynamoDBStore._sweep_sync` issued a per-item network DELETE (`delete_object` / `delete_item`) inside a Python loop with no containment, so one transient backend error (S3 `SlowDown`, DynamoDB `ProvisionedThroughputExceeded`, a network blip) aborted the whole sweep pass and stranded every later expired item. Now contained per item (`try/except Exception: continue`, counting only successes), mirroring `BoundedS3Store.evict_to_capacity._delete_all`; the inspection step (S3 HEAD, DynamoDB Scan) stays fail-loud so an un-inspectable object still surfaces, only the idempotent DELETE is best-effort, and `BaseException` still propagates. Closes the question ADR 0020 / 0021 / 0022 deferred from the BL-229 `_head_metadata` scope. 8 new regression tests | stable | ADR 0023 |
-| L3 open | Live-model workload, memory compaction / summarisation / tiering, true OTel spans, prompt caching, true preemption, non-replay resume | planned | `docs/backlog.md` (`BL-120`, `BL-135`, `BL-113`/`138`, `BL-132`/`171`, `BL-155`, `BL-114`) |
+| Compaction, summarisation, tiering (`BL-234`-`BL-235`) | The long-horizon context-engineering half of `BL-135`, closing the item. `memory.compaction`: the `Summarizer` Protocol (bytes-in/bytes-out, no vendor binding) + the deterministic `TruncatingSummarizer` reference + `MemoryCompactor`, a driver folding N source entries into one summary entry; atomic mode (default) requires `VersionedMemoryStore` + `TransactionalMemoryStore` at construction and commits summary-write-plus-source-deletes in one version-gated `transact` (a raced source fails the whole transaction, `None`, no partial application), `atomic=False` the documented best-effort opt-in for transaction-less backends; rolling compaction (target among the sources) supported. `memory.tiering.TieredMemoryStore`: a hot/cold composition behind the plain `MemoryStore` surface; CAS-guarded promotion on fall-through reads, hot-first writes with cold invalidation, cold-first deletes, version-gated `demote`, and `demote_to_capacity` ranked by first-write order with the BL-224/BL-225 legacy sentinel. No new store Protocol, no adapter changes. 59 new test cases | stable | ADR 0024 |
+| L3 open | Live-model workload, true OTel spans, prompt caching, true preemption, non-replay resume | planned | `docs/backlog.md` (`BL-120`, `BL-113`/`138`, `BL-132`/`171`, `BL-155`, `BL-114`) |
 
 ## Document maturity
 
 | Document | Maturity |
 | --- | --- |
 | `CLAUDE.md`, `README.md`, component `README.md` | stable |
-| `docs/adr/0001`-`0023` | stable (Accepted) |
+| `docs/adr/0001`-`0024` | stable (Accepted) |
 | `docs/releasing.md` | stable |
 | `docs/backlog.md` | living tracker |
 | `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE` section (in `CONTRIBUTING.md`) | stable |

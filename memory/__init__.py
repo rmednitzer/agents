@@ -19,6 +19,12 @@ from memory.acl import (
     RoleACL,
     wrap_acl,
 )
+from memory.compaction import (
+    CompactionResult,
+    MemoryCompactor,
+    Summarizer,
+    TruncatingSummarizer,
+)
 from memory.dynamodb import BoundedDynamoDBStore, DynamoDBStore
 from memory.encryption import (
     EncryptedStore,
@@ -52,6 +58,7 @@ from memory.store import (
     VersionedMemoryStore,
 )
 from memory.sweep import TTLSweeper
+from memory.tiering import TieredMemoryStore
 from memory.types import Namespace
 from memory.validators import (
     KEY_MAX_LENGTH,
@@ -74,6 +81,7 @@ __all__ = [
     "BoundedS3Store",
     "BoundedSweepableStore",
     "CASMemoryStore",
+    "CompactionResult",
     "ContentAddressableStore",
     "DynamoDBStore",
     "Embedder",
@@ -83,6 +91,7 @@ __all__ = [
     "InMemorySemanticStore",
     "InMemoryStore",
     "KeyProvider",
+    "MemoryCompactor",
     "MemoryError",
     "MemoryStore",
     "Namespace",
@@ -97,9 +106,12 @@ __all__ = [
     "SemanticHit",
     "SemanticMemoryStore",
     "StaticKeyProvider",
+    "Summarizer",
     "SweepableStore",
     "TTLSweeper",
+    "TieredMemoryStore",
     "TransactionalMemoryStore",
+    "TruncatingSummarizer",
     "TxnDelete",
     "TxnWrite",
     "VersionedKeyProvider",
