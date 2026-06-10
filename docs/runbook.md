@@ -74,7 +74,7 @@ Maintain a running checklist; an audit is just running it carefully and finding 
 | First-occurrence-vs-strictest | Composition keeps the first, not the strictest | `BL-166`, `BL-174` |
 | Fan-out per-member failure containment | A single failing fan-out member cancels siblings, breaks downstream telemetry / audit-vs-raise parity | `BL-222` (`MultiDispatcher` ensemble), `BL-223` (`MultiSink` audit fan-out), `BL-227` (`BoundedS3Store.evict_to_capacity` sequential DELETE), `BL-228` (`RoutingChainDispatcher` cheap-first chain), `BL-233` (`S3Store._sweep_sync` / `DynamoDBStore._sweep_sync` periodic-sweep per-item DELETE) |
 | Non-finite numeric at a trust / config boundary | A `NaN` / `+inf` clamps to the top of a ranking, slips a `<= 0` guard (both comparisons are False), or disables a `consumed > limit` ceiling | `BL-159` (cosine NaN-clamp), `BL-205` (`MultiDispatcher` weights), `BL-221` (`BudgetTracker` consume side), `BL-226` (S3 metadata parse), `BL-231` (`ActionBudget` / `RetryPolicy` limit side), `BL-232` (`MCPServerSpec` / `TTLSweeper` positivity guards) |
-| Open backlog item: classes still unresolved | The pending Tier 1/2 items each represent a class boundary | `BL-114` (replay vs deduplicated resume), `BL-132/171` (cache hit/miss), `BL-135` (compaction / summarisation / tiering; size-bound half fully delivered via `BL-212`-`BL-214` / `BL-224` / `BL-225` across every in-tree adapter), `BL-155` (preemption vs cooperation) |
+| Open backlog item: classes still unresolved | The pending Tier 1/2 items each represent a class boundary | `BL-114` (replay vs deduplicated resume), `BL-132/171` (cache hit/miss), `BL-155` (preemption vs cooperation) |
 
 ### 2.4 Fix discipline
 
@@ -134,13 +134,12 @@ Open `docs/backlog.md`, filter to `[pending]` / `[in-progress]`. The current ope
 | `BL-113` | Tier 2 | L | True OTel spans + trace-context propagation | The OTel logs SDK stabilising (the GA cut) |
 | `BL-138` | Tier 2 | M | OTel GenAI semantic conventions on `BL-113`'s spans | Same upstream as `BL-113`; depends on it |
 | `BL-114` | Tier 2 | L | Deeper PydanticAI resume via `DeferredToolRequests` / `message_history` | PydanticAI's pause/resume primitive stabilising |
-| `BL-135` | Tier 2 | L | Memory compaction / summarisation / tiering (size-bound half fully delivered across every in-tree adapter via `BL-212`-`BL-214` / `BL-224` / `BL-225`) | None (in-tree); pairs with `BL-131` (semantic memory) |
 | `BL-155` | Tier 2 | L | True wall-clock preemption for non-cooperative tools | A thread/process execution boundary (not the asyncio await pattern) |
 | `BL-179` | Tier 2 | M | `RetryPolicy` token / step accounting from intermediate attempts | Upstream PydanticAI partial-usage on the exception path |
 
 ### 4.2 Item-level workflow
 
-For an item with no upstream dependency (the "ready" set today: `BL-120`, `BL-135`):
+For an item with no upstream dependency (the "ready" set today: `BL-120`):
 
 1. Move `[pending]` to `[in-progress]` with the branch name. Push the change as a separate commit so an open backlog state is visible.
 2. Design the surface. Write the new Protocol or the new optional keyword before any implementation. Surface it in the module docstring; an L3 keyword is read once, supported forever.

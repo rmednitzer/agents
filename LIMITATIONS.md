@@ -3,7 +3,8 @@
 Explicit scope boundaries and known gaps. Each limit states the current
 state, the implication, and the tracking item. This is pre-1.0
 infrastructure; the list is expected to shrink as L3 lands. Last
-reviewed: 2026-06-06 (ADR 0023 thirteenth code audit, `BL-233`).
+reviewed: 2026-06-09 (ADR 0024 compaction / summarisation / tiering,
+`BL-234` / `BL-235`, closing `BL-135`).
 
 ## L1. Pre-1.0, no release lifecycle
 
@@ -66,7 +67,7 @@ pinned with the version recorded in a trailing comment (`BL-150`
 resolved, 2026-05-25). Remaining: no signed publish-to-index.
 Implication: not yet SLSA Build L2. Tracking: `BL-151`.
 
-## L5. Semantic memory is in-tree; compaction/tiering is not
+## L5. Memory context engineering ships deterministic baselines; durable vectors, LRU, and model-quality summarisation stay out of tree
 
 State: the `SemanticMemoryStore` extension Protocol and
 `InMemorySemanticStore` reference ship (`BL-131`, ADR 0011): vector
@@ -98,14 +99,28 @@ reorder writes per the existing S3 eventual-consistency contract).
 The `BoundedSweepableStore` extension Protocol plus
 `TTLSweeper(max_keys=...)` enforces a keyspace cap beyond age-only
 expiry, so a write-rate-driven workload no longer grows unbounded on
-any of the five in-tree backends. There is still no summarisation or
-tiering, the durable adapters do not implement `SemanticMemoryStore`,
-and an LRU policy (versus the shipped insertion-order FIFO) is not
-in-tree. Implication: in-tree just-in-time retrieval and size-bounded
-reclamation work for a single process across every in-tree adapter;
-long-horizon compaction, summarisation, and a durable vector backend
-are open. Tracking: `BL-135` (compaction / summarisation / tiering),
-`BL-131` notes the embedder scope.
+any of the five in-tree backends. The long-horizon
+context-engineering half landed as `BL-234` / `BL-235` (ADR 0024):
+`MemoryCompactor` condenses N entries into one summary (version-gated
+atomic on the `TransactionalMemoryStore` backends, explicit
+best-effort opt-in elsewhere) through the `Summarizer` Protocol with
+the deterministic `TruncatingSummarizer` reference, and
+`TieredMemoryStore` composes a hot and a cold store behind the plain
+`MemoryStore` surface with promotion, invalidation, and
+capacity-ranked demotion. What remains out of tree, deliberately: the
+durable adapters do not implement `SemanticMemoryStore` (no durable
+vector backend), demotion/eviction ranking is insertion-order FIFO,
+not LRU (read tracking is not in the store contract), and both the
+shipped embedder and the shipped summarizer are deterministic
+baselines, not models (a model-quality `Embedder` or `Summarizer`
+satisfies the same Protocol, the workload's choice by the ADR 0001
+stance). Implication: in-tree just-in-time retrieval, size-bounded
+reclamation, compaction, and tiering work across the in-tree
+adapters; semantic quality and a durable vector backend are the
+workload's integration. Tracking: `BL-131` notes the embedder scope,
+`BL-234` the summarizer scope; a durable semantic adapter and LRU
+have no tracking item until a workload needs them (ADR 0024 revisit
+triggers).
 
 ## L6. The behavioural gate is deterministic-only
 

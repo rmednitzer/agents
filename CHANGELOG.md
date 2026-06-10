@@ -3,6 +3,78 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Compaction, summarisation, tiering (ADR 0024, BL-234 / BL-235, 2026-06-09)
+
+The long-horizon context-engineering half of `BL-135` (S2), closing
+the item: every prior reclamation mechanism (lazy expiry, the active
+sweeper, the size-bound capacity pass) reclaims space by dropping
+entries; this wave adds condensing and tiering. Both deliverables are
+drivers/compositions over the existing store Protocols (the
+`TTLSweeper` / BL-131 precedents): no new store Protocol, no adapter
+changes, additive only (ADR 0007). ADR 0024 is the cross-cutting why.
+
+### Added
+
+- `memory.compaction` (`BL-234`): the `Summarizer` Protocol
+  (bytes-in/bytes-out, memory-local so the framework binds no vendor,
+  ADR 0001); `TruncatingSummarizer`, the deterministic head-plus-tail
+  byte-budget reference (exact `max_bytes` output on over-budget
+  input, load-time `ValueError` when the marker leaves no content
+  budget); `MemoryCompactor`, a driver folding N source entries into
+  one summary entry. Atomic mode (default) requires
+  `VersionedMemoryStore` + `TransactionalMemoryStore` at construction
+  (load-time `TypeError`) and commits the summary write plus all
+  source deletes in one version-gated `transact`: a concurrent
+  rewrite/expiry/delete of any source fails the whole transaction and
+  `compact` returns `None` (no lost update, no partial application).
+  `atomic=False` is the explicit opt-in for transaction-less backends
+  (S3): write-summary-then-delete-sources, crash-safe to re-compact,
+  with the documented single-writer lost-update window. Rolling
+  compaction (target among the sources) is supported. Returns a frozen
+  `CompactionResult` (source keys, bytes before/after, the summary's
+  version token in atomic mode).
+- `memory.tiering.TieredMemoryStore` (`BL-235`): a hot/cold two-tier
+  composition behind the plain `MemoryStore` surface, namespace
+  `name`/`workload` agreement checked at construction
+  (`retention_seconds` may differ per tier). Reads fall through hot to
+  cold and promote (CAS-guarded when the hot tier implements
+  `CASMemoryStore`, so a raced hot write is never clobbered); writes
+  land hot-first then invalidate cold (opt-out per write); deletes go
+  cold-first so a fall-through read can never resurrect deleted data;
+  `demote(keys)` is version-gated on a `VersionedMemoryStore` hot tier
+  (a raced rewrite stays hot, not counted); `demote_to_capacity` ranks
+  by the wrapper's first-write sequence with the BL-224/BL-225 legacy
+  sentinel (unknown keys oldest, ties lexicographic), demoting
+  overflow to cold instead of dropping it. Inner-tier extension
+  Protocols are deliberately not forwarded (ADR 0004 "don't fake it").
+- Exports: `Summarizer`, `TruncatingSummarizer`, `MemoryCompactor`,
+  `CompactionResult`, `TieredMemoryStore` from `memory`.
+
+### Changed
+
+- `LIMITATIONS.md` L5 narrows: compaction/summarisation/tiering are
+  now in-tree; the remaining gaps (durable `SemanticMemoryStore`
+  adapter, LRU ranking, model-quality summarizer/embedder) are
+  deliberate out-of-tree extension points. `BL-135` is fully resolved
+  in `docs/backlog.md`.
+
+### Tests
+
+- 66 new test cases (`tests/memory/test_bl234_compaction.py`, 30;
+  `tests/memory/test_bl235_tiering.py`, 36): Protocol satisfaction,
+  truncation arithmetic (including the `joined[-0:]` zero-tail
+  guard), atomic commit/conflict/rolling/TTL/audit paths on
+  `InMemoryStore` and `SQLiteStore`, best-effort paths and their
+  construction-time rejections, promotion/CAS races, version-gated
+  demotion under a raced rewrite, capacity ranking with legacy and
+  promoted keys, per-tier TTL behaviour, and the review-hardening
+  boundaries: wrapper-level key validation, the failed-CAS promotion
+  not stamping, the cold-invalidation failure not stripping a landed
+  write's stamp, the lost demote race leaving no stale cold ghost
+  (rewrite and delete variants), the capacity prune keeping a
+  concurrent write's stamp, and the best-effort per-source
+  delete-failure containment.
+
 ## [Unreleased] Thirteenth code audit (ADR 0023, BL-233, 2026-06-06)
 
 The thirteenth in-depth code audit, by area, against the same green
