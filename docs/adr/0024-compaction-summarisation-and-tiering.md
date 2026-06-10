@@ -94,11 +94,20 @@ surfaces as the ADR 0014 contract-boundary `ValueError`).
 
 `atomic=False` is the explicit opt-in for backends without multi-key
 transactions (S3): plain reads, then write-summary-then-delete-sources.
-A crash in between leaves summary and sources both present
-(re-compacting is safe; data is never lost), but a concurrent writer
-can update a source after it was read and lose that update when the
-source is deleted; the mode is documented for the
-single-writer-per-key posture only (the `BL-224`/`BL-225` stance).
+A failing source delete is contained per key (the delete is idempotent
+and best-effort, the `BL-233` sweep convention), so one transient blip
+neither strands the remaining deletes nor surfaces as an exception
+that a caller would answer with a lossy blind retry. A crash between
+the write and the deletes leaves summary and surviving sources both
+present; re-compacting that state is lossless only for rolling
+compaction (the previous summary folds back in, at worst duplicating
+a survivor's content), while a non-rolling re-compact rebuilds the
+summary from the survivors alone, so the documented guidance is
+rolling compaction or atomic mode when sources are not reproducible.
+A concurrent writer can update a source after it was read and lose
+that update when the source is deleted; the mode is documented for
+the single-writer-per-key posture only (the `BL-224`/`BL-225`
+stance).
 
 Rolling compaction is supported: `target_key` may itself appear in
 `keys`, so the previous summary folds together with the new entries
@@ -122,6 +131,10 @@ namespace `name`/`workload` mismatch with a `ValueError` (ADR 0007);
 `retention_seconds` may differ per tier, short-lived hot plus
 long-lived cold being the point of tiering.
 
+The wrapper validates keys on its own L1 surface (the `ACLStore`
+decorator precedent), so the key contract does not depend on the inner
+tier implementations.
+
 Consistency posture, each choice with its failure-mode rationale:
 
 - `read` falls through hot to cold and, by default, promotes the cold
@@ -144,19 +157,30 @@ Consistency posture, each choice with its failure-mode rationale:
 - `demote(keys)` copies each live hot value to cold, then deletes the
   hot copy, version-gated when the hot tier implements
   `VersionedMemoryStore` (`delete_versioned` with the read token): a
-  key rewritten between read and delete stays hot, is not counted, and
-  the newer hot value shadows the stale cold copy until the next
-  demotion or invalidation.
+  key rewritten or deleted between read and delete stays as-is and is
+  not counted, and the just-written cold copy is removed again so the
+  lost race leaves no stale cold entry behind (a ghost would resurface
+  after the hot copy expires, or resurrect a concurrently deleted
+  key).
 - `demote_to_capacity(max_hot_keys)` is the `evict_to_capacity` shape
   (BL-212) with demotion instead of loss. Ranking is the wrapper's own
   first-write sequence (an overwrite keeps its original slot, the
   BL-212 insertion-order semantics; LRU stays out of tree,
   `LIMITATIONS.md` L5); keys the wrapper never wrote carry the
   `BL-224`/`BL-225` legacy sentinel 0, oldest-first, ties broken
-  lexicographically. Promotion stamps the key so a just-promoted entry
-  is not immediately demoted as legacy-oldest. The stamp map is pruned
-  against the live hot keyspace on every capacity pass, so it stays
-  bounded.
+  lexicographically. A successful promotion stamps the key so a
+  just-promoted entry is not immediately demoted as legacy-oldest (a
+  promotion that lost its CAS race did not insert anything and does
+  not stamp); a write stamps before the cold invalidation round trip,
+  so a failing invalidation cannot strip a landed hot write's slot.
+  The stamp map is pruned against the live hot keyspace on every
+  capacity pass, so it stays bounded; the prune snapshots the stamped
+  keys before the listing await, so a write landing during the listing
+  keeps its stamp. The map is process-local: after a restart every
+  pre-existing hot key reverts to the sentinel until rewritten. Under
+  contention a version-gated demotion can move fewer keys than the
+  overflow, so a capacity pass may return with the hot tier still
+  above the cap; the periodic caller re-converges on the next pass.
 
 Extension Protocols of the inner tiers are deliberately not forwarded:
 a batch read or a transaction spanning two tiers has no single-store
@@ -202,8 +226,8 @@ hold the inner store directly.
   DynamoDB, `TransactWriteItems` is billed at roughly double a plain
   write and capped at 100 items; a workload compacting more than 99
   sources per call batches its calls or accepts best-effort mode.
-- Tests: 59 new test cases (`tests/memory/test_bl234_compaction.py`,
-  29; `tests/memory/test_bl235_tiering.py`, 30) covering Protocol
+- Tests: 65 new test cases (`tests/memory/test_bl234_compaction.py`,
+  30; `tests/memory/test_bl235_tiering.py`, 35) covering Protocol
   satisfaction, truncation arithmetic (including the `joined[-0:]`
   zero-tail guard), atomic commit/conflict/rolling/TTL/audit paths on
   `InMemoryStore` and `SQLiteStore`, best-effort paths, promotion/CAS

@@ -60,14 +60,20 @@ changes, additive only (ADR 0007). ADR 0024 is the cross-cutting why.
 
 ### Tests
 
-- 59 new test cases (`tests/memory/test_bl234_compaction.py`, 29;
-  `tests/memory/test_bl235_tiering.py`, 30): Protocol satisfaction,
+- 65 new test cases (`tests/memory/test_bl234_compaction.py`, 30;
+  `tests/memory/test_bl235_tiering.py`, 35): Protocol satisfaction,
   truncation arithmetic (including the `joined[-0:]` zero-tail
   guard), atomic commit/conflict/rolling/TTL/audit paths on
   `InMemoryStore` and `SQLiteStore`, best-effort paths and their
   construction-time rejections, promotion/CAS races, version-gated
   demotion under a raced rewrite, capacity ranking with legacy and
-  promoted keys, and per-tier TTL behaviour.
+  promoted keys, per-tier TTL behaviour, and the review-hardening
+  boundaries: wrapper-level key validation, the failed-CAS promotion
+  not stamping, the cold-invalidation failure not stripping a landed
+  write's stamp, the lost demote race leaving no stale cold ghost
+  (rewrite and delete variants), the capacity prune keeping a
+  concurrent write's stamp, and the best-effort per-source
+  delete-failure containment.
 
 ## [Unreleased] Thirteenth code audit (ADR 0023, BL-233, 2026-06-06)
 

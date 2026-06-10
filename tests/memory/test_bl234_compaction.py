@@ -152,9 +152,12 @@ async def test_truncating_empty_values_yield_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_truncating_is_deterministic() -> None:
-    s = TruncatingSummarizer(10, separator=b",")
+    # Cross-instance: two independently constructed summarizers must
+    # agree, not just one pure instance with itself.
     values = [b"alpha", b"beta", b"gamma"]
-    assert await s.summarize(values) == await s.summarize(values)
+    first = await TruncatingSummarizer(10, separator=b",").summarize(values)
+    second = await TruncatingSummarizer(10, separator=b",").summarize(values)
+    assert first == second
 
 
 @pytest.mark.parametrize("bad", [5, 4, 0, -1])
@@ -272,6 +275,10 @@ async def test_compact_empty_keys_raises() -> None:
     c = MemoryCompactor(_store(), TruncatingSummarizer(1024))
     with pytest.raises(ValueError, match="non-empty"):
         await c.compact([], target_key="t")
+    # The emptiness check precedes key validation: an empty input
+    # raises the documented ValueError even with an invalid target.
+    with pytest.raises(ValueError, match="non-empty"):
+        await c.compact([], target_key="bad target")
 
 
 @pytest.mark.asyncio
@@ -355,6 +362,39 @@ async def test_best_effort_rolling_keeps_target() -> None:
     assert result is not None
     assert await s.read("t") == b"old|new"
     assert await s.list_keys() == ["t"]
+
+
+class _FlakyDeleteStore(_CoreOnlyStore):
+    """Core-only double whose delete raises once for selected keys."""
+
+    def __init__(self, fail_once: set[str]) -> None:
+        super().__init__()
+        self._fail_once = fail_once
+
+    async def delete(self, key: str) -> None:
+        if key in self._fail_once:
+            self._fail_once.discard(key)
+            raise RuntimeError("transient delete failure")
+        await super().delete(key)
+
+
+@pytest.mark.asyncio
+async def test_best_effort_contains_source_delete_failure() -> None:
+    # BL-233 convention: one failing source delete neither aborts the
+    # remaining deletes nor surfaces as an exception (a blind retry
+    # would rebuild the summary without the already-deleted sources).
+    s = _FlakyDeleteStore({"b"})
+    await s.write("a", b"1")
+    await s.write("b", b"2")
+    await s.write("c", b"3")
+    c = MemoryCompactor(s, TruncatingSummarizer(1024, separator=b"|"), atomic=False)
+    result = await c.compact(["a", "b", "c"], target_key="t")
+    assert result is not None
+    assert result.source_keys == ("a", "b", "c")
+    assert await s.read("t") == b"1|2|3"
+    assert await s.read("a") is None
+    assert await s.read("b") == b"2"  # the survivor; folded again next pass
+    assert await s.read("c") is None
 
 
 @pytest.mark.asyncio

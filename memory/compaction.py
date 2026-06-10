@@ -35,10 +35,19 @@ sources per compact call there (the summary write is the 100th item).
 
 ``atomic=False`` is the explicit opt-in for backends without multi-key
 transactions (S3): plain reads, then write-summary-then-delete-sources.
-A crash between the write and the deletes leaves summary and sources
-both present (re-compacting is safe; data is never lost), but a
-concurrent writer can update a source after it was read and lose that
-update when the source is deleted. Use it only under the
+A failing source delete is contained per key (the delete is idempotent
+and best-effort, the BL-233 sweep convention) so one transient blip
+neither strands the remaining deletes nor surfaces as an exception a
+caller would answer with a lossy blind retry. A crash between the
+write and the deletes leaves summary and surviving sources both
+present; re-compacting is lossless only for *rolling* compaction
+(``target_key`` in ``keys``: the previous summary is folded back in,
+at worst duplicating a survivor's content). For a non-rolling target a
+re-compact rebuilds the summary from the survivors alone, dropping the
+already-deleted sources' content, so prefer rolling compaction or
+atomic mode when the sources are not reproducible. A concurrent writer
+can update a source after it was read and lose that update when the
+source is deleted: use best-effort mode only under the
 single-writer-per-key posture the demotion paths (BL-224/BL-225)
 document.
 """
@@ -122,7 +131,7 @@ class TruncatingSummarizer:
         # Guard the tail slice: ``joined[-0:]`` is the whole value, so
         # a one-byte budget (head 1, tail 0) must yield b"" here.
         tail = joined[-tail_len:] if tail_len > 0 else b""
-        return joined[:head_len] + self._marker + tail
+        return b"".join((joined[:head_len], self._marker, tail))
 
 
 @dataclass(frozen=True)
@@ -213,10 +222,13 @@ class MemoryCompactor:
         to the summary entry (``None`` falls back to the namespace
         default, like ``write``).
         """
-        validate_key(target_key)
         ordered = list(dict.fromkeys(keys))
+        # The emptiness check precedes key validation so an empty input
+        # always raises the documented ValueError, never a
+        # NamespaceViolation about the (irrelevant) target key.
         if not ordered:
             raise ValueError("keys must be non-empty")
+        validate_key(target_key)
         for key in ordered:
             validate_key(key)
         if self._atomic:
@@ -244,11 +256,11 @@ class MemoryCompactor:
             live.append((key, value, token))
             if key == target_key:
                 target_version = token
+        if not live:
+            return None
         if target_key not in ordered:
             target_hit = await versioned.read_versioned(target_key)
             target_version = None if target_hit is None else target_hit[1]
-        if not live:
-            return None
         summary = await self._summarizer.summarize([value for _, value, _ in live])
         committed = await transactional.transact(
             writes={
@@ -290,11 +302,21 @@ class MemoryCompactor:
             return None
         summary = await self._summarizer.summarize([value for _, value in live])
         # Write the summary before deleting sources: a crash in between
-        # leaves both present (safe to re-compact), never neither.
+        # leaves both present, never neither (lossless to re-compact
+        # only when rolling; see the module docstring).
         await self._store.write(target_key, summary, ttl_seconds=ttl_seconds)
         for key, _ in live:
             if key != target_key:
-                await self._store.delete(key)
+                try:
+                    await self._store.delete(key)
+                except Exception:
+                    # Contain per key (the BL-233 sweep convention):
+                    # the delete is idempotent and best-effort, and a
+                    # raised exception would invite a blind retry that
+                    # rebuilds the summary without the sources already
+                    # deleted. The survivor is folded again on the
+                    # next rolling pass.
+                    continue
         return CompactionResult(
             target_key=target_key,
             source_keys=tuple(key for key, _ in live),

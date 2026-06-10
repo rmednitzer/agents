@@ -21,7 +21,12 @@ Tests cover:
 - demote_to_capacity: first-write wrapper order (overwrite keeps the
   slot, BL-212 semantics), unknown keys first with lexicographic ties
   (the BL-224/BL-225 sentinel-0 contract), promotion stamping recency,
-  no-op at or under the cap, non-positive cap rejected.
+  no-op at or under the cap, non-positive cap rejected;
+- review hardening: the wrapper validates keys on its own L1 surface,
+  a failed CAS promotion does not stamp, a failing cold invalidation
+  does not strip the stamp of a landed hot write, a lost demote race
+  (rewrite or delete) leaves no stale cold ghost, and the capacity
+  prune keeps the stamp of a write landing during the listing await.
 """
 
 from __future__ import annotations
@@ -244,6 +249,37 @@ async def test_write_invalidation_opt_out_keeps_shadowed_cold_copy() -> None:
     assert await t.read("k") == b"new"
 
 
+class _FailingDeleteStore(_HookedStore):
+    """Cold tier double whose delete raises for selected keys."""
+
+    def __init__(self, inner: InMemoryStore, fail_keys: set[str]) -> None:
+        super().__init__(inner)
+        self.fail_keys = fail_keys
+
+    async def delete(self, key: str) -> None:
+        if key in self.fail_keys:
+            raise RuntimeError("transient cold delete failure")
+        await super().delete(key)
+
+
+@pytest.mark.asyncio
+async def test_write_stamps_before_cold_invalidation_failure() -> None:
+    # The hot write landed, so a failing cold invalidation must not
+    # strip the key's write-order slot: an unstamped live key would
+    # rank legacy-oldest and be the next demote_to_capacity victim.
+    hot = InMemoryStore(_ns())
+    cold = _FailingDeleteStore(InMemoryStore(_ns()), {"k"})
+    t = TieredMemoryStore(hot, cold)
+    with pytest.raises(RuntimeError, match="cold delete"):
+        await t.write("k", b"v")
+    assert await hot.read("k") == b"v"  # the hot write stuck
+    await hot.write("z", b"v")  # direct hot write: legacy sentinel
+    cold.fail_keys.clear()
+    # The sentinel key demotes first; the stamped "k" stays hot.
+    assert await t.demote_to_capacity(1) == 1
+    assert await hot.list_keys() == ["k"]
+
+
 # ---- delete -----------------------------------------------------------------
 
 
@@ -330,10 +366,32 @@ async def test_demote_concurrent_hot_rewrite_keeps_key_hot() -> None:
 
     cold.before_write = racing_hot_rewrite
     # The version-gated hot delete loses to the rewrite: not counted,
-    # the newer hot value survives and shadows the stale cold copy.
+    # the newer hot value survives, and the just-written stale cold
+    # copy is removed again (no ghost to resurface after hot expiry).
     assert await t.demote(["k"]) == 0
     assert await hot.read("k") == b"v2"
+    assert await cold.read("k") is None
     assert await t.read("k") == b"v2"
+
+
+@pytest.mark.asyncio
+async def test_demote_concurrent_delete_leaves_no_cold_ghost() -> None:
+    hot = InMemoryStore(_ns())
+    cold = _HookedStore(InMemoryStore(_ns()))
+    t = TieredMemoryStore(hot, cold)
+    await t.write("k", b"v")
+
+    async def racing_delete() -> None:
+        await hot.delete("k")
+
+    cold.before_write = racing_delete
+    # The hot copy is deleted between the versioned read and the
+    # version-gated delete: the lost race must also remove the cold
+    # copy demote just wrote, or the deleted key would resurrect on
+    # the next fall-through read.
+    assert await t.demote(["k"]) == 0
+    assert await cold.read("k") is None
+    assert await t.read("k") is None
 
 
 @pytest.mark.asyncio
@@ -404,6 +462,63 @@ async def test_capacity_promotion_stamps_recency() -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_cas_promotion_does_not_stamp() -> None:
+    # A promotion that lost its CAS race did not insert anything: the
+    # slot is owned by a direct hot write the wrapper never made, so
+    # the key must keep the legacy sentinel and demote first.
+    hot = InMemoryStore(_ns())
+    cold = _HookedStore(InMemoryStore(_ns()))
+    t = TieredMemoryStore(hot, cold)
+    await cold.write("k", b"cold-old")
+
+    async def racing_hot_write() -> None:
+        await hot.write("k", b"hot-new")
+
+    cold.before_read = racing_hot_write
+    assert await t.read("k") == b"cold-old"  # CAS promotion lost
+    await t.write("w", b"v")  # wrapper-stamped, newer
+    assert await t.demote_to_capacity(1) == 1
+    assert await hot.list_keys() == ["w"]
+    assert await cold.read("k") == b"hot-new"  # demoted hot value
+
+
+class _ListHookedHotStore(_CoreOnlyStore):
+    """Hot tier double firing a one-shot hook after list_keys snapshots."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.after_list: Callable[[], Awaitable[None]] | None = None
+
+    async def list_keys(self, prefix: str = "") -> list[str]:
+        keys = await super().list_keys(prefix)
+        hook, self.after_list = self.after_list, None
+        if hook is not None:
+            await hook()
+        return keys
+
+
+@pytest.mark.asyncio
+async def test_capacity_prune_keeps_stamp_of_concurrent_write() -> None:
+    # A write landing while demote_to_capacity awaits list_keys stamps
+    # a key the listing snapshot does not include; the prune must not
+    # drop that stamp (the key would rank legacy-oldest on the next
+    # pass despite being the newest write).
+    hot = _ListHookedHotStore()
+    cold = InMemoryStore(_ns())
+    t = TieredMemoryStore(hot, cold)
+    for key in ("k1", "k2", "k3"):
+        await t.write(key, b"v")
+
+    async def concurrent_write() -> None:
+        await t.write("zz", b"v")
+
+    hot.after_list = concurrent_write
+    assert await t.demote_to_capacity(4) == 0  # under cap; prune runs
+    assert await t.demote_to_capacity(3) == 1
+    assert await hot.list_keys() == ["k2", "k3", "zz"]  # k1 demoted, not zz
+
+
+@pytest.mark.asyncio
 async def test_capacity_noop_at_or_under_cap() -> None:
     t, hot, _ = _tiered()
     await t.write("a", b"v")
@@ -419,3 +534,22 @@ async def test_capacity_rejects_non_positive_cap(bad: int) -> None:
     t, _, _ = _tiered()
     with pytest.raises(ValueError, match="positive"):
         await t.demote_to_capacity(bad)
+
+
+# ---- key validation on the L1 surface ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_l1_surface_validates_keys() -> None:
+    # The wrapper enforces the MemoryStore key contract itself (the
+    # ACLStore decorator precedent), so validation does not depend on
+    # the inner tier implementations.
+    t, hot, cold = _tiered()
+    with pytest.raises(NamespaceViolation):
+        await t.read("bad key")
+    with pytest.raises(NamespaceViolation):
+        await t.write("bad key", b"v")
+    with pytest.raises(NamespaceViolation):
+        await t.delete("bad key")
+    assert await hot.list_keys() == []
+    assert await cold.list_keys() == []
