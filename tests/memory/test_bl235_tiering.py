@@ -395,6 +395,29 @@ async def test_demote_concurrent_delete_leaves_no_cold_ghost() -> None:
 
 
 @pytest.mark.asyncio
+async def test_demote_failed_undo_does_not_strand_remaining_keys() -> None:
+    # The lost-race cold undo is contained per key (the BL-233
+    # idempotent-DELETE convention): a transient failure of the undo
+    # must not abort the demotion of the keys after it.
+    hot = InMemoryStore(_ns())
+    cold = _FailingDeleteStore(InMemoryStore(_ns()), {"a"})
+    t = TieredMemoryStore(hot, cold, invalidate_cold_on_write=False)
+    await t.write("a", b"v1")
+    await t.write("b", b"v2")
+
+    async def racing_rewrite() -> None:
+        await hot.write("a", b"v1-newer")
+
+    cold.before_write = racing_rewrite
+    # "a" loses its versioned race and its cold undo raises; "b" is
+    # still demoted.
+    assert await t.demote(["a", "b"]) == 1
+    assert await hot.read("a") == b"v1-newer"  # stayed hot
+    assert await hot.read("b") is None
+    assert await cold.read("b") == b"v2"
+
+
+@pytest.mark.asyncio
 async def test_demote_plain_path_on_non_versioned_hot_tier() -> None:
     hot = _CoreOnlyStore()
     cold = InMemoryStore(_ns())

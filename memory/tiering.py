@@ -236,8 +236,16 @@ class TieredMemoryStore:
                     # Lost the race: the hot copy was rewritten (the
                     # newer value must not be shadowed by our stale
                     # cold write after it expires) or deleted (a cold
-                    # ghost would resurrect it). Undo the cold copy.
-                    await self._cold.delete(key)
+                    # ghost would resurrect it). Undo the cold copy,
+                    # contained per key (the BL-233 idempotent-DELETE
+                    # convention) so a transient failure of the undo
+                    # does not strand the remaining keys; the leftover
+                    # copy is overwritten or removed by the key's next
+                    # demotion, invalidation, or delete.
+                    try:
+                        await self._cold.delete(key)
+                    except Exception:
+                        continue
         else:
             # CAS-less hot tier: read-copy-delete with the documented
             # lost-update window, acceptable only under the

@@ -226,8 +226,8 @@ hold the inner store directly.
   DynamoDB, `TransactWriteItems` is billed at roughly double a plain
   write and capped at 100 items; a workload compacting more than 99
   sources per call batches its calls or accepts best-effort mode.
-- Tests: 65 new test cases (`tests/memory/test_bl234_compaction.py`,
-  30; `tests/memory/test_bl235_tiering.py`, 35) covering Protocol
+- Tests: 66 new test cases (`tests/memory/test_bl234_compaction.py`,
+  30; `tests/memory/test_bl235_tiering.py`, 36) covering Protocol
   satisfaction, truncation arithmetic (including the `joined[-0:]`
   zero-tail guard), atomic commit/conflict/rolling/TTL/audit paths on
   `InMemoryStore` and `SQLiteStore`, best-effort paths, promotion/CAS

@@ -60,8 +60,8 @@ changes, additive only (ADR 0007). ADR 0024 is the cross-cutting why.
 
 ### Tests
 
-- 65 new test cases (`tests/memory/test_bl234_compaction.py`, 30;
-  `tests/memory/test_bl235_tiering.py`, 35): Protocol satisfaction,
+- 66 new test cases (`tests/memory/test_bl234_compaction.py`, 30;
+  `tests/memory/test_bl235_tiering.py`, 36): Protocol satisfaction,
   truncation arithmetic (including the `joined[-0:]` zero-tail
   guard), atomic commit/conflict/rolling/TTL/audit paths on
   `InMemoryStore` and `SQLiteStore`, best-effort paths and their
