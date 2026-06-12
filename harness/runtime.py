@@ -239,9 +239,11 @@ class _GuardState:
 def _usage(result: Any) -> Any:
     """Read PydanticAI run usage.
 
-    1.97 exposes ``usage`` as a property (the legacy ``usage()`` method
-    is deprecated); the locked version is 1.97.0, so access the property
-    directly and avoid the DeprecationWarning the call form emits.
+    ``usage`` has been a property since PydanticAI 1.97 (the legacy
+    ``usage()`` call form is deprecated and warns), so access the
+    property directly. Deliberately version-agnostic: Renovate moves
+    the locked version, and the property access is the stable form
+    across the supported range.
     """
     return result.usage
 
