@@ -24,9 +24,14 @@ hardening (`BL-226` / `BL-227`, against the just-merged
 (`BL-228` / `BL-229`, closing the two open ADR 0020 revisit
 triggers), the twelfth-code-audit hardening
 (`BL-231` / `BL-232`, non-finite numeric configuration
-validation), and the thirteenth-code-audit hardening
+validation), the thirteenth-code-audit hardening
 (`BL-233`, sweep per-item DELETE containment on the network
-adapters) on `main` (see
+adapters), the compaction / summarisation / tiering wave
+(ADR 0024, `BL-234` / `BL-235`, closing `BL-135`), and the
+fourteenth-audit process hardening (ADR 0025, `BL-236`-`BL-239`:
+stale pip-audit suppression removed, lockfile-freshness CI gate,
+unused `logfire` declaration dropped, comment-accuracy fixes) on
+`main` (see
 [docs/backlog.md](./docs/backlog.md),
 [ADR 0007](./docs/adr/0007-l2-implementation-wave.md),
 [ADR 0010](./docs/adr/0010-l3-default-path-wiring-and-audit-wave.md),
@@ -42,7 +47,9 @@ adapters) on `main` (see
 [ADR 0020](./docs/adr/0020-tenth-code-audit.md),
 [ADR 0021](./docs/adr/0021-eleventh-code-audit.md),
 [ADR 0022](./docs/adr/0022-twelfth-code-audit.md),
-[ADR 0023](./docs/adr/0023-thirteenth-code-audit.md)).
+[ADR 0023](./docs/adr/0023-thirteenth-code-audit.md),
+[ADR 0024](./docs/adr/0024-compaction-summarisation-and-tiering.md),
+[ADR 0025](./docs/adr/0025-fourteenth-audit-full-pass.md)).
 Every L2/L3 change is additive to the L1 Protocols: new optional
 parameters, new modules, and side-by-side Protocols; nothing in the L1
 surface was removed. The package imports and type-checks with no
@@ -92,8 +99,12 @@ See [CLAUDE.md](./CLAUDE.md) for repository structure and conventions.
   reference plus `SQLiteStore`, `RedisStore`, `S3Store`, `DynamoDBStore`
   adapters; extension Protocols for batch, cursor scan,
   content-addressing, CAS, MVCC version tokens
-  (`VersionedMemoryStore`), and similarity query
+  (`VersionedMemoryStore`), atomic multi-key transactions
+  (`TransactionalMemoryStore`), and similarity query
   (`SemanticMemoryStore` + `InMemorySemanticStore`); `TTLSweeper`;
+  `MemoryCompactor` with the `Summarizer` Protocol and
+  `TruncatingSummarizer` reference (version-gated compaction) and
+  `TieredMemoryStore` (hot/cold tiering, CAS-guarded promotion);
   transparent `EncryptedStore` (AES-256-GCM) with static / env / file
   / rotating (`VersionedKeyProvider`) key providers, and `ACLStore`
   with role and attribute-based (`AttributeACL`) policies and an

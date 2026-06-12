@@ -23,7 +23,6 @@ name = "agents"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
-    { name = "logfire" },
     { name = "pydantic" },
     { name = "pydantic-ai" },
     { name = "pyyaml" },
@@ -76,7 +75,6 @@ requires-dist = [
     { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=48.0.0" },
     { name = "cryptography", marker = "extra == 'dev'", specifier = ">=48.0.0" },
     { name = "fakeredis", marker = "extra == 'dev'", specifier = ">=2.36.0" },
-    { name = "logfire", specifier = ">=4.34.0" },
     { name = "moto", extras = ["s3", "dynamodb"], marker = "extra == 'dev'", specifier = ">=5.2.1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.1.0" },
     { name = "openai", marker = "extra == 'dev'", specifier = ">=2.39.0" },

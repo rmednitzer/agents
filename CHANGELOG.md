@@ -3,6 +3,59 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Fourteenth audit: full-pass engagement, process hardening (ADR 0025, BL-236 / BL-237 / BL-238 / BL-239, 2026-06-12)
+
+A fourteenth audit run under an external full-pass engagement
+protocol (inventory, validation baseline, security audit, quality
+audit, gated remediation, documentation, ADR, backlog, report), with
+the phase evidence under `audit/00-inventory.md` through
+`audit/03-final-report.md`. No runtime code finding: the recurring
+fault classes were re-walked and hold, and the ADR 0024 modules
+(`memory/compaction.py`, `memory/tiering.py`) received their first
+audit coverage clean. The findings sit in the gates and declarations
+around the code. ADR 0025 is the cross-cutting why.
+
+### Changed
+
+- `ci.yml` `dependency-audit`: the stale `--ignore-vuln
+  PYSEC-2025-183` suppression removed (`BL-236`): the locked pyjwt is
+  2.13.0 and the unsuppressed `pip-audit --strict` run is clean, so
+  the suppression's own revisit trigger had fired; a kept ignore
+  could only mask a future advisory republished under the same ID.
+  The two quoted commands in `docs/runbook.md` are synced.
+
+### Added
+
+- `ci.yml` `dependency-audit`: `uv lock --check` as the first step
+  (`BL-237`), failing the PR when `uv.lock` is stale relative to
+  `pyproject.toml` (the drift class that occurred on 2026-05-25 and
+  was hand-remediated on 2026-05-27; that engagement's recommendation
+  is now landed). Verified exit 0 on the current tree and exit 1 on a
+  deliberately drifted `pyproject.toml`.
+- `audit/` phase evidence for this pass and a root `BACKLOG.md`
+  deferred-items register (canonical tracker stays
+  `docs/backlog.md`).
+
+### Removed
+
+- The unused direct `logfire>=4.34.0` declaration from `[project]
+  dependencies` (`BL-238`). Zero references in source, tests, or
+  docs; the resolved graph is unchanged (logfire remains a transitive
+  of `pydantic-ai` via `pydantic-ai-slim[...,logfire,...]`), so this
+  is declaration hygiene, not an install-surface change. Full gate
+  re-run baseline-identical (1170 passed, 95.25 % coverage).
+
+### Fixed
+
+- Documentation accuracy (`BL-239`, docstring-only): the
+  `TieredMemoryStore` stamp-map growth caveat (pruned only during
+  `demote_to_capacity`) and the `memory/_expiry.py` wording that
+  still described the BL-197 TTL boundary validation as pending.
+- Post-ADR-0024 drift (findings register D-7): `README.md` status
+  paragraph and memory capability bullet, `docs/README.md` ADR
+  enumeration (ended at ADR 0022), `docs/runbook.md` next-audit-slot
+  markers and section 8 per-document rows.
+
 ## [Unreleased] Compaction, summarisation, tiering (ADR 0024, BL-234 / BL-235, 2026-06-09)
 
 The long-horizon context-engineering half of `BL-135` (S2), closing

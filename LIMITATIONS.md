@@ -3,8 +3,9 @@
 Explicit scope boundaries and known gaps. Each limit states the current
 state, the implication, and the tracking item. This is pre-1.0
 infrastructure; the list is expected to shrink as L3 lands. Last
-reviewed: 2026-06-09 (ADR 0024 compaction / summarisation / tiering,
-`BL-234` / `BL-235`, closing `BL-135`).
+reviewed: 2026-06-12 (ADR 0025 fourteenth audit, `BL-236`-`BL-239`;
+no L-entry changed: the pass found no new contract-level gap and
+closed none).
 
 ## L1. Pre-1.0, no release lifecycle
 
