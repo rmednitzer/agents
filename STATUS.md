@@ -1,7 +1,7 @@
 # Status
 
 Maturity of the repository and its documents. Updated when a phase
-opens or closes. Last reviewed: 2026-06-12 (ADR 0026 prompt caching, `BL-132` / `BL-171`, landed after the ADR 0025 fourteenth audit the same day).
+opens or closes. Last reviewed: 2026-06-12 (ADR 0027 deferred approval resume, `BL-114`; the same day as the ADR 0025 fourteenth audit and the ADR 0026 prompt-caching wave).
 
 ## Maturity taxonomy
 
@@ -41,14 +41,15 @@ opens or closes. Last reviewed: 2026-06-12 (ADR 0026 prompt caching, `BL-132` / 
 | Compaction, summarisation, tiering (`BL-234`-`BL-235`) | The long-horizon context-engineering half of `BL-135`, closing the item. `memory.compaction`: the `Summarizer` Protocol (bytes-in/bytes-out, no vendor binding) + the deterministic `TruncatingSummarizer` reference + `MemoryCompactor`, a driver folding N source entries into one summary entry; atomic mode (default) requires `VersionedMemoryStore` + `TransactionalMemoryStore` at construction and commits summary-write-plus-source-deletes in one version-gated `transact` (a raced source fails the whole transaction, `None`, no partial application), `atomic=False` the documented best-effort opt-in for transaction-less backends; rolling compaction (target among the sources) supported. `memory.tiering.TieredMemoryStore`: a hot/cold composition behind the plain `MemoryStore` surface; CAS-guarded promotion on fall-through reads, hot-first writes with cold invalidation, cold-first deletes, version-gated `demote` (a lost race removes the just-written cold copy again, no stale ghost), and `demote_to_capacity` ranked by first-write order with the BL-224/BL-225 legacy sentinel; the wrapper validates keys on its own L1 surface. No new store Protocol, no adapter changes. 66 new test cases | stable | ADR 0024 |
 | Fourteenth audit (`BL-236`-`BL-239`) | A full-pass engagement (inventory, baseline, security, quality, docs; evidence under `audit/`). No runtime code finding; the ADR 0024 modules received their first audit coverage clean. Process hardening: the stale `PYSEC-2025-183` pip-audit suppression removed (the unsuppressed audit is clean against the locked pyjwt 2.13.0), `uv lock --check` lockfile-freshness gate added to the `dependency-audit` job (closing the 2026-05-27 engagement recommendation), the unused direct `logfire` declaration dropped (resolved graph unchanged; logfire stays a transitive of `pydantic-ai`), and two comment-accuracy fixes (`TieredMemoryStore` stamp-map growth caveat, `_expiry` post-BL-197 wording). `BL-240` / `BL-241` proposed for maintainer decision | stable | ADR 0025 |
 | Prompt caching on the runtime adapter (`BL-132` / `BL-171`) | Unblocked by pydantic-ai 1.106 (verified in-session). `PydanticAIRuntime(model_settings=...)` pass-through (the opt-in surface for Anthropic cache breakpoints on the stable tools/system prefix; opaque to the harness, ADR 0001) plus cache hit/creation token surfacing via `BudgetTracker.consume_cache_tokens` (`cache_read_tokens` / `cache_write_tokens`; not charged to `max_tokens`, no new ceiling, pairs with `consume_cost`, BL-123; outside `snapshot()`). Deterministic coverage (16 tests); live cache-hit validation coupled to `BL-120` (`LIMITATIONS.md` L9 residual) | stable | ADR 0026 |
-| L3 open | Live-model workload (now also the BL-132/BL-171 live cache-hit gate), true OTel spans, true preemption, non-replay resume | planned | `docs/backlog.md` (`BL-120`, `BL-113`/`138`, `BL-155`, `BL-114`) |
+| Deferred approval resume (`BL-114`) | Unblocked by pydantic-ai 1.106 (verified in-session). Opt-in `PydanticAIRuntime(approval_mode="deferred")`: the pause rides `DeferredToolRequests`, the message history travels in the new optional `ResumableState.runtime_state`, and the resumed leg continues instead of replaying (prior tool calls run exactly once; the BL-193 (tool, arguments) binding re-verified at execution; denial model-visible via `ToolDenied`; paused-leg usage charged; `stream()` stays replay-gated). Replay remains the byte-identical default. 12 new tests; `LIMITATIONS.md` L10 rewritten | stable | ADR 0027 |
+| L3 open | Live-model workload (now also the BL-132/BL-171 live cache-hit gate), true OTel spans, true preemption | planned | `docs/backlog.md` (`BL-120`, `BL-113`/`138`, `BL-155`) |
 
 ## Document maturity
 
 | Document | Maturity |
 | --- | --- |
 | `CLAUDE.md`, `README.md`, component `README.md` | stable |
-| `docs/adr/0001`-`0026` | stable (Accepted) |
+| `docs/adr/0001`-`0027` | stable (Accepted) |
 | `docs/releasing.md` | stable |
 | `docs/backlog.md` | living tracker |
 | `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE` section (in `CONTRIBUTING.md`) | stable |

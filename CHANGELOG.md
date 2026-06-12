@@ -3,6 +3,43 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Deferred (non-replay) approval resume (ADR 0027, BL-114, 2026-06-12)
+
+The deepest known approval-flow limitation (`LIMITATIONS.md` L10),
+unblocked by pydantic-ai 1.106 (`DeferredToolRequests` /
+`DeferredToolResults` stable, verified in-session with an end-to-end
+spike). Additive only (ADR 0007); ADR 0027 is the cross-cutting why.
+
+### Added
+
+- `PydanticAIRuntime(approval_mode="replay"|"deferred")`, validated
+  at construction; replay (default) is byte-identical L1/L2
+  behaviour. In deferred mode the leg ends with the collected
+  approvals, the serialized message history travels in the new
+  optional `ResumableState.runtime_state` (JSON-able, default
+  `None`), and the resumed leg continues from it: prior tool calls
+  run exactly once and only the continuation is charged. Approvals
+  bind by the run's own tool_call_ids and are re-verified at
+  execution by the full (tool, arguments) tuple (BL-193); a
+  mismatched, consumed, or tampered approval re-pauses instead of
+  executing. MCP tools share the same deferred gate.
+- Deliberate, documented divergences when opting in: denial becomes
+  a model-visible `ToolDenied` error (the run continues; no terminal
+  `ApprovalDenied`), the paused leg's usage is charged at the pause
+  boundary, resume requires a decision for every pending approval,
+  and `stream()` still gates in replay mode.
+- 12 deterministic tests
+  (`tests/harness/test_bl114_deferred_resume.py`), headlined by the
+  non-replay proof (a pre-pause side-effect tool executes exactly
+  once across pause + resume).
+
+### Changed
+
+- The guard REJECT branch is factored into a `_rejection` helper
+  shared verbatim by the replay and deferred gates, so hard/soft
+  governance is provably identical in both modes (no behaviour
+  change; the existing suite passes unmodified).
+
 ## [Unreleased] Prompt caching on the runtime adapter (ADR 0026, BL-132 / BL-171, 2026-06-12)
 
 The longest-tracked Tier 1 capability after `BL-120`, unblocked by
