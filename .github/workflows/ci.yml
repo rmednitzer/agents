@@ -73,6 +73,15 @@ jobs:
         with:
           enable-cache: true
       - run: uv python install 3.12
+      - name: Assert the lockfile matches pyproject.toml
+        # BL-237: a specifier bump merged without re-resolving uv.lock
+        # makes every later gate validate an older dependency surface
+        # than pyproject.toml declares (the drift class remediated on
+        # 2026-05-27, audit/2026-05-27-engagement.md section 4.2).
+        # `uv export --frozen` below deliberately does NOT check
+        # freshness; this step fails the job at the PR boundary
+        # instead of letting the drift accumulate over a wave.
+        run: uv lock --check
       - name: Export the locked dependency set
         run: uv export --frozen --all-extras --no-emit-project --format requirements-txt -o audit-requirements.txt
       - name: Audit locked dependencies for known advisories
