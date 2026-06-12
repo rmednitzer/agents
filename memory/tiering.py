@@ -75,6 +75,14 @@ class TieredMemoryStore:
     has no single-store semantics to inherit (ADR 0004 "don't fake
     it"); callers needing them hold the inner store directly.
 
+    The write-order stamp map backing ``demote_to_capacity`` is pruned
+    against the live hot keyspace only during a capacity pass: hot-tier
+    expiry does not remove stamps, so a wrapper used without periodic
+    ``demote_to_capacity`` calls accumulates one map entry per distinct
+    key ever written through it. Long-horizon compositions should run
+    the capacity pass (or bound their keyspace) to keep the map, like
+    the hot tier itself, from growing without limit.
+
     Usage::
 
         hot = InMemoryStore(Namespace(name="ctx", workload="w",

@@ -73,12 +73,15 @@ def is_expired(now: float, expires_at: float | None) -> bool:
     strict ``>`` here is what makes the boundary inclusive.
 
     Defined as the "positive" predicate (the caller must *prove*
-    expiry) so that any non-orderable expiry (``NaN``, anomalously
-    propagated through a user-supplied TTL) keeps the prior
+    expiry) so that any non-orderable expiry (``NaN``) keeps the prior
     behaviour of the in-tree adapters: ``now > NaN`` is ``False``, so
-    the entry is reported live. Validating TTL inputs as finite at
-    the API boundary is the right longer-term fix; this encoding
-    keeps the consolidation strictly behaviour-preserving.
+    the entry is reported live. The API-boundary validation this
+    encoding anticipated has since landed (``Namespace.resolve_ttl``,
+    BL-197): every adapter and ``transact`` path rejects a non-finite
+    ``ttl_seconds`` at the write boundary, so a ``NaN`` expiry can
+    reach this predicate only from an out-of-tree store or direct
+    backend tampering. The positive encoding stays as defence in
+    depth and keeps the consolidation strictly behaviour-preserving.
     """
     return expires_at is not None and now > expires_at
 
