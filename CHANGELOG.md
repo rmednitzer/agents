@@ -3,6 +3,58 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Prompt caching on the runtime adapter (ADR 0026, BL-132 / BL-171, 2026-06-12)
+
+The longest-tracked Tier 1 capability after `BL-120`, unblocked by
+pydantic-ai 1.106 (verified in-session: `CachePoint`, the
+`AnthropicModelSettings` cache controls,
+`RunUsage.cache_read_tokens` / `cache_write_tokens`). Additive only
+(ADR 0007); ADR 0026 is the cross-cutting why.
+
+### Added
+
+- `PydanticAIRuntime(model_settings=...)`: forwarded verbatim to the
+  underlying Agent (`None` preserves prior behaviour). The opt-in
+  surface for provider-side cache breakpoints on the stable
+  tools/system prefix; opaque to the harness, vendor-neutral like
+  `model` (ADR 0001).
+- `BudgetTracker.consume_cache_tokens(read=, write=)` plus readable
+  `cache_read_tokens` / `cache_write_tokens` counters: pure
+  accounting, no new ceiling, deliberately not charged to
+  `max_tokens` (upstream reports cache counts outside
+  `input_tokens`) and outside `snapshot()` (BL-154 carries enforced
+  dimensions only; the key set is now regression-pinned). Pairs with
+  `consume_cost` (BL-123); negative counts rejected (the BL-221
+  caller-fed input class).
+- `run()` and `stream()` surface the counts getattr-guarded (the
+  `_usage` compat stance), streaming at the final reconciliation.
+- 16 deterministic tests (`tests/harness/test_bl132_prompt_caching.py`).
+  Live cache-hit validation (identical-prefix second run with
+  `cache_read_tokens > 0`) is coupled to `BL-120`;
+  `LIMITATIONS.md` L9 retitled to the deterministic-only residual.
+
+## [Unreleased] BL-240 secret-scan gate, BL-241 DCO reconciliation (2026-06-12)
+
+The two maintainer decisions ADR 0025 deferred, decided and landed.
+
+### Added
+
+- A blocking `secret-scan` CI job (gitleaks/gitleaks-action v3.0.0,
+  SHA-pinned, full-history checkout, PR comments disabled so no write
+  permission is needed) in the `ci-success` aggregate (`BL-240`).
+  `.gitleaks.toml` extends the default rules and allowlists exactly
+  one literal, the synthetic AKIA redaction fixture; verified locally
+  (with the config: no leaks over tree + 52 commits; without: the 4
+  fixture hits fire).
+
+### Changed
+
+- `CONTRIBUTING.md` (`BL-241`): DCO 1.1 certification is by
+  pull-request submission; the per-commit `Signed-off-by` trailer is
+  welcome but no longer mandated (squash-merge consolidates trailers
+  and no CI check enforced them, so the requirement was unverifiable
+  as written).
+
 ## [Unreleased] Fourteenth audit: full-pass engagement, process hardening (ADR 0025, BL-236 / BL-237 / BL-238 / BL-239, 2026-06-12)
 
 A fourteenth audit run under an external full-pass engagement

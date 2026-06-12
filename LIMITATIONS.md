@@ -150,18 +150,23 @@ lockfile-resolved, isolated behind the `Runtime` Protocol. Implication:
 a breaking upstream change may require an adapter update. Tracking:
 ADR 0001 and ADR 0003 revisit triggers.
 
-## L9. No prompt caching
+## L9. Prompt caching validated deterministically only
 
-State: `ActionBudget` now has a cost dimension and per-tool token /
-wall-clock caps (`BL-123`, ADR 0010: `max_cost_usd`,
-`max_tokens_per_tool`, `max_wall_clock_seconds_per_tool`,
-`consume_cost`), so per-run spend can be bounded once an adapter
-reports cost. The adapter still exposes no prompt-cache control:
-prompt caching needs a verified PydanticAI provider-cache API and a
-live model, so it is deferred (a no-op flag would breach the
-no-half-implementation bar). Implication: a repeated stable
-tools/system prefix still pays full token cost. Tracking: `BL-132` /
-`BL-171`.
+State: the adapter now exposes prompt-cache control (`BL-132` /
+`BL-171`, ADR 0026): `PydanticAIRuntime(model_settings=...)` forwards
+provider-side settings verbatim (Anthropic cache breakpoints on the
+stable tools/system prefix via `AnthropicModelSettings`), and the
+provider's cache hit/creation token counts are surfaced through
+`BudgetTracker.consume_cache_tokens` (readable as
+`cache_read_tokens` / `cache_write_tokens`; not charged to
+`max_tokens`, pairing with `consume_cost`, `BL-123`). The wiring and
+the accounting are covered by deterministic tests; whether a live
+provider actually serves a cache hit, and at what discount, is
+observable only against a real API. Implication: cache effectiveness
+and cost projections derived from the new counters are unvalidated
+until the `BL-120` live workload exercises an identical-prefix second
+run and observes `cache_read_tokens > 0`. Tracking: `BL-120` (the
+live-validation gate; ADR 0026 revisit trigger).
 
 ## L10. Approval-pause resume is a replay (budgets now accumulate)
 

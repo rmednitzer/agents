@@ -28,6 +28,9 @@ behaviour into PydanticAIRuntime:
 - BL-004: streaming accumulates token usage and raises BudgetExceeded
   as soon as a limit is crossed.
 - BL-073: per-tool call quotas via the BudgetTracker.
+- BL-132/BL-171: opt-in ``model_settings`` pass-through (the surface
+  for provider-side prompt-cache breakpoints) and cache hit/creation
+  token surfacing via ``BudgetTracker.consume_cache_tokens``.
 """
 
 from __future__ import annotations
@@ -236,11 +239,28 @@ class _GuardState:
 def _usage(result: Any) -> Any:
     """Read PydanticAI run usage.
 
-    1.97 exposes ``usage`` as a property (the legacy ``usage()`` method
-    is deprecated); the locked version is 1.97.0, so access the property
-    directly and avoid the DeprecationWarning the call form emits.
+    ``usage`` has been a property since PydanticAI 1.97 (the legacy
+    ``usage()`` call form is deprecated and warns), so access the
+    property directly. Deliberately version-agnostic: Renovate moves
+    the locked version, and the property access is the stable form
+    across the supported range.
     """
     return result.usage
+
+
+def _surface_cache_tokens(budget: BudgetTracker, usage: Any) -> None:
+    """Surface prompt-cache token counts into the tracker (BL-132).
+
+    getattr-guarded: a usage object without the cache fields (an older
+    PydanticAI, a custom Model double) surfaces nothing, the same
+    compat stance as ``_usage``. ``or 0`` clamps an explicit ``None``.
+    Zero counts are skipped so an uncached run leaves the tracker
+    untouched.
+    """
+    read = getattr(usage, "cache_read_tokens", 0) or 0
+    write = getattr(usage, "cache_write_tokens", 0) or 0
+    if read or write:
+        budget.consume_cache_tokens(read=read, write=write)
 
 
 def _tool_name(tool: Any) -> str:
@@ -467,6 +487,24 @@ class PydanticAIRuntime:
     FunctionModel for deterministic, network-free use). ``output_type``
     is the PydanticAI structured-output type; the harness still
     re-validates against the workload's declared schema.
+
+    ``model_settings`` (BL-132/BL-171) is forwarded verbatim to the
+    underlying Agent; ``None`` preserves the prior behaviour. It is the
+    opt-in surface for provider-side controls, in particular Anthropic
+    prompt caching: pass ``AnthropicModelSettings(
+    anthropic_cache_instructions=True,
+    anthropic_cache_tool_definitions=True)`` (or the equivalent plain
+    dict) to pin cache breakpoints on the stable system/tools prefix.
+    The adapter treats the value as opaque, exactly like ``model``, so
+    the harness stays vendor-neutral (ADR 0001). Cache hit/creation
+    token counts the provider reports are surfaced through
+    ``BudgetTracker.consume_cache_tokens`` (readable as
+    ``tracker.cache_read_tokens`` / ``cache_write_tokens``); they are
+    not charged to ``max_tokens`` (upstream reports them outside
+    ``input_tokens``), and a pricing-aware caller pairs them with
+    ``consume_cost`` (BL-123). Whether the provider actually serves a
+    cache hit is observable only against a live API; that validation
+    is coupled to the BL-120 live-workload gate (ADR 0026).
     """
 
     name: str = "pydantic-ai"
@@ -479,12 +517,14 @@ class PydanticAIRuntime:
         instructions: str | None = None,
         retry_policy: RetryPolicy | None = None,
         soft_reject_as_error: bool = False,
+        model_settings: Any | None = None,
     ) -> None:
         self.model = model
         self._output_type = output_type
         self._instructions = instructions
         self._retry_policy = retry_policy
         self._soft_reject_as_error = soft_reject_as_error
+        self._model_settings = model_settings
         self._consecutive_failures = 0
 
     def _build_agent(
@@ -546,6 +586,7 @@ class PydanticAIRuntime:
             instructions=self._instructions,
             tools=wrapped,
             toolsets=toolsets,
+            model_settings=self._model_settings,
         )
 
     async def run(
@@ -666,6 +707,7 @@ class PydanticAIRuntime:
             tokens = (usage.input_tokens or 0) + (usage.output_tokens or 0)
             if tokens:
                 budget.consume_tokens(tokens)
+            _surface_cache_tokens(budget, usage)
             budget.consume_step(getattr(usage, "requests", 0) or 0)
             budget.check_wall_clock()
         return result.output
@@ -782,6 +824,11 @@ class PydanticAIRuntime:
                 _reconcile(stream)
                 if budget is not None:
                     usage = _usage(stream)
+                    # Cache counts are surfaced once at the final
+                    # reconciliation, like step charging: providers
+                    # finalize cache accounting with the run-level
+                    # usage, not per chunk (BL-132).
+                    _surface_cache_tokens(budget, usage)
                     budget.consume_step(getattr(usage, "requests", 0) or 0)
         except _ApprovalPause as exc:
             # Streaming has no resumable handoff (the generator cannot

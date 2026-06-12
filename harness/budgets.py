@@ -184,6 +184,8 @@ class BudgetTracker:
         self._per_tool_tokens: dict[str, int] = dict(initial_per_tool_tokens or {})
         self._per_tool_seconds: dict[str, float] = dict(initial_per_tool_seconds or {})
         self._cost_usd = initial_cost_usd
+        self._cache_read_tokens = 0
+        self._cache_write_tokens = 0
         self._started_at = datetime.now(UTC)
 
     @property
@@ -205,6 +207,16 @@ class BudgetTracker:
     @property
     def cost_usd(self) -> float:
         return self._cost_usd
+
+    @property
+    def cache_read_tokens(self) -> int:
+        """Prompt-cache hit tokens surfaced by the adapter (BL-132)."""
+        return self._cache_read_tokens
+
+    @property
+    def cache_write_tokens(self) -> int:
+        """Prompt-cache creation tokens surfaced by the adapter (BL-132)."""
+        return self._cache_write_tokens
 
     def snapshot(self) -> dict[str, Any]:
         """Consumed totals, for threading into a ResumableState (BL-154).
@@ -254,6 +266,35 @@ class BudgetTracker:
         """Record n tokens consumed and enforce the tokens limit."""
         self._tokens += n
         self._check("tokens", float(self._tokens), self._budget.max_tokens)
+
+    def consume_cache_tokens(self, *, read: int = 0, write: int = 0) -> None:
+        """Record prompt-cache token counts surfaced by the adapter (BL-132).
+
+        Pure accounting, no ceiling: ``read`` / ``write`` are the
+        provider's cache-hit and cache-creation counts (Anthropic's
+        ``cache_read_input_tokens`` / ``cache_creation_input_tokens``,
+        mapped by PydanticAI onto ``usage.cache_read_tokens`` /
+        ``cache_write_tokens``). They are deliberately NOT charged to
+        ``max_tokens``: upstream reports them outside ``input_tokens``,
+        and pricing them is provider-specific, so the framework surfaces
+        the counts and a pricing-aware caller feeds spend through
+        ``consume_cost`` (the BL-123 caller-fed stance). Not part of
+        ``snapshot()``: BL-154 carries enforced dimensions across an
+        approval pause, and there is no cache ceiling to carry; the
+        counters restart per resumed leg and a cross-pause aggregator
+        sums legs.
+
+        Negative counts are rejected at the entry boundary (the BL-221
+        caller-fed input class; ints cannot be NaN, so only the sign
+        needs guarding).
+        """
+        if read < 0 or write < 0:
+            raise ValueError(
+                f"consume_cache_tokens requires non-negative counts, "
+                f"got read={read!r} write={write!r}"
+            )
+        self._cache_read_tokens += read
+        self._cache_write_tokens += write
 
     def consume_tool_call(
         self,
