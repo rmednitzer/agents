@@ -6,7 +6,7 @@ This is a runbook, not a roadmap. The roadmap lives in [`docs/backlog.md`](./bac
 
 Audience: a maintainer or contributor opening a fresh PR cycle, an auditor preparing the next in-depth code audit, or a Claude agent running `/ultrareview` or the `code-review` skill against the working tree.
 
-Last reviewed: 2026-06-12 (ADR 0026 prompt-caching capability landed after the ADR 0025 fourteenth audit; ADR 0024 was the BL-234/BL-235 capability wave; next audit slot is ADR 0027).
+Last reviewed: 2026-06-12 (ADR 0027 deferred-resume capability landed, after ADR 0026 prompt caching and the ADR 0025 fourteenth audit the same day; next audit slot is ADR 0028).
 
 ## 0. Conventions this runbook respects
 
@@ -32,7 +32,7 @@ Open in order, top to bottom:
 
 ## 2. Phase A: audit
 
-The repo's audit cadence is in `docs/backlog.md`: ADR 0009 (first), ADR 0010 (second), ADR 0011 (third), ADR 0013 (fifth), ADR 0015 (sixth), ADR 0017 (seventh), ADR 0018 (eighth), ADR 0019 (ninth), ADR 0020 (tenth), ADR 0021 (eleventh), ADR 0022 (twelfth), ADR 0023 (thirteenth), ADR 0025 (fourteenth; the full-pass engagement, evidence under `audit/`). A "fourth" audit pass was folded into the cross-repo review in ADR 0012 (run-provenance + provider-batch capabilities). ADR 0014 is the BL-180 capability ADR (durable Versioned + new Transactional Protocol). ADR 0016 is the BL-133 capability ADR (skill execution isolation). ADR 0024 is the BL-234/BL-235 capability ADR (compaction, summarisation, tiering). ADR 0026 is the BL-132/BL-171 capability ADR (prompt caching on the runtime adapter). The next audit slot is ADR 0027.
+The repo's audit cadence is in `docs/backlog.md`: ADR 0009 (first), ADR 0010 (second), ADR 0011 (third), ADR 0013 (fifth), ADR 0015 (sixth), ADR 0017 (seventh), ADR 0018 (eighth), ADR 0019 (ninth), ADR 0020 (tenth), ADR 0021 (eleventh), ADR 0022 (twelfth), ADR 0023 (thirteenth), ADR 0025 (fourteenth; the full-pass engagement, evidence under `audit/`). A "fourth" audit pass was folded into the cross-repo review in ADR 0012 (run-provenance + provider-batch capabilities). ADR 0014 is the BL-180 capability ADR (durable Versioned + new Transactional Protocol). ADR 0016 is the BL-133 capability ADR (skill execution isolation). ADR 0024 is the BL-234/BL-235 capability ADR (compaction, summarisation, tiering). ADR 0026 is the BL-132/BL-171 capability ADR (prompt caching on the runtime adapter). ADR 0027 is the BL-114 capability ADR (deferred approval resume). The next audit slot is ADR 0028.
 
 ### 2.1 Plan the audit
 
@@ -76,7 +76,7 @@ Maintain a running checklist; an audit is just running it carefully and finding 
 | First-occurrence-vs-strictest | Composition keeps the first, not the strictest | `BL-166`, `BL-174` |
 | Fan-out per-member failure containment | A single failing fan-out member cancels siblings, breaks downstream telemetry / audit-vs-raise parity | `BL-222` (`MultiDispatcher` ensemble), `BL-223` (`MultiSink` audit fan-out), `BL-227` (`BoundedS3Store.evict_to_capacity` sequential DELETE), `BL-228` (`RoutingChainDispatcher` cheap-first chain), `BL-233` (`S3Store._sweep_sync` / `DynamoDBStore._sweep_sync` periodic-sweep per-item DELETE) |
 | Non-finite numeric at a trust / config boundary | A `NaN` / `+inf` clamps to the top of a ranking, slips a `<= 0` guard (both comparisons are False), or disables a `consumed > limit` ceiling | `BL-159` (cosine NaN-clamp), `BL-205` (`MultiDispatcher` weights), `BL-221` (`BudgetTracker` consume side), `BL-226` (S3 metadata parse), `BL-231` (`ActionBudget` / `RetryPolicy` limit side), `BL-232` (`MCPServerSpec` / `TTLSweeper` positivity guards) |
-| Open backlog item: classes still unresolved | The pending Tier 1/2 items each represent a class boundary | `BL-114` (replay vs deduplicated resume), `BL-155` (preemption vs cooperation); `BL-132/171` (cache hit/miss) graduated to ADR 0026 with the live-hit residual on `BL-120` |
+| Open backlog item: classes still unresolved | The pending Tier 1/2 items each represent a class boundary | `BL-155` (preemption vs cooperation); `BL-132/171` (cache hit/miss) graduated to ADR 0026 with the live-hit residual on `BL-120`, `BL-114` (replay vs deduplicated resume) graduated to ADR 0027 with the MCP-live residual on its revisit trigger |
 
 ### 2.4 Fix discipline
 
@@ -134,7 +134,6 @@ Open `docs/backlog.md`, filter to `[pending]` / `[in-progress]`. The current ope
 | `BL-120` | Tier 1 | L | A real reference workload exercising the wired runtime against a live model (now also the live cache-hit gate for the ADR 0026 wiring) | A funded provider key, a credentialed CI gate skipped without it |
 | `BL-113` | Tier 2 | L | True OTel spans + trace-context propagation | The OTel logs SDK stabilising (the GA cut; still `opentelemetry.sdk._logs` at 1.39.1, checked 2026-06-12) |
 | `BL-138` | Tier 2 | M | OTel GenAI semantic conventions on `BL-113`'s spans | Same upstream as `BL-113`; depends on it |
-| `BL-114` | Tier 2 | L | Deeper PydanticAI resume via `DeferredToolRequests` / `message_history` | PydanticAI's pause/resume primitive stabilising |
 | `BL-155` | Tier 2 | L | True wall-clock preemption for non-cooperative tools | A thread/process execution boundary (not the asyncio await pattern) |
 | `BL-179` | Tier 2 | M | `RetryPolicy` token / step accounting from intermediate attempts | Upstream PydanticAI partial-usage on the exception path |
 
@@ -152,7 +151,7 @@ For an item with no upstream dependency (the "ready" set today: `BL-120`):
 
 ### 4.3 Item-level workflow with an upstream dependency
 
-For an item gated on an unstable upstream (the "tracked, not rushed" set: `BL-113` / `BL-138`, `BL-114`, `BL-155`, `BL-179`; `BL-132` / `BL-171` graduated this way when pydantic-ai 1.106 shipped the verified cache API, ADR 0026):
+For an item gated on an unstable upstream (the "tracked, not rushed" set: `BL-113` / `BL-138`, `BL-155`, `BL-179`; `BL-132` / `BL-171` and `BL-114` graduated this way when pydantic-ai 1.106 shipped the verified cache and deferred-tools APIs, ADR 0026 / ADR 0027):
 
 1. Do not ship a no-op flag. The "no half-finished implementation" bar (`CLAUDE.md` "Doing tasks") forbids it.
 2. Do ship the documentation: revisit triggers in `LIMITATIONS.md`, the upstream signal to watch (e.g. PydanticAI release notes, OTel logs SDK GA cut).
@@ -313,9 +312,9 @@ The list below covers every `.md` file in the repository (excluding `LICENSES/` 
 
 | Path | Maturity | What this sweep checks | Update trigger |
 |---|---|---|---|
-| `README.md` | stable | Status paragraph cites the latest ADR (today `0026` + `BL-132` / `BL-171`, plus the ADR 0025 `BL-236`-`BL-239` audit, the ADR 0024 `BL-234` / `BL-235` wave, the ADR 0023 `BL-233` addition, and the earlier audit-wave enumeration back through ADR 0017); the capability bullets match the present `harness/` / `memory/` / `skills/` / `evaluation/` exports (including the `model_settings` pass-through + cache surfacing, `TransactionalMemoryStore`, `MemoryCompactor` / `TruncatingSummarizer`, `TieredMemoryStore`, `BoundedSweepableStore` and `BoundedRedisStore` / `BoundedDynamoDBStore` / `BoundedS3Store`); the install line lists every optional extra (`redis`, `aws`, `crypto`, `otel`, `anthropic`, `openai`); the seven-dispatcher count (`BL-160` errata) | A new ADR, a new top-level capability, a new extra |
-| `CLAUDE.md` | stable | The ADR enumeration (today `0007`-`0026`); the layout block matches `ls`; the `evaluation/` line ships; the additive-to-L1 rule wording is the current canonical phrasing | A new ADR, a new top-level component, a layout change |
-| `STATUS.md` | living | Last-reviewed date is today; the phase-tracking table cites the latest ADR; the document-maturity table covers every `.md` in the tree (the table mentions `0001-0026`); the L3-open row is the current `[pending]` set | Every audit, every release rehearsal |
+| `README.md` | stable | Status paragraph cites the latest ADR (today `0027` + `BL-114`, plus the ADR 0026 `BL-132` / `BL-171` wave, the ADR 0025 `BL-236`-`BL-239` audit, the ADR 0024 `BL-234` / `BL-235` wave, the ADR 0023 `BL-233` addition, and the earlier audit-wave enumeration back through ADR 0017); the capability bullets match the present `harness/` / `memory/` / `skills/` / `evaluation/` exports (including `approval_mode="deferred"`, the `model_settings` pass-through + cache surfacing, `TransactionalMemoryStore`, `MemoryCompactor` / `TruncatingSummarizer`, `TieredMemoryStore`, `BoundedSweepableStore` and `BoundedRedisStore` / `BoundedDynamoDBStore` / `BoundedS3Store`); the install line lists every optional extra (`redis`, `aws`, `crypto`, `otel`, `anthropic`, `openai`); the seven-dispatcher count (`BL-160` errata) | A new ADR, a new top-level capability, a new extra |
+| `CLAUDE.md` | stable | The ADR enumeration (today `0007`-`0027`); the layout block matches `ls`; the `evaluation/` line ships; the additive-to-L1 rule wording is the current canonical phrasing | A new ADR, a new top-level component, a layout change |
+| `STATUS.md` | living | Last-reviewed date is today; the phase-tracking table cites the latest ADR; the document-maturity table covers every `.md` in the tree (the table mentions `0001-0027`); the L3-open row is the current `[pending]` set | Every audit, every release rehearsal |
 | `LIMITATIONS.md` | living | Last-reviewed date is today; the L-entries map to the open `BL-1xx` set; an L-entry the audit closed is removed (and the close noted in the ADR); a new L-entry is added only for a contract-level remainder | Every audit |
 | `CHANGELOG.md` | living | `[Unreleased]` covers everything not yet tagged; the per-section subsections (`Added` / `Fixed` / `Security` / `Changed` / `Documentation`) match the diff; ISO dates; no em-dashes | Every PR with a material change |
 | `CONTRIBUTING.md` | stable | The DCO certification note (PR-submission based, `BL-241`); the REUSE compliance note; the green-gate set matches `.github/workflows/ci.yml` (today: lint, type-check, test, dependency-audit, secret-scan, evaluation); the governance section | A change to CI, a change to the contributing flow |
@@ -332,7 +331,7 @@ The list below covers every `.md` file in the repository (excluding `LICENSES/` 
 | `docs/runtime-providers.md` | stable | The `provider:model` table covers the supported provider prefixes; the credential-variable list matches PydanticAI; the line on the `_model_free_dispatcher` honouring a `keyword` / `embedding` manifest dispatcher (`BL-161`); the current state on `BL-120` | A change to the runtime adapter, a PydanticAI provider matrix change |
 | `docs/schema/README.md` | stable | The generated artefacts (today: `workload-manifest.json`, `skill-manifest.json`, `run-record.json`); the "do not edit by hand" line; the `gen_schema.py` regeneration command | A new Pydantic model exposed to schema |
 | `docs/adr/README.md` | stable | The ADR table covers every `docs/adr/00NN-*.md`; the latest row is the latest ADR | A new ADR |
-| `docs/adr/0001`-`0026` | stable, Accepted | Frozen; errata are recorded in the next ADR, not edited in place (`ADR 0009 -> 0010` errata template) | Never |
+| `docs/adr/0001`-`0027` | stable, Accepted | Frozen; errata are recorded in the next ADR, not edited in place (`ADR 0009 -> 0010` errata template) | Never |
 
 ### 8.3 Component `README.md` (eight files)
 

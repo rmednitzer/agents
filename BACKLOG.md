@@ -8,12 +8,13 @@ register: [`audit/02-security-findings.md`](./audit/02-security-findings.md).
 Decisions: [ADR 0025](./docs/adr/0025-fourteenth-audit-full-pass.md),
 [ADR 0026](./docs/adr/0026-prompt-caching-on-the-runtime-adapter.md).
 
-Updated 2026-06-12 (same-day backlog session): `BL-240` and `BL-241`
-were decided by the maintainer and delivered, and the re-triage found
-two lifted upstream blockers, of which `BL-132` / `BL-171` (prompt
-caching) was implemented (ADR 0026) and `BL-114` (non-replay resume,
-`DeferredToolRequests` now stable upstream) remains open as the next
-candidate wave.
+Updated 2026-06-12 (same-day backlog sessions): `BL-240` and `BL-241`
+were decided by the maintainer and delivered; the re-triage found two
+lifted upstream blockers and both were implemented the same day,
+`BL-132` / `BL-171` (prompt caching, ADR 0026) and `BL-114` (deferred
+non-replay approval resume, ADR 0027). The remaining open set is
+`BL-120`, `BL-113`/`BL-138`, `BL-155`, `BL-179`, all
+credential-gated, upstream-blocked, or design-wave scoped.
 
 Ordering: severity, then effort. Effort scale S/M/L.
 
@@ -33,8 +34,7 @@ delivered on 2026-06-12, see "Resolved" below.
 
 | ID | Title | Severity | Effort | Rationale and suggested approach | Dependencies | Suggested owner role |
 |---|---|---|---|---|---|---|
-| `BL-120` | Live-model reference workload (CI smoke, key-gated) | medium | L | Pre-existing, tracked; the highest-leverage open item per `STATUS.md`, and since ADR 0026 also the live cache-hit gate for the `BL-132` / `BL-171` wiring. Needs funded API keys and a credentialed CI gate; out of scope for an automated pass. | live credentials | maintainer |
-| `BL-114` | Non-replay approval resume | low | L | Re-triaged 2026-06-12: the upstream primitive (`DeferredToolRequests` / `DeferredToolResults`) is now stable public API in pydantic-ai 1.106, so the blocker has lifted. Remains open as a dedicated wave: it rebuilds the approval pause/resume path and interacts with the `BL-193` argument binding and the `BL-154` budgets-across-pause contract, so it needs its own ADR and session. | design wave (unblocked) | maintainer |
+| `BL-120` | Live-model reference workload (CI smoke, key-gated) | medium | L | Pre-existing, tracked; the highest-leverage open item per `STATUS.md`. Since ADR 0026 also the live cache-hit gate for the `BL-132` / `BL-171` wiring, and a natural home for the ADR 0027 MCP-deferred live check. Needs funded API keys and a credentialed CI gate; out of scope for an automated pass. | live credentials | maintainer |
 
 ## Documentation
 
@@ -56,6 +56,8 @@ dropped), `BL-239` (tiering stamp-map caveat + `_expiry` wording),
 `BL-240` (blocking gitleaks `secret-scan` job + `.gitleaks.toml`
 fixture allowlist), `BL-241` (DCO certification by PR submission),
 `BL-132` / `BL-171` (prompt caching on the runtime adapter,
-ADR 0026; live cache-hit residual carried by `BL-120`). Details in
-`docs/backlog.md` ("Fourteenth audit" and the in-place L3 rows),
-ADR 0025, and ADR 0026.
+ADR 0026; live cache-hit residual carried by `BL-120`), and
+`BL-114` (deferred non-replay approval resume, ADR 0027; MCP-live
+residual on the ADR's revisit trigger). Details in `docs/backlog.md`
+("Fourteenth audit" and the in-place L3 rows), ADR 0025, ADR 0026,
+and ADR 0027.

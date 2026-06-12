@@ -168,20 +168,28 @@ until the `BL-120` live workload exercises an identical-prefix second
 run and observes `cache_read_tokens > 0`. Tracking: `BL-120` (the
 live-validation gate; ADR 0026 revisit trigger).
 
-## L10. Approval-pause resume is a replay (budgets now accumulate)
+## L10. Approval-pause resume replays by default (deferred mode opts out)
 
-State: budgets now accumulate across a pause (`BL-154`, ADR 0010):
-`ResumableState` carries the consumed totals and the resumed
-`BudgetTracker` is seeded from them, so tokens, steps, tool calls,
-per-tool quotas, and cost no longer reset to zero per pause. The
-PydanticAI resume is still a replay (`BL-114`): non-approval tool calls
-re-execute on the replayed run (and now re-charge the cumulative
-budget, so a non-idempotent tool runs again and the total is the sum
-of all legs, not a deduplicated total). Implication: an approval-gated
-workload's tool calls must be idempotent, and the cumulative budget
-must allow for the replayed legs; `completed_actions` /
-`ActionRecord` remain reserved for the non-replay resume. Tracking:
-`BL-114` (eliminate the replay).
+State: the default `approval_mode="replay"` still re-runs the agent
+on resume, so its caveats stand for the default: non-approval tool
+calls re-execute (and re-charge the BL-154 cumulative budget), so
+replay-mode tool calls must be idempotent and the budget must allow
+for replayed legs. The non-replay resume now exists as the opt-in
+`PydanticAIRuntime(approval_mode="deferred")` (`BL-114`, ADR 0027):
+the paused leg's message history travels in
+`ResumableState.runtime_state` and the resumed leg continues from it,
+so prior tool calls run exactly once and only the continuation is
+charged. Opting in accepts the documented divergences: a denial
+becomes a model-visible tool error instead of a terminal
+`ApprovalDenied`, the paused leg's own usage is charged at the pause
+boundary, resume requires a decision for every pending approval, and
+`stream()` still gates in replay mode. Implication: replay-mode
+deployments keep the idempotency requirement; deferred-mode
+deployments trade the terminal-denial semantic for single execution.
+`completed_actions` / `ActionRecord` stay reserved (the deferred
+history supersedes them for the in-tree runtime). Residual tracking:
+the MCP deferred path is verified through the shared gate, not yet
+against a live MCP server (ADR 0027 revisit trigger).
 
 ## L11. Wall-clock watchdog preempts only at an await boundary
 

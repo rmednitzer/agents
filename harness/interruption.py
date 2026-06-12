@@ -86,6 +86,15 @@ class ResumableState(BaseModel):
     consumed_per_tool_tokens: dict[str, int] = Field(default_factory=dict)
     consumed_per_tool_seconds: dict[str, float] = Field(default_factory=dict)
     consumed_cost_usd: float = 0.0
+    # Adapter-owned continuation state (BL-114, ADR 0027). A
+    # deferred-mode `PydanticAIRuntime` stores the paused leg's
+    # serialized message history here ({"mode": "deferred",
+    # "messages": [...]}, JSON-able by construction) so the resumed
+    # leg continues from it instead of replaying the run. `None` (the
+    # default) is the replay-mode shape: a hand-built or pre-BL-114
+    # state behaves exactly as before. Opaque to the harness; only
+    # the runtime that produced it interprets it.
+    runtime_state: dict[str, Any] | None = None
 
     def approve(self, interruption_id: str) -> ResumableState:
         """Return a new state with the given interruption marked approved."""
