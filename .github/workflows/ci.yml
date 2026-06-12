@@ -93,8 +93,9 @@ jobs:
         # constraint that breaks pip's `--require-hashes` mode. The
         # audit env must match what is actually installed.
         #
-        # BL-236: the PYSEC-2025-183 (pyjwt) suppression carried here
-        # since BL-194 was removed on 2026-06-12: the locked pyjwt
+        # BL-236 (2026-06-12): this step had carried an --ignore-vuln
+        # PYSEC-2025-183 (pyjwt) suppression alongside the BL-194 env
+        # pin above; that suppression is now removed. The locked pyjwt
         # (2.13.0) is no longer flagged, so the unsuppressed audit is
         # clean and a kept ignore could only mask a future advisory
         # republished under the same ID.
