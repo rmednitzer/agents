@@ -47,12 +47,12 @@ critical / high / medium / low / info.
 
 | Field | Value |
 |---|---|
-| Severity | low (supply-chain surface) |
-| CWE | CWE-1104 adjacent (unnecessary component in the default install) |
+| Severity | low (dependency declaration hygiene; impact corrected during remediation, see Evidence) |
+| CWE | none (declaration hygiene; the component itself remains a transitive either way) |
 | Location | `pyproject.toml:28` (`"logfire>=4.34.0"` in `[project] dependencies`) |
-| Evidence | `grep -rn logfire` over `agents harness memory skills workloads evaluation scripts tests` and all `*.md`: zero references. `uv pip show logfire` reports `Required-by: agents` only; `pydantic-ai` requires only `pydantic-ai-slim`, which requires `opentelemetry-api` (not logfire). The package is installed by every `pip install agents` and used by nothing. |
-| Exploit plausibility | None today (`pip-audit` clean). The finding is surface: every default install pulls logfire and its transitive set for zero functionality, enlarging the audit and vulnerability surface. |
-| Recommended fix | Remove from `[project] dependencies`, re-resolve `uv.lock`, re-run the full gate. Re-adding later is a one-line change. Pre-1.0 with no published consumers (`STATUS.md` Release), so the install-contract blast radius is nil. |
+| Evidence | `grep -rn logfire` over `agents harness memory skills workloads evaluation scripts tests` and all `*.md`: zero references, so the project imports nothing from it. Impact correction established during remediation: logfire is NOT removed from installs by dropping the declaration, because the base dependency `pydantic-ai` requires `pydantic-ai-slim[...,logfire,...]` (verified in the `uv.lock` `pydantic-ai` block; `uv pip show logfire` had reported `Required-by: agents` only because pip does not attribute extras-conditional edges). After removal the lock still resolves 173 packages and loses only the project's own requires-dist entry (2 lines). |
+| Exploit plausibility | None today (`pip-audit` clean). The materially load-bearing issue is declaration hygiene, not install surface: an unused direct dependency misdescribes the project's import surface, keeps a Renovate-tracked floor pin alive indefinitely, and would keep forcing logfire in even if upstream `pydantic-ai` dropped it. |
+| Recommended fix | Remove from `[project] dependencies`, re-resolve `uv.lock`, re-run the full gate. Re-adding later is a one-line change. Pre-1.0 with no published consumers (`STATUS.md` Release), so the install-contract blast radius is nil; the resolved graph is unchanged. |
 | Effort / disposition | S; **fixed this pass** (tracked as `BL-238`) |
 
 ## 2. Phase 2 dimensions audited with no finding

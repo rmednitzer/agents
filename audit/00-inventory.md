@@ -57,11 +57,12 @@ surface to audit.
 
 From `pyproject.toml` and `uv lock --check` (resolved 173 packages):
 
-- Direct base dependencies: 4 (`pydantic-ai>=1.104.0`,
+- Direct base dependencies at baseline: 4 (`pydantic-ai>=1.104.0`,
   `pydantic>=2.13.4`, `logfire>=4.34.0`, `pyyaml>=6.0.3`).
   Finding F-4: `logfire` has zero references in source, tests, and
-  docs, and `uv pip show logfire` reports `Required-by: agents` only
-  (see `audit/02-security-findings.md`).
+  docs; it stays in the resolved graph either way as a transitive of
+  `pydantic-ai` via `pydantic-ai-slim[...,logfire,...]`
+  (see `audit/02-security-findings.md` for the corrected impact).
 - Optional extras: `redis`, `aws` (boto3), `otel`, `crypto`
   (cryptography), `anthropic`, `openai`, plus a `dev` group (pytest,
   ruff, mypy, fakeredis, moto, type stubs).
