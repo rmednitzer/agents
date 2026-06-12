@@ -31,6 +31,11 @@ behaviour into PydanticAIRuntime:
 - BL-132/BL-171: opt-in ``model_settings`` pass-through (the surface
   for provider-side prompt-cache breakpoints) and cache hit/creation
   token surfacing via ``BudgetTracker.consume_cache_tokens``.
+- BL-114: opt-in ``approval_mode="deferred"`` rebuilds the approval
+  pause/resume on PydanticAI's DeferredToolRequests /
+  DeferredToolResults: the paused leg's message history travels in
+  ``ResumableState.runtime_state`` and the resumed leg continues from
+  it instead of replaying the run (ADR 0027).
 """
 
 from __future__ import annotations
@@ -303,6 +308,30 @@ def _resolved_decision(
     return None
 
 
+def _rejection(response: Any, name: str, state: _GuardState) -> str:
+    """Translate a REJECT guard decision (shared by both gate modes).
+
+    Raises GovernanceViolation on HARD; on SOFT returns the L1
+    ``[blocked: ...]`` string, or raises the framework's typed
+    ModelRetry when ``soft_reject_as_error`` is set (BL-137).
+    """
+    if response.severity == Severity.HARD:
+        state.governance = GovernanceViolation(response.reason or "governance", name)
+        raise state.governance
+    reason = response.reason or "governance predicate failed"
+    if state.soft_reject_as_error:
+        # BL-137: surface a typed rejection the model handles as
+        # a tool error, not apparent tool output. ModelRetry is
+        # PydanticAI's structured tool-error channel; fall back
+        # to the L1 string if the symbol is unavailable.
+        try:
+            from pydantic_ai import ModelRetry
+        except ImportError:  # pragma: no cover - env dependent
+            return f"[blocked: {reason}]"
+        raise ModelRetry(f"blocked by governance: {reason}")
+    return f"[blocked: {reason}]"
+
+
 async def _gate(
     name: str,
     arguments: dict[str, Any],
@@ -324,21 +353,7 @@ async def _gate(
     if guard is not None:
         response = await guard.check(name, arguments)
         if response.decision == GuardDecision.REJECT:
-            if response.severity == Severity.HARD:
-                state.governance = GovernanceViolation(response.reason or "governance", name)
-                raise state.governance
-            reason = response.reason or "governance predicate failed"
-            if state.soft_reject_as_error:
-                # BL-137: surface a typed rejection the model handles as
-                # a tool error, not apparent tool output. ModelRetry is
-                # PydanticAI's structured tool-error channel; fall back
-                # to the L1 string if the symbol is unavailable.
-                try:
-                    from pydantic_ai import ModelRetry
-                except ImportError:  # pragma: no cover - env dependent
-                    return f"[blocked: {reason}]"
-                raise ModelRetry(f"blocked by governance: {reason}")
-            return f"[blocked: {reason}]"
+            return _rejection(response, name, state)
         if response.decision == GuardDecision.REQUIRE_APPROVAL:
             decided = _resolved_decision(resume, name, arguments, used_approvals)
             if decided is None:
@@ -353,6 +368,52 @@ async def _gate(
             if decided.decision == "denied":
                 state.denied = ApprovalDeniedError(name, decided.decision_reason)
                 raise state.denied
+    if budget is not None:
+        budget.consume_tool_call(tool=name)
+    return None
+
+
+async def _deferred_gate(
+    name: str,
+    arguments: dict[str, Any],
+    ctx: Any,
+    *,
+    guard: ToolGuard | None,
+    budget: BudgetTracker | None,
+    resume: ResumableState | None,
+    state: _GuardState,
+    used_approvals: set[str],
+) -> str | None:
+    """Deferred-mode guard + budget gate for one proposed tool call (BL-114).
+
+    The deferred twin of ``_gate``: the REJECT branches are identical
+    (shared ``_rejection``), but REQUIRE_APPROVAL raises PydanticAI's
+    ``ApprovalRequired`` instead of pausing the whole run, so the
+    framework collects every needed approval and ends the leg with a
+    DeferredToolRequests output. On a resumed leg the framework
+    re-invokes the call with ``ctx.tool_call_approved`` set; the
+    recorded approval is then verified by the full (tool, arguments)
+    tuple and consumed (the BL-193 binding, defence in depth over the
+    upstream tool_call_id mapping), so an approval recorded for
+    different arguments, an approval already consumed by a retried
+    leg, or a tampered state re-pauses for a fresh decision instead of
+    executing. A denial never reaches this gate: the caller's
+    ``ToolDenied`` is turned into a model-visible tool error by the
+    framework and the run continues (the deliberate semantic
+    divergence from replay mode's terminal ApprovalDenied; ADR 0027).
+    """
+    if guard is not None:
+        response = await guard.check(name, arguments)
+        if response.decision == GuardDecision.REJECT:
+            return _rejection(response, name, state)
+        if response.decision == GuardDecision.REQUIRE_APPROVAL:
+            from pydantic_ai.exceptions import ApprovalRequired
+
+            if not bool(getattr(ctx, "tool_call_approved", False)):
+                raise ApprovalRequired
+            decided = _resolved_decision(resume, name, arguments, used_approvals)
+            if decided is None or decided.decision != "approved":
+                raise ApprovalRequired
     if budget is not None:
         budget.consume_tool_call(tool=name)
     return None
@@ -432,6 +493,108 @@ def _wrap_tool(
     return wrapper
 
 
+def _wrap_tool_deferred(
+    tool: Any,
+    *,
+    guard: ToolGuard | None,
+    budget: BudgetTracker | None,
+    resume: ResumableState | None,
+    state: _GuardState,
+    used_approvals: set[str],
+) -> Any:
+    """Deferred-mode tool wrapper (BL-114): ``_wrap_tool`` with a context.
+
+    Prepends a ``RunContext`` parameter so the gate can read
+    ``ctx.tool_call_approved`` on a resumed leg; PydanticAI excludes
+    RunContext parameters from the inferred JSON schema, so the
+    model-visible signature is unchanged. A tool whose own first
+    parameter is a RunContext receives it pass-through instead of a
+    second one.
+    """
+    from pydantic_ai import RunContext
+
+    func = getattr(tool, "function", tool)
+    name = _tool_name(tool)
+    orig_params = list(inspect.signature(func).parameters.values())
+    orig_takes_ctx = bool(orig_params) and "RunContext" in str(orig_params[0].annotation)
+
+    async def _wrapper(ctx: Any, **kwargs: Any) -> Any:
+        soft = await _deferred_gate(
+            name,
+            kwargs,
+            ctx,
+            guard=guard,
+            budget=budget,
+            resume=resume,
+            state=state,
+            used_approvals=used_approvals,
+        )
+        if soft is not None:
+            return soft
+        started = time.perf_counter()
+        try:
+            result = func(ctx, **kwargs) if orig_takes_ctx else func(**kwargs)
+            return await result if inspect.isawaitable(result) else result
+        finally:
+            # Per-tool wall-clock parity with _wrap_tool; the gate
+            # already counted the call (n=0 adds no count).
+            if budget is not None:
+                budget.consume_tool_call(
+                    0, tool=name, wall_clock_seconds=time.perf_counter() - started
+                )
+
+    params = [
+        inspect.Parameter(
+            "ctx", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=RunContext[Any]
+        )
+    ]
+    params += orig_params[1:] if orig_takes_ctx else orig_params
+    with contextlib.suppress(ValueError, TypeError):
+        _wrapper.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
+    annotations = dict(getattr(func, "__annotations__", {}))
+    annotations["ctx"] = RunContext[Any]
+    _wrapper.__annotations__ = annotations
+    _wrapper.__name__ = getattr(func, "__name__", name)
+    _wrapper.__doc__ = getattr(func, "__doc__", None)
+    return _wrapper
+
+
+def _deferred_resume_inputs(resume: ResumableState) -> tuple[Any, Any]:
+    """Rebuild (message_history, DeferredToolResults) from a paused state.
+
+    Fails loud (HarnessError) when the state was not produced by a
+    deferred-mode run (a replay-mode state cannot be continued without
+    replaying) or when any pending approval is still undecided: the
+    upstream requires a result for every deferred call, so a partial
+    decision set cannot be expressed as a continuation.
+    """
+    from pydantic_ai import DeferredToolResults
+    from pydantic_ai.messages import ModelMessagesTypeAdapter
+    from pydantic_ai.tools import ToolDenied
+
+    rs = resume.runtime_state
+    if not rs or rs.get("mode") != "deferred" or "messages" not in rs:
+        raise HarnessError(
+            "approval_mode='deferred' requires a ResumableState produced by a "
+            "deferred-mode run; this state carries no deferred runtime_state "
+            "(a replay-mode pause cannot be resumed without replaying)"
+        )
+    undecided = [ai.id for ai in resume.pending_approvals if ai.decision == "pending"]
+    if undecided:
+        raise HarnessError(
+            "deferred resume requires a decision for every pending approval; "
+            f"undecided: {undecided}"
+        )
+    approvals: dict[str, Any] = {}
+    for ai in resume.pending_approvals:
+        if ai.decision == "approved":
+            approvals[ai.id] = True
+        else:
+            approvals[ai.id] = ToolDenied(message=ai.decision_reason or "denied by operator")
+    history = ModelMessagesTypeAdapter.validate_python(rs["messages"])
+    return history, DeferredToolResults(approvals=approvals)
+
+
 def _to_pydantic_mcp(spec: MCPServerSpec, process_tool_call: Any = None) -> Any:
     """Translate an MCPServerSpec into a PydanticAI MCP toolset.
 
@@ -505,6 +668,30 @@ class PydanticAIRuntime:
     ``consume_cost`` (BL-123). Whether the provider actually serves a
     cache hit is observable only against a live API; that validation
     is coupled to the BL-120 live-workload gate (ADR 0026).
+
+    ``approval_mode`` (BL-114, ADR 0027) selects how a
+    REQUIRE_APPROVAL guard decision pauses and resumes:
+
+    - ``"replay"`` (default): the L1/L2 behaviour, byte-identical. The
+      run aborts into a ResumableState; resuming re-runs the agent
+      from the original prompt and the recorded decision is matched
+      when the model re-proposes the same (tool, arguments) call
+      (BL-193). Earlier tool calls re-execute (LIMITATIONS L10).
+    - ``"deferred"``: the pause rides PydanticAI's
+      DeferredToolRequests: the leg finishes collecting every needed
+      approval, the message history travels in
+      ``ResumableState.runtime_state``, and the resumed leg continues
+      from it, so prior tool calls are NOT re-executed and only the
+      continuation is charged. Semantic divergences, deliberate and
+      documented: a denial becomes a model-visible tool error
+      (``ToolDenied``) and the run continues instead of raising
+      ApprovalDenied; the paused leg's own usage IS charged to the
+      budget at the pause boundary (the leg ran); resuming requires a
+      decision for every pending approval. Wall-clock stays per leg
+      and BL-154 budget seeding stays caller-driven, as in replay.
+      ``stream()`` always gates in replay mode (a generator cannot
+      surface a ResumableState); approval-gated tools still need
+      ``run()``.
     """
 
     name: str = "pydantic-ai"
@@ -518,13 +705,21 @@ class PydanticAIRuntime:
         retry_policy: RetryPolicy | None = None,
         soft_reject_as_error: bool = False,
         model_settings: Any | None = None,
+        approval_mode: str = "replay",
     ) -> None:
+        if approval_mode not in ("replay", "deferred"):
+            # Load-time validation (ADR 0007): a typo'd mode must not
+            # silently behave as replay.
+            raise ValueError(
+                f"approval_mode must be 'replay' or 'deferred' (got {approval_mode!r})"
+            )
         self.model = model
         self._output_type = output_type
         self._instructions = instructions
         self._retry_policy = retry_policy
         self._soft_reject_as_error = soft_reject_as_error
         self._model_settings = model_settings
+        self._approval_mode = approval_mode
         self._consecutive_failures = 0
 
     def _build_agent(
@@ -537,11 +732,13 @@ class PydanticAIRuntime:
         resume: ResumableState | None,
         state: _GuardState,
         used_approvals: set[str],
+        deferred: bool = False,
     ) -> Any:
         from pydantic_ai import Agent
 
+        wrap = _wrap_tool_deferred if deferred else _wrap_tool
         wrapped = [
-            _wrap_tool(
+            wrap(
                 t,
                 guard=guard,
                 budget=budget,
@@ -556,16 +753,31 @@ class PydanticAIRuntime:
             ctx: Any, call_tool: Any, name: str, tool_args: dict[str, Any]
         ) -> Any:
             # Same guard + budget gate as local tools, so MCP tool calls
-            # cannot bypass governance/approval/budget (BL-001/073).
-            soft = await _gate(
-                name,
-                tool_args,
-                guard=guard,
-                budget=budget,
-                resume=resume,
-                state=state,
-                used_approvals=used_approvals,
-            )
+            # cannot bypass governance/approval/budget (BL-001/073). In
+            # deferred mode the gate raises ApprovalRequired through the
+            # toolset call path, the same collection mechanism as local
+            # tools (BL-114).
+            if deferred:
+                soft = await _deferred_gate(
+                    name,
+                    tool_args,
+                    ctx,
+                    guard=guard,
+                    budget=budget,
+                    resume=resume,
+                    state=state,
+                    used_approvals=used_approvals,
+                )
+            else:
+                soft = await _gate(
+                    name,
+                    tool_args,
+                    guard=guard,
+                    budget=budget,
+                    resume=resume,
+                    state=state,
+                    used_approvals=used_approvals,
+                )
             if soft is not None:
                 return soft
             started = time.perf_counter()
@@ -580,9 +792,18 @@ class PydanticAIRuntime:
                     )
 
         toolsets = [_to_pydantic_mcp(s, _mcp_process) for s in (mcp_servers or [])]
+        output_type = self._output_type
+        if deferred:
+            # The leg must be able to end with the collected approval
+            # requests; the union keeps the declared output type for
+            # the non-paused completion (BL-114).
+            from pydantic_ai import DeferredToolRequests
+
+            existing = list(output_type) if isinstance(output_type, list | tuple) else [output_type]
+            output_type = [*existing, DeferredToolRequests]
         return Agent(
             self.model,
-            output_type=self._output_type,
+            output_type=output_type,
             instructions=self._instructions,
             tools=wrapped,
             toolsets=toolsets,
@@ -601,6 +822,14 @@ class PydanticAIRuntime:
         resume: ResumableState | None = None,
     ) -> Any:
         state = _GuardState(soft_reject_as_error=self._soft_reject_as_error)
+        deferred = self._approval_mode == "deferred"
+        # Deferred resume inputs are rebuilt once, before the attempt
+        # loop: a malformed or undecided state fails loud here, at the
+        # call boundary, not mid-retry (BL-114).
+        history: Any = None
+        results: Any = None
+        if deferred and resume is not None:
+            history, results = _deferred_resume_inputs(resume)
         policy = self._retry_policy
         tripped = (
             policy is not None
@@ -646,10 +875,22 @@ class PydanticAIRuntime:
                 resume=resume,
                 state=state,
                 used_approvals=used_approvals,
+                deferred=deferred,
             )
 
             async def _invoke(agent: Any = agent) -> Any:
                 async with agent:
+                    if history is not None:
+                        # Continuation, not replay (BL-114): the paused
+                        # leg's history plus the human decisions; prior
+                        # tool calls are already in the history and do
+                        # not re-execute.
+                        return await agent.run(
+                            None,
+                            message_history=history,
+                            deferred_tool_results=results,
+                            deps=deps,
+                        )
                     return await agent.run(prompt, deps=deps)
 
             try:
@@ -703,6 +944,11 @@ class PydanticAIRuntime:
             return self._resumable(state, prompt)
 
         if budget is not None:
+            # In deferred mode this also charges a PAUSED leg's usage:
+            # unlike a replay-mode pause (an aborted run with no usage
+            # to read), the deferred leg completed and its tokens are
+            # real spend; a budget overflow at the pause boundary is
+            # authoritative and raises here (BL-114).
             usage = _usage(result)
             tokens = (usage.input_tokens or 0) + (usage.output_tokens or 0)
             if tokens:
@@ -710,6 +956,16 @@ class PydanticAIRuntime:
             _surface_cache_tokens(budget, usage)
             budget.consume_step(getattr(usage, "requests", 0) or 0)
             budget.check_wall_clock()
+        if deferred:
+            from pydantic_ai import DeferredToolRequests
+
+            if isinstance(result.output, DeferredToolRequests):
+                if result.output.calls:
+                    raise HarnessError(
+                        "external tool-execution requests are not supported by the "
+                        "harness; only approval requests can defer a run"
+                    )
+                return self._deferred_resumable(prompt, result.output, result, resume)
         return result.output
 
     async def _with_watchdog(
@@ -769,6 +1025,51 @@ class PydanticAIRuntime:
             input_payload={"prompt": prompt},
             pending_approvals=[state.pause],
             trace_id=uuid.uuid4().hex,
+        )
+
+    def _deferred_resumable(
+        self,
+        prompt: str,
+        requests: Any,
+        result: Any,
+        resume: ResumableState | None,
+    ) -> ResumableState:
+        """Build the pause state for a deferred leg (BL-114).
+
+        Interruption ids are the run's own tool_call_ids (stable
+        handles minted with the message history, unlike the per-check
+        guard ids of replay mode), so the caller's decisions map
+        directly onto DeferredToolResults; the (tool, arguments)
+        binding is still verified at execution time (BL-193). The
+        original prompt and trace_id carry forward across re-pauses so
+        a multi-pause run stays one correlated conversation.
+        """
+        from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+        now = datetime.now(UTC)
+        pending = [
+            ApprovalInterruption(
+                id=tc.tool_call_id,
+                created_at=now,
+                tool=tc.tool_name,
+                arguments=tc.args_as_dict(),
+            )
+            for tc in requests.approvals
+        ]
+        payload = dict(resume.input_payload) if resume is not None else {"prompt": prompt}
+        return ResumableState(
+            contract_name=self.name,
+            contract_version="",
+            workload=self.name,
+            input_payload=payload,
+            pending_approvals=pending,
+            trace_id=resume.trace_id if resume is not None else uuid.uuid4().hex,
+            runtime_state={
+                "mode": "deferred",
+                "messages": ModelMessagesTypeAdapter.dump_python(
+                    result.all_messages(), mode="json"
+                ),
+            },
         )
 
     async def stream(
