@@ -17,9 +17,13 @@
 Conventional Commits style (`feat:`, `fix:`, `docs:`, `refactor:`,
 `test:`, `chore:`, `build:`, `ci:`).
 
-Sign off every commit (Developer Certificate of Origin 1.1):
-`git commit -s`. The trailer `Signed-off-by: Name <email>` certifies
-you may submit the work under the project license.
+Submitting a pull request certifies the Developer Certificate of
+Origin 1.1 for its contents: you have the right to submit the work
+under the project license. A per-commit `Signed-off-by` trailer
+(`git commit -s`) is welcome but not required: pull requests are
+squash-merged, which consolidates per-commit trailers away, so the
+pull request itself is the certification record (`BL-241`,
+ADR 0025).
 
 ## Licensing
 
@@ -37,8 +41,8 @@ welcome where the file type supports comments (the `REUSE.toml`
 tree-wide default), but it is no longer required.
 <!-- REUSE-IgnoreEnd -->
 
-Per-commit DCO sign-off is required; see "Commit messages and
-sign-off".
+DCO certification is by pull-request submission; see "Commit
+messages and sign-off".
 
 ## PR description
 
