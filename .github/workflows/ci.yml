@@ -101,6 +101,27 @@ jobs:
         # republished under the same ID.
         run: uvx --python 3.12 pip-audit --strict --progress-spinner=off -r audit-requirements.txt
 
+  # BL-240: continuous secret scan over the working tree and the
+  # reachable history (fetch-depth 0), making the per-audit manual
+  # scan a blocking gate. The only allowlisted finding is the
+  # synthetic AKIA redaction fixture (.gitleaks.toml); GitHub secret
+  # scanning and CodeQL stay the compensating controls for pattern
+  # classes gitleaks does not cover. PR comments are disabled so the
+  # job needs no write permission (least privilege, like every other
+  # job here).
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: ${{ github.workspace }}/.gitleaks.toml
+          GITLEAKS_ENABLE_COMMENTS: "false"
+
   # BL-130: the behavioural regression gate. CI verifies code shape;
   # this fails when dispatch routing quality (P@1 / MRR over the
   # in-tree golden set, deterministic KeywordDispatcher) regresses
@@ -124,14 +145,15 @@ jobs:
   ci-success:
     name: ci-success
     if: always()
-    needs: [lint, type-check, test, dependency-audit, evaluation]
+    needs: [lint, type-check, test, dependency-audit, secret-scan, evaluation]
     runs-on: ubuntu-latest
     steps:
       - name: Require all CI jobs to have succeeded
         run: |
-          echo "lint=${{ needs.lint.result }} type-check=${{ needs.type-check.result }} test=${{ needs.test.result }} dependency-audit=${{ needs.dependency-audit.result }} evaluation=${{ needs.evaluation.result }}"
+          echo "lint=${{ needs.lint.result }} type-check=${{ needs.type-check.result }} test=${{ needs.test.result }} dependency-audit=${{ needs.dependency-audit.result }} secret-scan=${{ needs.secret-scan.result }} evaluation=${{ needs.evaluation.result }}"
           [ "${{ needs.lint.result }}" = "success" ] \
             && [ "${{ needs.type-check.result }}" = "success" ] \
             && [ "${{ needs.test.result }}" = "success" ] \
             && [ "${{ needs.dependency-audit.result }}" = "success" ] \
+            && [ "${{ needs.secret-scan.result }}" = "success" ] \
             && [ "${{ needs.evaluation.result }}" = "success" ]

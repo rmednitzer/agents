@@ -14,7 +14,7 @@ Last reviewed: 2026-06-12 (ADR 0025 fourteenth audit landed; ADR 0024 was taken 
 2. ID discipline (`docs/backlog.md`): IDs are stable; `[pending]` -> `[in-progress]` (with branch) -> `[resolved]` (with merge commit). New L3 items use the next free `BL-1xx`.
 3. Documentation style (`CLAUDE.md`): no em-dashes, no `--` as prose punctuation outside HTML comments and code spans. Use commas, colons, or parentheses. Direct, technical, no marketing voice. ISO 8601 dates, 24h UTC.
 4. ADR immutability (`docs/adr/README.md`): an ADR is Accepted and frozen; a later ADR supersedes an earlier one rather than editing it. Errata are recorded forward, not in place.
-5. Green-gate set (`Makefile`, `.github/workflows/ci.yml`): `ruff check`, `ruff format --check`, `mypy` (strict, plugins=pydantic.mypy), `pytest` with `--cov-fail-under=94`, `gen_schema.py --check`, `reuse lint`, the `dependency-audit` job (pip-audit over the exported lockfile), and the `evaluation` job (`scripts/eval.py`, P@1=1.0 / MRR=1.0). The branch protection required context is `ci-success`, the stable aggregate.
+5. Green-gate set (`Makefile`, `.github/workflows/ci.yml`): `ruff check`, `ruff format --check`, `mypy` (strict, plugins=pydantic.mypy), `pytest` with `--cov-fail-under=94`, `gen_schema.py --check`, `reuse lint`, the `dependency-audit` job (`uv lock --check`, then pip-audit over the exported lockfile), the `secret-scan` job (gitleaks with the `.gitleaks.toml` allowlist, BL-240), and the `evaluation` job (`scripts/eval.py`, P@1=1.0 / MRR=1.0). The branch protection required context is `ci-success`, the stable aggregate.
 
 ## 1. Prep: read the truth set
 
@@ -52,6 +52,7 @@ uv run python scripts/eval.py     # the BL-130 evaluation gate (P@1 / MRR == 1.0
 uv lock --check                   # lockfile freshness against pyproject.toml (BL-237); CI runs this inside the dependency-audit job
 uv export --frozen --all-extras --no-emit-project --format requirements-txt -o /tmp/audit.txt
 uvx --python 3.12 pip-audit --strict --progress-spinner=off -r /tmp/audit.txt
+gitleaks detect --source . --no-banner --redact --config .gitleaks.toml   # the secret-scan job (BL-240)
 uv run pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov=evaluation --cov-fail-under=94   # CI's test job enforces 94%; make check does not
 ```
 
@@ -194,6 +195,7 @@ uv run python scripts/eval.py --min-p-at-1 1.0 --min-mrr 1.0                # th
 uv lock --check && \
   uv export --frozen --all-extras --no-emit-project --format requirements-txt -o /tmp/audit.txt && \
   uvx --python 3.12 pip-audit --strict --progress-spinner=off -r /tmp/audit.txt   # the dependency-audit job
+gitleaks detect --source . --no-banner --redact --config .gitleaks.toml          # the secret-scan job (BL-240)
 ```
 
 For the schema, regenerate and confirm no drift:
@@ -317,7 +319,7 @@ The list below covers every `.md` file in the repository (excluding `LICENSES/` 
 | `STATUS.md` | living | Last-reviewed date is today; the phase-tracking table cites the latest ADR; the document-maturity table covers every `.md` in the tree (the table mentions `0001-0025`); the L3-open row is the current `[pending]` set | Every audit, every release rehearsal |
 | `LIMITATIONS.md` | living | Last-reviewed date is today; the L-entries map to the open `BL-1xx` set; an L-entry the audit closed is removed (and the close noted in the ADR); a new L-entry is added only for a contract-level remainder | Every audit |
 | `CHANGELOG.md` | living | `[Unreleased]` covers everything not yet tagged; the per-section subsections (`Added` / `Fixed` / `Security` / `Changed` / `Documentation`) match the diff; ISO dates; no em-dashes | Every PR with a material change |
-| `CONTRIBUTING.md` | stable | The DCO certification note (PR-submission based, `BL-241`); the REUSE compliance note; the green-gate set matches `.github/workflows/ci.yml` (today: lint, type-check, test, dependency-audit, evaluation); the governance section | A change to CI, a change to the contributing flow |
+| `CONTRIBUTING.md` | stable | The DCO certification note (PR-submission based, `BL-241`); the REUSE compliance note; the green-gate set matches `.github/workflows/ci.yml` (today: lint, type-check, test, dependency-audit, secret-scan, evaluation); the governance section | A change to CI, a change to the contributing flow |
 | `SECURITY.md` | stable | The hardening posture list covers the latest defence-in-depth fixes (today the ADR 0025 fourteenth-audit supply-chain additions: `BL-236` stale-suppression removal and `BL-237` lockfile-freshness gate on the dependency-audit job; plus the ADR 0023 thirteenth-audit addition: `BL-233` `S3Store._sweep_sync` / `DynamoDBStore._sweep_sync` per-item DELETE containment so one transient backend error cannot abort the whole periodic sweep pass and strand every later expired item, extending the BL-227 eviction-path containment to the sibling sweep path; plus the ADR 0022 twelfth-audit `BL-231` / `BL-232` non-finite numeric configuration validation so a `NaN` / `+inf` limit cannot silently disable a budget ceiling and a `NaN` sweep interval cannot drive a self-inflicted busy-sweep; plus the ADR 0021 eleventh-audit `BL-229` S3 metadata-scan HEAD not-found containment so a concurrently-deleted object cannot crash `sweep_expired` / `evict_to_capacity`; plus the ADR 0020 tenth-audit `BL-226` S3 user-metadata trust-boundary parsing and `BL-227` `BoundedS3Store.evict_to_capacity` per-key delete containment, the ADR 0019 `BL-223` `MultiSink` per-sink failure containment, the ADR 0018 set `BL-219` / `BL-220` / `BL-221` / `BL-222`, and the ADR 0017 set `BL-216` / `BL-217`); the untrusted-content section is the current canonical wording; the scope section covers every load surface; the supported-version line matches `STATUS.md` | A change to a load surface, an audit that adds a hardening item |
 
 ### 8.2 `docs/` (six files plus the ADR set)

@@ -1,0 +1,17 @@
+# Gitleaks configuration for the secret-scan CI job (BL-240, ADR 0025).
+#
+# Extends the default ruleset. The only allowlisted finding is the
+# deliberately fake AWS access key id used as a fixture by the
+# redaction tests (tests/harness/test_redaction.py) and quoted by the
+# audit evidence that documents it (audit/02-security-findings.md).
+# The allowlist matches the literal fixture value, not the files, so
+# a real credential pasted into those files still fires.
+
+title = "agents gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic AKIA fixture from the redaction tests (finding F-3, BL-240)"
+regexes = ['''AKIA1234567890ABCDEF''']

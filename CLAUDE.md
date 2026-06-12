@@ -189,7 +189,8 @@ Uses `uv`. Set up: `uv sync --all-extras` (installs every optional backend plus 
 - CI also runs `uvx reuse lint` (REUSE 3.x compliance via `REUSE.toml`),
   a blocking `dependency-audit` job (`uv lock --check` lockfile
   freshness, then `pip-audit` over the exported lockfile, no advisory
-  suppressions), and a blocking `evaluation` job
+  suppressions), a blocking `secret-scan` job (gitleaks with the
+  `.gitleaks.toml` allowlist, BL-240), and a blocking `evaluation` job
   (`python scripts/eval.py`, the BL-130 dispatch P@1/MRR regression
   gate), all in the `ci-success` aggregate gate.
 
