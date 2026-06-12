@@ -124,6 +124,39 @@ runtime = PydanticAIRuntime(model="anthropic:claude-opus-4-7")
 # pass to harness.enforcement.run_under_contract(runtime=runtime, ...)
 ```
 
+## Prompt caching (BL-132 / BL-171, ADR 0026)
+
+`model_settings` is forwarded verbatim to the underlying Agent, so
+provider-side cache breakpoints are an opt-in construction argument,
+not a harness concept. For Anthropic, pin the stable tools/system
+prefix:
+
+```python
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+from harness.runtime import PydanticAIRuntime
+
+runtime = PydanticAIRuntime(
+    "anthropic:claude-opus-4-8",
+    instructions=STABLE_SYSTEM_PREFIX,
+    model_settings=AnthropicModelSettings(
+        anthropic_cache_instructions=True,
+        anthropic_cache_tool_definitions=True,
+    ),
+)
+```
+
+The provider's cache hit/creation counts land on the run's
+`BudgetTracker` (`tracker.cache_read_tokens` /
+`tracker.cache_write_tokens`). They are not charged to `max_tokens`
+(upstream reports them outside `input_tokens`); a pricing-aware
+caller pairs them with `consume_cost` to bound spend (`BL-123`).
+Whether a live provider actually serves a cache hit is observable
+only against a real API: the wiring is covered deterministically and
+the live assertion (an identical-prefix second run reporting
+`cache_read_tokens > 0`) is part of `BL-120`
+(`LIMITATIONS.md` L9).
+
 ## Testing without a provider
 
 `PydanticAIRuntime.model` accepts a model instance as well as a string, so

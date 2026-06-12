@@ -30,7 +30,10 @@ adapters), the compaction / summarisation / tiering wave
 (ADR 0024, `BL-234` / `BL-235`, closing `BL-135`), and the
 fourteenth-audit process hardening (ADR 0025, `BL-236`-`BL-239`:
 stale pip-audit suppression removed, lockfile-freshness CI gate,
-unused `logfire` declaration dropped, comment-accuracy fixes) on
+unused `logfire` declaration dropped, comment-accuracy fixes), and
+prompt caching on the runtime adapter (ADR 0026, `BL-132` /
+`BL-171`: opt-in `model_settings` pass-through + cache-token
+surfacing, live cache-hit validation coupled to `BL-120`) on
 `main` (see
 [docs/backlog.md](./docs/backlog.md),
 [ADR 0007](./docs/adr/0007-l2-implementation-wave.md),
@@ -49,7 +52,8 @@ unused `logfire` declaration dropped, comment-accuracy fixes) on
 [ADR 0022](./docs/adr/0022-twelfth-code-audit.md),
 [ADR 0023](./docs/adr/0023-thirteenth-code-audit.md),
 [ADR 0024](./docs/adr/0024-compaction-summarisation-and-tiering.md),
-[ADR 0025](./docs/adr/0025-fourteenth-audit-full-pass.md)).
+[ADR 0025](./docs/adr/0025-fourteenth-audit-full-pass.md),
+[ADR 0026](./docs/adr/0026-prompt-caching-on-the-runtime-adapter.md)).
 Every L2/L3 change is additive to the L1 Protocols: new optional
 parameters, new modules, and side-by-side Protocols; nothing in the L1
 surface was removed. The package imports and type-checks with no
@@ -92,8 +96,12 @@ See [CLAUDE.md](./CLAUDE.md) for repository structure and conventions.
   same guard gate (approve / reject / require-approval), a wall-clock
   watchdog (preempts at an await boundary), streaming budget
   enforcement, a pause/`ResumableState`/resume approval flow, an opt-in
-  `RetryPolicy` (backoff + circuit breaker), and an opt-in structured
-  soft-reject. Provider selection and credentials:
+  `RetryPolicy` (backoff + circuit breaker), an opt-in structured
+  soft-reject, and an opt-in `model_settings` pass-through with
+  prompt-cache token surfacing (`BL-132`/`BL-171`: Anthropic cache
+  breakpoints ride `AnthropicModelSettings`; cache hit/creation
+  counts land on the `BudgetTracker`, not charged to `max_tokens`).
+  Provider selection and credentials:
   [docs/runtime-providers.md](./docs/runtime-providers.md).
 - **Memory.** Namespace-bound `MemoryStore` with `InMemoryStore`
   reference plus `SQLiteStore`, `RedisStore`, `S3Store`, `DynamoDBStore`
