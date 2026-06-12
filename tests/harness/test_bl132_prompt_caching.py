@@ -153,6 +153,36 @@ async def test_stream_completes_with_zero_cache_counters_on_testmodel() -> None:
     assert tracker.cache_write_tokens == 0
 
 
+async def test_stream_invokes_cache_surfacing_at_final_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Pins that stream() calls the surfacing hook exactly once, with
+    # the run's tracker, at the final reconciliation: a refactor that
+    # drops the call in stream() fails here even though TestModel
+    # reports zero cache counts (no public stream API injects them).
+    # The recording wrapper calls through, so the real path still runs.
+    import harness.runtime as runtime_module
+
+    real = runtime_module._surface_cache_tokens
+    calls: list[tuple[Any, Any]] = []
+
+    def recording(budget: Any, usage: Any) -> None:
+        calls.append((budget, usage))
+        real(budget, usage)
+
+    monkeypatch.setattr(runtime_module, "_surface_cache_tokens", recording)
+    rt = PydanticAIRuntime(TestModel(custom_output_text="abc"))
+    tracker = BudgetTracker(ActionBudget())
+    chunks = [c async for c in rt.stream("p", budget=tracker)]
+    assert "".join(chunks) == "abc"
+    assert len(calls) == 1
+    assert calls[0][0] is tracker
+    # The surfaced object is the stream's own usage: feeding it back
+    # through the real hook is idempotent for zero counts.
+    assert tracker.cache_read_tokens == 0
+    assert tracker.cache_write_tokens == 0
+
+
 # --- BudgetTracker.consume_cache_tokens contract ------------------------
 
 
