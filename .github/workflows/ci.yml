@@ -84,18 +84,12 @@ jobs:
         # constraint that breaks pip's `--require-hashes` mode. The
         # audit env must match what is actually installed.
         #
-        # --ignore-vuln PYSEC-2025-183 (CVE-2025-45768): a
-        # maintainer-DISPUTED advisory against pyjwt
-        # (https://osv.dev/vulnerability/PYSEC-2025-183). The reporter
-        # claims weak encryption because pyjwt accepts a short symmetric
-        # key; the upstream maintainer rejects this as an
-        # application-level concern (the application chooses the key
-        # length, not the library) and has not released a fix. pyjwt is
-        # only reachable in this tree as a deep transitive of
-        # `mcp` -> `pydantic-ai-slim` -> `pydantic-ai`; we use no JWT
-        # path. Revisit when the advisory is withdrawn, a non-disputed
-        # CVE replaces it, or pyjwt ships a hardened default.
-        run: uvx --python 3.12 pip-audit --strict --progress-spinner=off --ignore-vuln PYSEC-2025-183 -r audit-requirements.txt
+        # BL-236: the PYSEC-2025-183 (pyjwt) suppression carried here
+        # since BL-194 was removed on 2026-06-12: the locked pyjwt
+        # (2.13.0) is no longer flagged, so the unsuppressed audit is
+        # clean and a kept ignore could only mask a future advisory
+        # republished under the same ID.
+        run: uvx --python 3.12 pip-audit --strict --progress-spinner=off -r audit-requirements.txt
 
   # BL-130: the behavioural regression gate. CI verifies code shape;
   # this fails when dispatch routing quality (P@1 / MRR over the

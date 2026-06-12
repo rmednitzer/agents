@@ -50,7 +50,7 @@ uvx reuse lint                    # REUSE 3.x compliance (BL-152); CI runs this 
 make schema                       # regenerate JSON Schema, then diff against committed (the test suite also gates this via tests/workloads/test_schema.py)
 uv run python scripts/eval.py     # the BL-130 evaluation gate (P@1 / MRR == 1.0)
 uv export --frozen --all-extras --no-emit-project --format requirements-txt -o /tmp/audit.txt
-uvx --python 3.12 pip-audit --strict --progress-spinner=off --ignore-vuln PYSEC-2025-183 -r /tmp/audit.txt
+uvx --python 3.12 pip-audit --strict --progress-spinner=off -r /tmp/audit.txt
 uv run pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov=evaluation --cov-fail-under=94   # CI's test job enforces 94%; make check does not
 ```
 
@@ -191,7 +191,7 @@ uv run ruff format --check . && uvx reuse lint                              # th
 uv run pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov=evaluation --cov-fail-under=94  # the test job's coverage leg
 uv run python scripts/eval.py --min-p-at-1 1.0 --min-mrr 1.0                # the evaluation job
 uv export --frozen --all-extras --no-emit-project --format requirements-txt -o /tmp/audit.txt && \
-  uvx --python 3.12 pip-audit --strict --progress-spinner=off --ignore-vuln PYSEC-2025-183 -r /tmp/audit.txt   # the dependency-audit job
+  uvx --python 3.12 pip-audit --strict --progress-spinner=off -r /tmp/audit.txt   # the dependency-audit job
 ```
 
 For the schema, regenerate and confirm no drift:
