@@ -125,3 +125,14 @@ Each row lists what was checked and the session evidence.
 | Evidence | `grep -ln "ADR 0024" *.md docs/*.md` excludes `README.md` and `docs/README.md`; the runbook lines were read in place; `git diff --stat d704f23..HEAD` confirms `README.md` and `docs/README.md` were not touched by the ADR 0024 wave. |
 | Recommended fix | Post-ADR-0024 sweep per the runbook's own section 8 procedure. |
 | Effort / disposition | S; **fixed this pass** (Phase 5 commits) |
+
+### D-8: CONTRIBUTING.md mandates DCO sign-off; history carries none and CI does not enforce it
+
+| Field | Value |
+|---|---|
+| Severity | info (governance documentation vs practice) |
+| Location | `CONTRIBUTING.md` "Commit messages and sign-off" ("Sign off every commit ... `git commit -s`"; "Per-commit DCO sign-off is required") |
+| Evidence | `git log --format="%h %an%n%(trailers:key=Signed-off-by)" origin/main` over recent history: no `Signed-off-by` trailer on any commit, including the maintainer's own squash merges and the renovate bot's. None of the three workflows runs a DCO check (all read in full this session). Squash-merging routinely drops per-commit trailers, so the requirement as written is neither practiced in the visible history nor enforced. |
+| Exploit plausibility | None; legal-process documentation accuracy only. |
+| Recommended fix | Maintainer decision: either enforce (DCO check app or CI job) or reword CONTRIBUTING.md to match practice (for example, require sign-off on PR commits and note that squash-merge consolidates them). Not changed in this pass: the choice belongs to the maintainer. |
+| Effort / disposition | S; **deferred to backlog** (proposed as `BL-241`) |
