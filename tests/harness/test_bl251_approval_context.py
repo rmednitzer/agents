@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -33,6 +34,7 @@ from harness.guard import GuardDecision, HarnessToolGuard, ToolGuard
 from harness.interruption import ApprovalInterruption, ResumableState
 
 _PLAN = "scale prod back to the prior revision"
+_CREATED = datetime(2026, 6, 13, tzinfo=UTC)
 
 
 def _planner() -> MappingRollbackPlanner:
@@ -114,7 +116,7 @@ async def test_guard_rollback_plan_none_when_planner_has_no_entry() -> None:
 def test_interruption_round_trips_tier_and_plan_through_json() -> None:
     ai = ApprovalInterruption(
         id="x",
-        created_at="2026-06-13T00:00:00+00:00",  # type: ignore[arg-type]
+        created_at=_CREATED,
         tool="deploy",
         arguments={"env": "prod"},
         tier=AuthorityTier.IRREVERSIBLE,
@@ -131,7 +133,7 @@ def test_interruption_round_trips_tier_and_plan_through_json() -> None:
 def test_interruption_defaults_are_none() -> None:
     ai = ApprovalInterruption(
         id="x",
-        created_at="2026-06-13T00:00:00+00:00",  # type: ignore[arg-type]
+        created_at=_CREATED,
         tool="t",
     )
     assert ai.tier is None
