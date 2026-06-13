@@ -63,6 +63,8 @@ from harness.events import (
     RecoveryApplied,
     SkillDispatched,
 )
+from harness.fallback import FallbackChain, default_should_descend
+from harness.freshness import Refusal, is_stale, require_fresh
 from harness.grounding import grounding_predicate, ungrounded_citations
 from harness.guard import (
     GuardDecision,
@@ -131,6 +133,7 @@ __all__ = [
     "DriftMonitor",
     "DriftThresholdCrossed",
     "EventSink",
+    "FallbackChain",
     "FunctionPredicate",
     "GovernanceViolated",
     "GovernanceViolation",
@@ -173,6 +176,7 @@ __all__ = [
     "RecoveryOutcome",
     "RedactingSink",
     "Redactor",
+    "Refusal",
     "ResumableState",
     "RetryPolicy",
     "RollbackPlanner",
@@ -188,10 +192,13 @@ __all__ = [
     "cache_control_system",
     "compose_contracts",
     "contract_digest",
+    "default_should_descend",
     "grounding_predicate",
+    "is_stale",
     "jensen_shannon_divergence",
     "predicate",
     "record_invariant_violations",
+    "require_fresh",
     "run_under_contract",
     "ungrounded_citations",
     "verify_run_record",

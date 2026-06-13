@@ -39,6 +39,7 @@ from pydantic import BaseModel, ConfigDict
 from memory.store import MemoryStore
 
 __all__ = [
+    "ContextPack",
     "Decision",
     "Event",
     "InvalidTransition",
@@ -49,6 +50,7 @@ __all__ = [
     "TaskNotFound",
     "TaskStatus",
     "Thread",
+    "context_pack",
 ]
 
 
@@ -412,3 +414,55 @@ class Journal:
         if category is not None:
             events = [e for e in events if e.category == category]
         return sorted(events, key=lambda e: (e.occurred_at, e.id))
+
+
+class ContextPack(BaseModel):
+    """A session-start snapshot assembled from a `Journal` (BL-249).
+
+    The operational context a fresh session needs to pick up where the
+    last one left off: what is actionable now (`ready_tasks`,
+    `in_progress_tasks`), what is neglected (`stale_threads`) versus still
+    fresh (`open_threads`), and the latest reasoning (`recent_decisions`).
+    Immutable; `context_pack` builds it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    ready_tasks: tuple[Task, ...]
+    in_progress_tasks: tuple[Task, ...]
+    stale_threads: tuple[Thread, ...]
+    open_threads: tuple[Thread, ...]
+    recent_decisions: tuple[Decision, ...]
+
+
+async def context_pack(
+    journal: Journal,
+    *,
+    now: datetime | None = None,
+    recent_decisions: int = 5,
+) -> ContextPack:
+    """Assemble a session-rehydration `ContextPack` from ``journal`` (BL-249).
+
+    The session-start context refresh: the ready and in-progress tasks,
+    the stale threads (idle past their window at ``now``) split from the
+    still-fresh open threads, and the most recent ``recent_decisions``
+    decisions. Read-only; the hardened single-shot / scheduled envelope a
+    workload runs this inside is a deployment pattern (ADR 0035), not a
+    contract change. ``recent_decisions`` must be non-negative.
+    """
+    if recent_decisions < 0:
+        raise ValueError(f"recent_decisions must be non-negative, got {recent_decisions}")
+    ready = await journal.ready_tasks()
+    in_progress = [t for t in await journal.list_tasks() if t.status is TaskStatus.IN_PROGRESS]
+    stale = await journal.stale_threads(now=now)
+    stale_ids = {t.id for t in stale}
+    open_threads = [t for t in await journal.list_threads() if t.id not in stale_ids]
+    decisions = await journal.decisions()
+    tail = decisions[-recent_decisions:] if recent_decisions else []
+    return ContextPack(
+        ready_tasks=tuple(ready),
+        in_progress_tasks=tuple(in_progress),
+        stale_threads=tuple(stale),
+        open_threads=tuple(open_threads),
+        recent_decisions=tuple(tail),
+    )
