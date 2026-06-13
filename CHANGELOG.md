@@ -3,6 +3,42 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Structured operational-memory journal (ADR 0034, BL-245, 2026-06-13)
+
+The largest item from the Vertex MCP analysis: a cognitive schema over
+the key/value store, so an agent has first-class tasks, threads,
+decisions, and events instead of opaque blobs. Additive to L1 (ADR 0007).
+
+### Added
+
+- `memory/journal.py`: typed records (`Task`, `Thread`, `Decision`,
+  `Event`) plus a `Journal` driver bound to a `MemoryStore`, serializing
+  each record to JSON bytes under a `"<kind>.<id>"` key so it inherits
+  the store's namespace, TTL, audit, and encryption.
+- The task FSM: `TaskStatus` with an explicit `_TASK_TRANSITIONS` table,
+  `transition_task` (an illegal move raises `InvalidTransition`; every
+  transition appends to the append-only log), and `ready_tasks` (the
+  dependency-edge query: a `PENDING` task whose every dependency is
+  `DONE`).
+- The thread stale-after query: `open_thread` / `touch_thread` and
+  `stale_threads(now)` (threads idle past `stale_after_seconds`).
+- The decision log (`record_decision` / `decisions`) and the categorized
+  timeline (`log_event` / `timeline(category=)`).
+- 18 deterministic tests (`tests/memory/test_bl245_journal.py`);
+  `memory/journal.py` at 100% line coverage.
+
+### Notes
+
+- A driver over the store Protocols (the `MemoryCompactor` precedent),
+  not a new store Protocol: no adapter changes, nothing faked (ADR 0004).
+  Records are immutable (copy-on-write via `model_copy`).
+- `transition_task` / `touch_thread` are read-modify-write over the L1
+  surface, not version-gated, so a multi-writer deployment should use the
+  single-writer-per-key posture (BL-224 / BL-225) or layer a versioned
+  store; version-gated mutation, dependency-cycle rejection, and the
+  `BL-249` `context_pack` session-rehydration helper are follow-ups now
+  unblocked.
+
 ## [Unreleased] Bitemporal fact store (ADR 0032, BL-250, 2026-06-13)
 
 The held-out half of BL-247 (ADR 0028): a memory-layer model of validity
