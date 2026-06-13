@@ -13,12 +13,15 @@ makes the tier drive the approval requirement.
 This module ships the taxonomy (``AuthorityTier``), the
 ``TierClassifier`` Protocol (workload-supplied, like memory's
 ``Embedder`` or the dispatcher's lanes, so the framework binds no domain
-knowledge, ADR 0001), and the deterministic ``MappingTierClassifier``
-reference. ``HarnessToolGuard`` consumes a classifier to escalate a
-Tier 2-or-above action to REQUIRE_APPROVAL beyond the static
-``approval_required`` list (ADR 0029). The rollback-plan and
-evidence-capture refinements on the Tier 2 / 3 approval context are
-tracked forward (``BL-251``).
+knowledge, ADR 0001), the deterministic ``MappingTierClassifier``
+reference, and the ``RollbackPlanner`` Protocol with its
+``MappingRollbackPlanner`` reference (BL-251). ``HarnessToolGuard``
+consumes a classifier to escalate a Tier 2-or-above action to
+REQUIRE_APPROVAL beyond the static ``approval_required`` list (ADR 0029),
+and an optional planner to attach a proposed undo path to the resulting
+``ApprovalInterruption`` (ADR 0031). The evidence-capture hook and the
+two-step parameter-restatement confirmation on the Tier 3 approval
+context are tracked forward (``BL-252``).
 """
 
 from __future__ import annotations
@@ -27,7 +30,13 @@ from collections.abc import Mapping
 from enum import IntEnum
 from typing import Any, Protocol, runtime_checkable
 
-__all__ = ["AuthorityTier", "MappingTierClassifier", "TierClassifier"]
+__all__ = [
+    "AuthorityTier",
+    "MappingRollbackPlanner",
+    "MappingTierClassifier",
+    "RollbackPlanner",
+    "TierClassifier",
+]
 
 
 class AuthorityTier(IntEnum):
@@ -97,3 +106,43 @@ class MappingTierClassifier:
 
     def classify(self, tool: str, arguments: dict[str, Any]) -> AuthorityTier:
         return self._tiers.get(tool, self._default)
+
+
+@runtime_checkable
+class RollbackPlanner(Protocol):
+    """Proposes how a tool call requiring approval would be undone (BL-251).
+
+    Supplied by the workload (the framework binds no domain knowledge,
+    ADR 0001, the ``TierClassifier`` / ``Embedder`` stance). ``plan``
+    returns a human-readable description of how the proposed action would
+    be reversed, or ``None`` when no plan applies (a read-only or
+    trivially reversible call). The guard consults it only on the
+    approval branch and carries the result onto the
+    ``ApprovalInterruption`` (ADR 0031) so the human approver sees the
+    proposed undo path alongside the action's tier. A model-driven
+    planner (the model drafts the rollback when proposing a stateful
+    change) satisfies the same Protocol; ``MappingRollbackPlanner`` is
+    the deterministic name-based reference. Must be pure and
+    side-effect-free: capturing evidence or executing the rollback is a
+    separate concern (tracked as BL-252).
+    """
+
+    def plan(self, tool: str, arguments: dict[str, Any]) -> str | None: ...
+
+
+class MappingRollbackPlanner:
+    """A ``RollbackPlanner`` keyed on tool name (BL-251).
+
+    The deterministic in-tree reference (the ``MappingTierClassifier``
+    stance): a static tool-name-to-plan map. An unlisted tool returns
+    ``None`` (no plan), so a tool needing no rollback note is simply left
+    out of the map. Arguments are ignored here; a planner that
+    interpolates them (naming the exact key a delete would remove)
+    implements the Protocol directly.
+    """
+
+    def __init__(self, plans: Mapping[str, str]) -> None:
+        self._plans = dict(plans)
+
+    def plan(self, tool: str, arguments: dict[str, Any]) -> str | None:
+        return self._plans.get(tool)

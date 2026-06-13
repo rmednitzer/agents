@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
-from harness.authority import AuthorityTier, TierClassifier
+from harness.authority import AuthorityTier, RollbackPlanner, TierClassifier
 from harness.contract import Contract, Severity
 from harness.events import ApprovalRequested, GovernanceViolated
 from harness.sinks import EventSink, NullSink
@@ -68,9 +68,15 @@ class GuardResponse:
             this action (BL-242), or None when no classifier is
             configured. Carried on the APPROVE and REQUIRE_APPROVAL
             responses for the runtime and observability layers (a Tier 1
-            action can be logged or notified); never set on REJECT.
-            Surfacing the tier onto the human-facing ApprovalInterruption
-            is tracked as BL-251.
+            action can be logged or notified); never set on REJECT. The
+            runtime carries it onto the human-facing ApprovalInterruption
+            (BL-251, ADR 0031).
+        rollback_plan: For REQUIRE_APPROVAL, the proposed undo path a
+            workload-supplied RollbackPlanner returned for this action
+            (BL-251), or None when no planner is configured or it
+            returned no plan. The runtime carries it onto the
+            ApprovalInterruption so the approver sees how the action
+            would be reversed; never set on APPROVE or REJECT.
     """
 
     decision: GuardDecision
@@ -78,6 +84,7 @@ class GuardResponse:
     severity: Severity = Severity.HARD
     interruption_id: str | None = None
     tier: AuthorityTier | None = None
+    rollback_plan: str | None = None
 
 
 @runtime_checkable
@@ -96,7 +103,9 @@ class HarnessToolGuard:
     ``TierClassifier`` is supplied, the guard also enforces blast-radius
     authority tiers (BL-242): an action classified at ``approval_tier`` or
     above is escalated to REQUIRE_APPROVAL beyond the static
-    ``approval_required`` list.
+    ``approval_required`` list. An optional ``RollbackPlanner`` (BL-251)
+    is consulted on the approval branch to attach a proposed undo path to
+    the response; it never changes the decision.
     """
 
     def __init__(
@@ -107,6 +116,7 @@ class HarnessToolGuard:
         base_event_fields: dict[str, Any] | None = None,
         tier_classifier: TierClassifier | None = None,
         approval_tier: AuthorityTier = AuthorityTier.STATEFUL,
+        rollback_planner: RollbackPlanner | None = None,
     ) -> None:
         self._contract = contract
         self._sink: EventSink = sink if sink is not None else NullSink()
@@ -117,6 +127,11 @@ class HarnessToolGuard:
         # preserves the L1 flat behaviour.
         self._tier_classifier = tier_classifier
         self._approval_tier = approval_tier
+        # BL-251: an optional rollback planner consulted only when an
+        # action requires approval; its plan rides on the GuardResponse
+        # (and thence the ApprovalInterruption). None leaves rollback_plan
+        # None and changes nothing.
+        self._rollback_planner = rollback_planner
 
     async def check(self, tool: str, arguments: dict[str, Any]) -> GuardResponse:
         action = ProposedAction(tool=tool, arguments=arguments)
@@ -183,10 +198,19 @@ class HarnessToolGuard:
                         **self._base,
                     )
                 )
+            # BL-251: a supplied planner annotates the approval with a
+            # proposed undo path; it is consulted only here, never
+            # changes the decision, and stays None without a planner.
+            rollback_plan = (
+                self._rollback_planner.plan(tool, arguments)
+                if self._rollback_planner is not None
+                else None
+            )
             return GuardResponse(
                 decision=GuardDecision.REQUIRE_APPROVAL,
                 interruption_id=interruption_id,
                 tier=tier,
+                rollback_plan=rollback_plan,
             )
 
         return GuardResponse(decision=GuardDecision.APPROVE, tier=tier)

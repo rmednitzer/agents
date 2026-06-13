@@ -17,6 +17,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from harness.authority import AuthorityTier
+
 __all__ = [
     "ActionRecord",
     "ApprovalInterruption",
@@ -43,6 +45,20 @@ class ApprovalInterruption(Interruption):
     arguments: dict[str, Any] = Field(default_factory=dict)
     decision: Literal["pending", "approved", "denied"] = "pending"
     decision_reason: str | None = None
+    tier: AuthorityTier | None = None
+    """The proposed action's blast-radius AuthorityTier (BL-251), when a
+    TierClassifier is configured (ADR 0029 surfaced this onto the guard's
+    GuardResponse; ADR 0031 carries it through to the human-facing
+    interruption). ``None`` when no classifier is active. Lets an
+    approver (or a UI) see what kind of action they are confirming, the
+    same value across the replay and deferred resume paths."""
+    rollback_plan: str | None = None
+    """A human-readable description of how the proposed action would be
+    undone (BL-251, ADR 0031), produced by a workload-supplied
+    RollbackPlanner the guard consults on the approval branch. ``None``
+    when no planner is configured or the planner returns no plan. Pure
+    annotation: capturing evidence or executing the rollback is a
+    separate concern (BL-252)."""
 
 
 class ActionRecord(BaseModel):

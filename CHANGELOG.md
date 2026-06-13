@@ -3,6 +3,50 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Approval-context payload on the interruption (ADR 0031, BL-251, 2026-06-13)
+
+The data-carrying half of BL-251 (the held-out follow-on to the BL-242
+authority tiers): the blast-radius tier and a proposed rollback path now
+travel onto the human-facing approval interruption, so an approver (or a
+UI) sees what they are confirming and how it would be undone. Additive to
+L1 (ADR 0007); ADR 0031 is the cross-cutting why.
+
+### Added
+
+- `ApprovalInterruption.tier` and `ApprovalInterruption.rollback_plan`
+  (both optional, default `None`). ADR 0029 surfaced the tier onto the
+  guard's `GuardResponse`; this carries it, and a rollback plan, through
+  to the interruption, symmetrically across the replay and deferred
+  resume paths.
+- `RollbackPlanner` Protocol + `MappingRollbackPlanner` reference in
+  `harness/authority.py` (beside `TierClassifier`):
+  `plan(tool, arguments) -> str | None`, workload-supplied so the
+  framework binds no domain knowledge (ADR 0001). A model-driven planner
+  satisfies the same Protocol.
+- `GuardResponse.rollback_plan`; `HarnessToolGuard(rollback_planner=...)`
+  consulted only on the approval branch (it never changes a decision);
+  `run_under_contract(rollback_planner=...)` threading into the default
+  guard.
+- 15 deterministic tests
+  (`tests/harness/test_bl251_approval_context.py`);
+  `harness/authority.py`, `harness/guard.py`, and
+  `harness/interruption.py` at 100% line coverage.
+
+### Notes
+
+- The deferred path records `(tier, rollback_plan)` keyed by the call's
+  `tool_call_id` during the gate (the response is otherwise discarded
+  when it raises the framework's `ApprovalRequired`), so the deferred
+  pause carries the same approval context the replay path reads straight
+  off the `GuardResponse`. No change to the audited resume-verification
+  or side-effect semantics.
+- A `rollback_planner` only annotates an approval some other rule already
+  requires, so unlike `tier_classifier` it does not trigger guard
+  construction by itself.
+- The behavioural half of BL-251 (an evidence-capture hook around a
+  Tier 3 action, the two-step parameter-restatement confirmation on
+  resume) is split forward to `BL-252`.
+
 ## [Unreleased] DEGRADED disposition and grounding postconditions (ADR 0030, BL-244, 2026-06-13)
 
 The output-trustworthiness item from the Vertex MCP analysis (#114): a
