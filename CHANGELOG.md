@@ -3,6 +3,42 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Graduated authority tiers on the guard (ADR 0029, BL-242, 2026-06-13)
+
+The most on-thesis item from the Vertex MCP analysis (#114): authority
+keyed to a proposed action's blast radius, beyond the flat
+`approval_required` list. Additive to L1 (ADR 0007); ADR 0029 is the
+cross-cutting why.
+
+### Added
+
+- `harness/authority.py`: `AuthorityTier` (an ordered IntEnum: OBSERVE /
+  LOW / STATEFUL / IRREVERSIBLE), the `TierClassifier` Protocol
+  (`classify(tool, arguments) -> AuthorityTier`, workload-supplied so the
+  framework binds no domain knowledge, ADR 0001), and the deterministic
+  `MappingTierClassifier` reference (a tool-name-to-tier map with a
+  fail-safe STATEFUL default for unlisted tools).
+- `HarnessToolGuard(tier_classifier=..., approval_tier=...)`: when a
+  classifier is supplied, an action classified at `approval_tier`
+  (default STATEFUL) or above is escalated to REQUIRE_APPROVAL beyond the
+  static `approval_required` list. `GuardResponse` gains a `tier` field
+  annotating APPROVE and REQUIRE_APPROVAL (never set on REJECT).
+- `run_under_contract(tier_classifier=..., approval_tier=...)`: threads
+  the classifier into the default guard (a classifier alone now triggers
+  guard construction).
+- 12 deterministic tests
+  (`tests/harness/test_bl242_authority_tiers.py`); `harness/authority.py`
+  and `harness/guard.py` at 100% line coverage.
+
+### Notes
+
+- The tier-driven escalation lives entirely in the guard (it produces
+  more REQUIRE_APPROVAL decisions the existing runtime / resume already
+  handles), so the audited approval / resume machinery (ADR 0027) is
+  untouched. The Tier 2 / 3 approval context (rollback plan, evidence
+  capture, the tier on `ApprovalInterruption`, the two-step parameter
+  restate) is split forward to `BL-251`.
+
 ## [Unreleased] Hybrid retrieval and decay-ranked demotion (ADR 0028, BL-243 / BL-247, 2026-06-13)
 
 The first implementation wave from the Vertex MCP analysis (#114): two
