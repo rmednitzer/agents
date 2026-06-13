@@ -3,6 +3,28 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Vertex MCP cross-pollination analysis (2026-06-13)
+
+A deep audit of what the substrate can learn from a long-running,
+single-operator MCP gateway, recorded as
+`docs/analysis/vertex-mcp-lessons.md` with eight forward-looking
+capability proposals tracked as `BL-242` through `BL-249`.
+Documentation only; no code change, nothing adopted (each item is a
+maintainer decision).
+
+### Added
+
+- `docs/analysis/vertex-mcp-lessons.md`: the analysis, ranked by
+  leverage and fit, each lesson mapped to a precise repo surface
+  (`harness/guard.py`, `memory/semantic.py`, `harness/provenance.py`,
+  `memory/tiering.py`, the `evaluation/` gate) and an additive-to-L1
+  proposal. Headlines: graduated authority tiers on the guard
+  (`BL-242`), RRF hybrid-retrieval fusion (`BL-243`), and a DEGRADED
+  disposition with grounding postconditions (`BL-244`).
+- `BL-242`-`BL-249` in `docs/backlog.md` (a new "Vertex MCP
+  cross-pollination" section), and a `docs/analysis/` index entry in
+  `docs/README.md`.
+
 ## [Unreleased] Deferred (non-replay) approval resume (ADR 0027, BL-114, 2026-06-12)
 
 The deepest known approval-flow limitation (`LIMITATIONS.md` L10),
