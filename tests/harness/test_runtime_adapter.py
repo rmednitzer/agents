@@ -232,7 +232,9 @@ async def test_stream_approval_tool_raises_public_error_not_sentinel() -> None:
 
 
 async def _run_gate(guard: Any, budget: Any, **kw: Any) -> str | None:
-    return await _gate(
+    # _gate now returns a _GateResult (BL-253); these tests assert on the
+    # soft-reject message / proceed signal, so unwrap .soft here.
+    result = await _gate(
         kw.get("name", "tool"),
         kw.get("arguments", {}),
         guard=guard,
@@ -241,6 +243,7 @@ async def _run_gate(guard: Any, budget: Any, **kw: Any) -> str | None:
         state=kw.get("state") or _GuardState(),
         used_approvals=kw.get("used_approvals", set()),
     )
+    return result.soft
 
 
 @pytest.mark.asyncio

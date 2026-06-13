@@ -1,7 +1,7 @@
 # Status
 
 Maturity of the repository and its documents. Updated when a phase
-opens or closes. Last reviewed: 2026-06-13 (ADR 0035 fallback ladder `BL-248`, ADR 0036 read-side freshness `BL-246`, ADR 0037 session rehydration `BL-249`; the same day as the ADR 0028 through 0034 waves).
+opens or closes. Last reviewed: 2026-06-13 (ADR 0035 fallback ladder `BL-248`, ADR 0036 read-side freshness `BL-246`, ADR 0037 session rehydration `BL-249`, ADR 0038 evidence-capture hook `BL-253` closing the Vertex MCP analysis wave `BL-242`-`BL-253`; the same day as the ADR 0028 through 0034 waves).
 
 ## Maturity taxonomy
 
@@ -52,6 +52,7 @@ opens or closes. Last reviewed: 2026-06-13 (ADR 0035 fallback ladder `BL-248`, A
 | Fallback ladder (`BL-248`) | `harness/fallback.py: FallbackChain`, a `Runtime` wrapping an ordered list of runtimes, trying each until one returns: the graceful-degradation ladder (premium then cheap then cached then stub) `RetryPolicy` is not. Composes with `RetryPolicy` (each member owns its retry); `default_should_descend` descends on a non-`HarnessError` `Exception` so a governance / budget / approval halt never reroutes to a backup, an approval pause is returned not fallen back, and `BaseException` propagates. `stream` delegates to the first member. Additive (a `Runtime` composition, no contract change). 13 new tests; 100% coverage | stable | ADR 0035 |
 | Read-side freshness + refusal-as-data (`BL-246`) | `harness/freshness.py`: `require_fresh(extract, max_age_seconds)`, a `Predicate` factory (the `grounding_predicate` shape) that gates a value by age with an injected clock (SOFT default marks the run degraded, ADR 0030; HARD makes it terminal), the pure `is_stale` helper underneath, and `Refusal`, a typed model-legible refusal record. Additive; a workload wraps `Refusal` in its output model (the degraded-reporting boundary). 14 new tests; 100% coverage | stable | ADR 0036 |
 | Session rehydration (`BL-249`) | `memory.journal.context_pack`, an async assembler that packs a `ContextPack` (ready / in-progress tasks, stale vs open threads, recent decisions) from a `Journal` for a session-start context refresh; built on BL-245 (ADR 0034), unblocked by it. The scheduled single-shot envelope is a documented deployment pattern (ADR 0037), not a contract change; a packaged reference workload bundle and a delta mode are follow-ups. 7 new tests | stable | ADR 0037 |
+| Evidence-capture hook (`BL-253`) | The last Vertex MCP analysis item, closing the wave (`BL-242`-`BL-253` all resolved): `harness/evidence.py` (the `EvidenceContext` call-context, the `EvidenceHook` Protocol `before(context) -> token` / `after(token, *, error=None)`, the `RecordingEvidenceHook` reference), a gate-to-wrapper tier signal (`_gate` / `_deferred_gate` return `_GateResult(soft, tier, rollback_plan)`), the shared `_with_evidence` bracket on all three tool-execution paths (replay-local, deferred-local, MCP), and the opt-in `PydanticAIRuntime(evidence_hook=)`. Fires only for an `IRREVERSIBLE` (Tier 3) action with a hook configured (`before`, body, `after` in a `finally` with the body's exception, so a failed action is still recorded); the token pairs before/after for concurrency. Additive, no L1 / Protocol / schema change. 13 new tests; `evidence.py` + `authority.py` at 100% coverage | stable | ADR 0038 |
 | L3 open | Live-model workload (now also the BL-132/BL-171 live cache-hit gate), true OTel spans, true preemption | planned | `docs/backlog.md` (`BL-120`, `BL-113`/`138`, `BL-155`) |
 
 ## Document maturity
@@ -59,7 +60,7 @@ opens or closes. Last reviewed: 2026-06-13 (ADR 0035 fallback ladder `BL-248`, A
 | Document | Maturity |
 | --- | --- |
 | `CLAUDE.md`, `README.md`, component `README.md` | stable |
-| `docs/adr/0001`-`0037` | stable (Accepted) |
+| `docs/adr/0001`-`0038` | stable (Accepted) |
 | `docs/releasing.md` | stable |
 | `docs/backlog.md` | living tracker |
 | `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE` section (in `CONTRIBUTING.md`) | stable |
