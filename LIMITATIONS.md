@@ -110,18 +110,24 @@ the deterministic `TruncatingSummarizer` reference, and
 `MemoryStore` surface with promotion, invalidation, and
 capacity-ranked demotion. What remains out of tree, deliberately: the
 durable adapters do not implement `SemanticMemoryStore` (no durable
-vector backend), demotion/eviction ranking is insertion-order FIFO,
-not LRU (read tracking is not in the store contract), and both the
+vector backend), demotion ranking defaults to insertion-order FIFO (`evict_to_capacity`
+on the durable adapters is FIFO-only) though `demote_to_capacity` now
+takes an optional `rank_key` strength hook such as `decay_strength`
+(`BL-247`, ADR 0028; read tracking is still not in the store
+contract), and both the
 shipped embedder and the shipped summarizer are deterministic
 baselines, not models (a model-quality `Embedder` or `Summarizer`
 satisfies the same Protocol, the workload's choice by the ADR 0001
 stance). Implication: in-tree just-in-time retrieval, size-bounded
 reclamation, compaction, and tiering work across the in-tree
-adapters; semantic quality and a durable vector backend are the
-workload's integration. Tracking: `BL-131` notes the embedder scope,
-`BL-234` the summarizer scope; a durable semantic adapter and LRU
-have no tracking item until a workload needs them (ADR 0024 revisit
-triggers).
+adapters; the hybrid retrieval fusion (Reciprocal Rank Fusion, the
+deterministic lexical baseline, the optional injected `Reranker`) is
+in tree too (`BL-243`, ADR 0028), so the embedder, the optional
+reranker, and a durable vector backend are the workload's integration. Tracking: `BL-131` notes the embedder scope,
+`BL-234` the summarizer scope; a durable semantic adapter, a durable hybrid
+keyword index, the `BitemporalMemoryStore` Protocol (`BL-250`), and LRU
+have no tracking item until a workload needs them (ADR 0024 / ADR 0028
+revisit triggers).
 
 ## L6. The behavioural gate is deterministic-only
 

@@ -13,6 +13,13 @@ default; a model-quality embedder is the workload's choice. memory does
 not import skills (the layering stays one-way); ``Embedder`` is memory's
 own minimal structural Protocol.
 
+This reference also satisfies ``memory.retrieval.HybridSemanticStore``
+(BL-243): ``query_hybrid`` fuses the vector pass with a deterministic
+lexical pass via Reciprocal Rank Fusion and an optional injected
+``Reranker``, the in-tree answer to the vector-only quality gap
+(LIMITATIONS L5). The fusion is deterministic and dependency-free; the
+embedder and the optional reranker are the pluggable models.
+
 Decorator forwarding (wrap_acl / wrap_encrypted) of the semantic
 surface is intentionally out of scope here, exactly as BL-072 shipped
 the CAS Protocol plus the InMemory reference before per-adapter impls:
@@ -27,6 +34,7 @@ from typing import Protocol, runtime_checkable
 
 from harness.sinks import EventSink
 from memory.inmemory import InMemoryStore
+from memory.retrieval import HybridHit, Reranker, fuse_rrf, lexical_overlap_scores
 from memory.store import SemanticHit
 from memory.types import Namespace
 from memory.validators import validate_key
@@ -72,10 +80,12 @@ class InMemorySemanticStore:
     Core read/write/delete/list_keys delegate to an inner InMemoryStore
     so namespace isolation, key validation, TTL, lazy expiry, and the
     optional audit surface are inherited unchanged. ``write_semantic``
-    additionally indexes the embedding of the supplied ``text``;
+    additionally indexes the embedding of the supplied ``text`` (and
+    retains the text itself for the BL-243 lexical pass);
     ``query_semantic`` embeds the query and returns the top-``k`` live
-    hits by cosine similarity. A key's vector is dropped when the key is
-    deleted or found expired, so the index never returns a stale or
+    hits by cosine similarity, ``query_hybrid`` fuses that with a
+    lexical pass. A key's vector and text are dropped when the key is
+    deleted or found expired, so neither index returns a stale or
     dangling hit.
     """
 
@@ -92,6 +102,9 @@ class InMemorySemanticStore:
         self._inner = InMemoryStore(namespace, sink=sink, base_event_fields=base_event_fields)
         self._embedder = embedder
         self._vectors: dict[str, list[float]] = {}
+        # Indexed source text per key, retained for the BL-243 lexical
+        # recall pass and kept in lockstep with ``_vectors``.
+        self._texts: dict[str, str] = {}
 
     @property
     def namespace(self) -> Namespace:
@@ -100,20 +113,23 @@ class InMemorySemanticStore:
     async def read(self, key: str) -> bytes | None:
         value = await self._inner.read(key)
         if value is None:
-            # read() drops an expired entry; keep the index consistent.
+            # read() drops an expired entry; keep both indexes consistent.
             self._vectors.pop(key, None)
+            self._texts.pop(key, None)
         return value
 
     async def write(self, key: str, value: bytes, *, ttl_seconds: float | None = None) -> None:
         # A plain write replaces the value and invalidates any stale
-        # vector for the key (the new value was not semantically
+        # vector/text for the key (the new value was not semantically
         # indexed); use write_semantic to (re-)index.
         await self._inner.write(key, value, ttl_seconds=ttl_seconds)
         self._vectors.pop(key, None)
+        self._texts.pop(key, None)
 
     async def delete(self, key: str) -> None:
         await self._inner.delete(key)
         self._vectors.pop(key, None)
+        self._texts.pop(key, None)
 
     async def list_keys(self, prefix: str = "") -> list[str]:
         return await self._inner.list_keys(prefix)
@@ -130,6 +146,7 @@ class InMemorySemanticStore:
         vector = (await self._embedder.embed([text]))[0]
         await self._inner.write(key, value, ttl_seconds=ttl_seconds)
         self._vectors[key] = vector
+        self._texts[key] = text
 
     async def query_semantic(self, text: str, *, k: int = 5) -> list[SemanticHit]:
         if k <= 0 or not self._vectors:
@@ -146,8 +163,86 @@ class InMemorySemanticStore:
             vector = self._vectors.get(key)
             if value is None or vector is None:
                 self._vectors.pop(key, None)
+                self._texts.pop(key, None)
                 continue
             hits.append(SemanticHit(key=key, score=_cosine(query, vector), value=value))
         # Descending similarity; ties broken by key for determinism.
         hits.sort(key=lambda h: (-h.score, h.key))
         return hits[:k]
+
+    async def query_hybrid(
+        self,
+        text: str,
+        *,
+        k: int = 5,
+        reranker: Reranker | None = None,
+        rrf_k: int = 60,
+    ) -> list[HybridHit]:
+        """Hybrid retrieval: vector + lexical recall, RRF fusion, optional rerank.
+
+        Runs the BL-131 vector pass and a deterministic lexical pass
+        (``memory.retrieval.lexical_overlap_scores``) over the live
+        indexed keys, fuses the two rankings with ``fuse_rrf``, and (when
+        a ``Reranker`` is supplied) reorders the top candidates by the
+        reranker's relevance score over a recall-then-rerank window.
+        Returns up to ``k`` ``HybridHit`` results. Vector-only retrieval
+        stays ``query_semantic``; this is the additive hybrid path
+        (LIMITATIONS L5). Expired or concurrently de-indexed keys are
+        pruned from both indexes and skipped, as in ``query_semantic``.
+        ``rrf_k`` is the RRF rank-damping constant.
+        """
+        if k <= 0 or not self._vectors:
+            return []
+        query_vec = (await self._embedder.embed([text]))[0]
+        # Gather the live, still-indexed keys with value, vector, and
+        # indexed text. read() can suspend, so a concurrent write/delete
+        # may de-index a key; .get() + skip mirrors query_semantic.
+        live_keys: list[str] = []
+        values: dict[str, bytes] = {}
+        vectors: dict[str, list[float]] = {}
+        texts: dict[str, str] = {}
+        for key in list(self._vectors):
+            value = await self._inner.read(key)
+            vector = self._vectors.get(key)
+            doc_text = self._texts.get(key)
+            if value is None or vector is None or doc_text is None:
+                self._vectors.pop(key, None)
+                self._texts.pop(key, None)
+                continue
+            live_keys.append(key)
+            values[key] = value
+            vectors[key] = vector
+            texts[key] = doc_text
+        if not live_keys:
+            return []
+        # Vector pass: cosine descending, ties by key.
+        vector_ranking = sorted(
+            live_keys, key=lambda candidate: (-_cosine(query_vec, vectors[candidate]), candidate)
+        )
+        # Lexical pass: a keyword hit list (token overlap > 0), descending.
+        lexical_scores = lexical_overlap_scores(text, [texts[key] for key in live_keys])
+        lexical_ranking = [
+            key
+            for key, score in sorted(
+                zip(live_keys, lexical_scores, strict=True),
+                key=lambda pair: (-pair[1], pair[0]),
+            )
+            if score > 0.0
+        ]
+        fused = fuse_rrf(vector_ranking, lexical_ranking, k=rrf_k)
+        if reranker is None:
+            return [HybridHit(key=key, score=score, value=values[key]) for key, score in fused[:k]]
+        # Recall-then-rerank: rerank only the top fused candidates.
+        window = min(len(fused), max(k * 3, 30))
+        candidates = [key for key, _ in fused[:window]]
+        scores = await reranker.rerank(text, [texts[key] for key in candidates])
+        if len(scores) != len(candidates):
+            raise ValueError(
+                f"reranker returned {len(scores)} scores for {len(candidates)} documents"
+            )
+        reranked = sorted(
+            zip(candidates, scores, strict=True), key=lambda pair: (-pair[1], pair[0])
+        )
+        return [
+            HybridHit(key=key, score=float(score), value=values[key]) for key, score in reranked[:k]
+        ]
