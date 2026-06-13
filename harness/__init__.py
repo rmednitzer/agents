@@ -11,7 +11,13 @@ from harness.anthropic_api import (
     BatchStatus,
     cache_control_system,
 )
-from harness.authority import AuthorityTier, MappingTierClassifier, TierClassifier
+from harness.authority import (
+    AuthorityTier,
+    MappingRollbackPlanner,
+    MappingTierClassifier,
+    RollbackPlanner,
+    TierClassifier,
+)
 from harness.budgets import ActionBudget, BudgetKind, BudgetTracker
 from harness.composition import compose_contracts
 from harness.contract import (
@@ -141,6 +147,7 @@ __all__ = [
     "MCPLifecycle",
     "MCPServerSpec",
     "MCPTransport",
+    "MappingRollbackPlanner",
     "MappingTierClassifier",
     "MemoryDelete",
     "MemoryRead",
@@ -168,6 +175,7 @@ __all__ = [
     "Redactor",
     "ResumableState",
     "RetryPolicy",
+    "RollbackPlanner",
     "RunOutcome",
     "RunRecord",
     "Runtime",

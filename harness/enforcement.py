@@ -33,7 +33,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from harness.authority import AuthorityTier, TierClassifier
+from harness.authority import AuthorityTier, RollbackPlanner, TierClassifier
 from harness.budgets import ActionBudget, BudgetTracker
 from harness.composition import compose_contracts
 from harness.contract import Contract, Severity
@@ -88,6 +88,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
     record_sink: Callable[[RunRecord], None] | None = None,
     tier_classifier: TierClassifier | None = None,
     approval_tier: AuthorityTier = AuthorityTier.STATEFUL,
+    rollback_planner: RollbackPlanner | None = None,
 ) -> OutputT | ResumableState:
     """Execute a workload under contract.
 
@@ -121,6 +122,13 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         approval_tier: The AuthorityTier at or above which an action
             requires approval when a ``tier_classifier`` is active
             (default STATEFUL). Ignored without a classifier.
+        rollback_planner: Optional RollbackPlanner (BL-251). When supplied
+            (and no explicit ``guard`` is given), the default
+            HarnessToolGuard attaches the planner's proposed undo path to
+            each ApprovalInterruption it raises. It only annotates an
+            approval that some other rule already requires, so a planner
+            alone does not create approval gating or trigger guard
+            construction. None preserves prior behaviour.
         recovery: Optional map of predicate name -> RecoveryHandler
             (BL-061). On a SOFT pre/invariant/post violation whose
             predicate name is in the map, the handler runs and a
@@ -358,6 +366,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
             base_event_fields=base,
             tier_classifier=tier_classifier,
             approval_tier=approval_tier,
+            rollback_planner=rollback_planner,
         )
 
     def _finalize_resumable(state: ResumableState) -> ResumableState:

@@ -53,6 +53,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
+from harness.authority import AuthorityTier
 from harness.budgets import BudgetTracker
 from harness.contract import Severity
 from harness.errors import ApprovalDenied as ApprovalDeniedError
@@ -235,6 +236,11 @@ class _GuardState:
         self.pause: ApprovalInterruption | None = None
         self.governance: GovernanceViolation | None = None
         self.denied: ApprovalDeniedError | None = None
+        # BL-251: per-call approval context (tier, rollback_plan) recorded
+        # by the deferred gate keyed by tool_call_id, so the deferred
+        # pause state can carry it onto each ApprovalInterruption the same
+        # way the replay path reads it straight off the GuardResponse.
+        self.approval_context: dict[str, tuple[AuthorityTier | None, str | None]] = {}
         # BL-137: when set, a soft governance reject is raised as a
         # framework tool-retry error (a typed rejection the model sees
         # as an error) instead of returned as the tool's string value.
@@ -362,6 +368,8 @@ async def _gate(
                     created_at=datetime.now(UTC),
                     tool=name,
                     arguments=arguments,
+                    tier=response.tier,
+                    rollback_plan=response.rollback_plan,
                 )
                 state.pause = interruption
                 raise _ApprovalPause(interruption)
@@ -409,6 +417,13 @@ async def _deferred_gate(
         if response.decision == GuardDecision.REQUIRE_APPROVAL:
             from pydantic_ai.exceptions import ApprovalRequired
 
+            # BL-251: record the approval context keyed by this call's
+            # tool_call_id (the stable id the pause state will use), so
+            # the deferred pause carries the tier / rollback plan onto its
+            # ApprovalInterruption symmetrically with the replay path.
+            call_id = getattr(ctx, "tool_call_id", None)
+            if call_id is not None:
+                state.approval_context[call_id] = (response.tier, response.rollback_plan)
             if not bool(getattr(ctx, "tool_call_approved", False)):
                 raise ApprovalRequired
             decided = _resolved_decision(resume, name, arguments, used_approvals)
@@ -965,7 +980,7 @@ class PydanticAIRuntime:
                         "external tool-execution requests are not supported by the "
                         "harness; only approval requests can defer a run"
                     )
-                return self._deferred_resumable(prompt, result.output, result, resume)
+                return self._deferred_resumable(prompt, result.output, result, resume, state)
         return result.output
 
     async def _with_watchdog(
@@ -1033,6 +1048,7 @@ class PydanticAIRuntime:
         requests: Any,
         result: Any,
         resume: ResumableState | None,
+        state: _GuardState,
     ) -> ResumableState:
         """Build the pause state for a deferred leg (BL-114).
 
@@ -1042,20 +1058,27 @@ class PydanticAIRuntime:
         directly onto DeferredToolResults; the (tool, arguments)
         binding is still verified at execution time (BL-193). The
         original prompt and trace_id carry forward across re-pauses so
-        a multi-pause run stays one correlated conversation.
+        a multi-pause run stays one correlated conversation. Each
+        interruption also carries the tier / rollback plan the gate
+        recorded for that tool_call_id (BL-251), matching the replay
+        path's per-interruption approval context.
         """
         from pydantic_ai.messages import ModelMessagesTypeAdapter
 
         now = datetime.now(UTC)
-        pending = [
-            ApprovalInterruption(
-                id=tc.tool_call_id,
-                created_at=now,
-                tool=tc.tool_name,
-                arguments=tc.args_as_dict(),
+        pending = []
+        for tc in requests.approvals:
+            tier, rollback_plan = state.approval_context.get(tc.tool_call_id, (None, None))
+            pending.append(
+                ApprovalInterruption(
+                    id=tc.tool_call_id,
+                    created_at=now,
+                    tool=tc.tool_name,
+                    arguments=tc.args_as_dict(),
+                    tier=tier,
+                    rollback_plan=rollback_plan,
+                )
             )
-            for tc in requests.approvals
-        ]
         payload = dict(resume.input_payload) if resume is not None else {"prompt": prompt}
         return ResumableState(
             contract_name=self.name,
