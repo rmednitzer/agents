@@ -3,7 +3,7 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
-## [Unreleased] Fifteenth code audit (ADR 0039, BL-254 .. BL-262, 2026-06-13)
+## [Unreleased] Fifteenth code audit (ADR 0039, BL-254 .. BL-263, 2026-06-13)
 
 A comprehensive adversarial audit of the code that landed after the
 fourteenth audit (the ADR 0026-0038 wave), with five parallel reviewers,
@@ -11,8 +11,9 @@ independent gate runs, and trusted-source validation of the highest-risk
 external contracts. Every finding was re-verified against source; two
 High-severity reviewer claims did not survive verification (recorded as
 non-findings in ADR 0039). No Critical / confirmed-exploitable High. All
-fixes additive to L1; 20 new regression tests; baseline green throughout
-(1390 tests, 95.76% coverage).
+fixes additive to L1; 22 new regression tests; baseline green throughout.
+`BL-263` was added after the PR opened, from the automated reviewer on
+PR #123 (a valid `EvidenceContext` runtime-immutability gap).
 
 ### Security
 
@@ -41,6 +42,10 @@ fixes additive to L1; 20 new regression tests; baseline green throughout
 
 - S3 `list_keys` / `scan` filter by `HeadObject` metadata instead of a
   full-body `GetObject` per listed object (`BL-260`).
+- `EvidenceContext.arguments` is handed to a hook as a read-only
+  `MappingProxyType`, enforcing the documented read-only typing at runtime
+  so a hook cannot mutate the captured snapshot; the shallow-snapshot
+  semantics are unchanged (`BL-263`).
 
 ### Documentation
 

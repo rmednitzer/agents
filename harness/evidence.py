@@ -57,7 +57,10 @@ class EvidenceContext:
     (``_with_evidence``) and typed ``Mapping`` read-only, so the recorded
     call stays stable even if the live argument dict is later mutated (for
     example the MCP path also hands that dict to ``call_tool``); nested
-    values are not deep-copied. ``tier`` is always ``IRREVERSIBLE`` (the
+    values are not deep-copied. The framework wraps that copy in a
+    ``MappingProxyType`` so a hook cannot mutate the snapshot it is
+    handed either, making the read-only typing true at runtime (BL-263).
+    ``tier`` is always ``IRREVERSIBLE`` (the
     hook fires only for Tier 3), carried explicitly so a hook that also
     logs lower tiers reads one shape. ``tool_call_id`` is the framework's
     stable per-call id on the deferred and MCP paths and ``None`` on the

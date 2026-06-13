@@ -44,7 +44,7 @@ approval-context payload, the bitemporal fact store, two-step
 parameter restatement, the operational-memory journal, the
 graceful-degradation fallback chain, read-side freshness, session
 rehydration, and the evidence-capture hook), and the
-fifteenth-code-audit hardening (ADR 0039, `BL-254`-`BL-262`:
+fifteenth-code-audit hardening (ADR 0039, `BL-254`-`BL-263`:
 `LocalSkillSource` hardlink refusal, two run-time non-finite
 guards, the `fuse_rrf` distinct-rank fix, the SQLite TTL-clock
 ordering fix, the S3 list-vs-HEAD read-path fix, and the

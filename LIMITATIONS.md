@@ -3,7 +3,7 @@
 Explicit scope boundaries and known gaps. Each limit states the current
 state, the implication, and the tracking item. This is pre-1.0
 infrastructure; the list is expected to shrink as L3 lands. Last
-reviewed: 2026-06-13 (ADR 0039 fifteenth audit, `BL-254`-`BL-262`;
+reviewed: 2026-06-13 (ADR 0039 fifteenth audit, `BL-254`-`BL-263`;
 no L-entry changed: the additive hardening fixes found no new
 contract-level gap and closed none, leaving the scope boundaries
 intact).

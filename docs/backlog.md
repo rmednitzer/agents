@@ -562,8 +562,11 @@ the `authority` / `grounding` / `bitemporal` / `journal` / `fallback` /
 parallel reviewers plus independent gate and trusted-source validation;
 every finding re-verified against source (two High claims rejected, noted
 in the ADR). No Critical / confirmed-exploitable High; one security
-hardening item and a Low / Low-Med correctness cluster. All resolved on
-branch `claude/beautiful-davinci-xovwl9`. Next free IDs from `BL-263`.
+hardening item and a Low / Low-Med correctness cluster. `BL-263` was
+added after the PR opened, from the automated reviewer on PR #123 (a
+valid `EvidenceContext` runtime-immutability gap on the ADR 0038 code).
+All resolved on branch `claude/beautiful-davinci-xovwl9`. Next free IDs
+from `BL-264`.
 
 - `BL-254` [resolved] [M] Hardlink bypass of the symlink defense in `LocalSkillSource.fetch`. A hardlink reads as a regular file under `is_symlink()` / `is_file()` but is a second directory entry for an inode that may live outside the source tree, so it copied an external secret's contents into the bundle, the same exfiltration the symlink check defends against. Fix: refuse a regular file with `st_nlink > 1` (the BL-169 / BL-172 / BL-190 link-on-install class). `tests/skills/test_bl254_hardlink_source.py`. (ADR 0008, ADR 0039)
 - `BL-255` [resolved] [M] `grounding_predicate` built the full ungrounded-citation list then negated it, so a confabulated claim with many ungrounded tokens forced O(all-tokens) work over untrusted model output. Fix: a `_any_ungrounded` short-circuit helper for the predicate; `ungrounded_citations` stays the diagnostic list (the BL-159 / BL-173 / BL-182 / BL-191 bounded-work class). `tests/harness/test_bl255_256_261_audit15.py`. (ADR 0030, ADR 0039)
@@ -574,6 +577,7 @@ branch `claude/beautiful-davinci-xovwl9`. Next free IDs from `BL-263`.
 - `BL-260` [resolved] [S] S3 `list_keys` / `scan` issued a full-body `GetObject` per listed object to read only the `expires-at` metadata, while the sweep paths use `HeadObject`. Fix: a `_head_live` metadata-only helper for both listing paths (an expired object is excluded but not lazily deleted, keeping the listing a pure read). `tests/memory/test_bl260_s3_list_head.py`. (ADR 0039)
 - `BL-261` [resolved] [S] The evidence hook's docstrings claimed "after always runs", but `_with_evidence` calls `before()` outside the `try`, so a failing `before()` skips `after()`. The behaviour is fail-safe (a failed pre-state capture aborts the Tier 3 action before it runs); fix is contract precision in the `evidence.py` / `runtime.py` docstrings plus a regression test locking the abort-and-no-after contract. The fifteenth-audit catch on ADR 0038 code. Same harness test file. (ADR 0038, ADR 0039)
 - `BL-262` [resolved] [S] `BoundedRedisStore.write` set the data key then ZADDed the index in two round trips; a crash between stranded a data key with no index entry (invisible to eviction ordering). Crash-safety is not a documented contract, so defense-in-depth. Fix: allocate the score first, then SET + ZADD in one MULTI/EXEC. `tests/memory/test_bl262_redis_atomic_write.py`. (ADR 0014, ADR 0039)
+- `BL-263` [resolved] [S] `EvidenceContext.arguments` is typed `Mapping` (read-only) and the context is public harness surface, but `_with_evidence` handed the hook a plain `dict` shallow copy it could still mutate; only external mutation of the live dict was guarded (the BL-253 snapshot), not mutation by the hook of the snapshot itself. Fix: wrap the capture copy in `MappingProxyType` so the documented read-only typing holds at runtime; the shallow-snapshot semantics are unchanged. Found by the automated reviewer on PR #123. `tests/harness/test_bl263_evidence_context_readonly.py`. (ADR 0038, ADR 0039)
 
 ## Sources consulted
 

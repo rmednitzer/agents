@@ -1,4 +1,4 @@
-# ADR 0039: Fifteenth code audit (BL-254 .. BL-262)
+# ADR 0039: Fifteenth code audit (BL-254 .. BL-263)
 
 - Status: Accepted
 - Date: 2026-06-13
@@ -162,6 +162,24 @@ scores need only be monotonic), then SET and ZADD in one MULTI/EXEC.
 Test: `tests/memory/test_bl262_redis_atomic_write.py` (data + TTL + FIFO
 eviction ordering preserved through the transactional write).
 
+### BL-263 [Low] `EvidenceContext.arguments` not read-only at runtime (`harness/runtime.py`, `harness/evidence.py`)
+
+Found by the automated reviewer on PR #123, after this audit opened, on
+the ADR 0038 evidence-hook code under review. `EvidenceContext.arguments`
+is typed `Mapping` (read-only) and `EvidenceContext` is exported public
+harness surface, but `_with_evidence` handed the hook a plain `dict`
+shallow copy. The BL-253 snapshot guards against *external* mutation (the
+live argument dict the tool body also holds is copied), but a hook could
+still mutate the snapshot it received, contradicting the documented
+read-only typing. Fix: wrap the capture copy in `types.MappingProxyType`
+so the contract holds at runtime; the shallow-snapshot semantics are
+unchanged (a `MappingProxyType` over a `dict` copy, not over the live
+dict, so a later live mutation is still not observed, and nested values
+are still not deep-copied). Defense in depth on a public type, the
+contract-precision sibling of BL-261. Test:
+`tests/harness/test_bl263_evidence_context_readonly.py` (mutation raises,
+snapshot isolated from a later live mutation).
+
 ## Non-findings (reviewer claims rejected after verification)
 
 - **SQLite `now`-outside-lock in `list_keys` / `scan` as a BL-188
@@ -186,14 +204,15 @@ eviction ordering preserved through the transactional write).
   BL-256 / BL-258 reject an input previously mis-accepted), an internal
   efficiency or atomicity change with identical observable behaviour
   (BL-255 / BL-259 / BL-260 / BL-262), a public-API correctness fix on a
-  path in-tree callers do not exercise (BL-257), or a docstring-only
-  contract clarification (BL-261). No L1 import path or signature changed;
-  no manifest model, so no schema drift.
+  path in-tree callers do not exercise (BL-257), a docstring-only
+  contract clarification (BL-261), or a runtime enforcement of an
+  already-documented read-only contract (BL-263). No L1 import path or
+  signature changed; no manifest model, so no schema drift.
 - Blast radius: `skills/sources.py`, `harness/{grounding,drift,evidence,runtime}.py`,
   `memory/{retrieval,semantic,sqlite,s3,redis}.py`. Rollback: revert the
   commit; each fix is independent.
-- 20 new regression tests across the six files named above; `make check`
-  1390 passing, aggregate coverage 95.76% (gate 94%), ruff / format /
+- 22 new regression tests across the seven files named above; `make check`
+  1392 passing, aggregate coverage 95.77% (gate 94%), ruff / format /
   mypy / pip-audit / gitleaks / eval all green.
 
 ## Revisit triggers
