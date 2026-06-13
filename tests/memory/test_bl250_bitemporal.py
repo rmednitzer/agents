@@ -25,9 +25,7 @@ def _dt(month: int, day: int = 1) -> datetime:
 
 async def test_record_returns_open_unsuperseded_fact() -> None:
     store = InMemoryBitemporalStore()
-    fact = await store.record(
-        "axiom", "role", b"compute", valid_from=_dt(1), recorded_at=_dt(2)
-    )
+    fact = await store.record("axiom", "role", b"compute", valid_from=_dt(1), recorded_at=_dt(2))
     assert isinstance(fact, BitemporalFact)
     assert fact.subject == "axiom"
     assert fact.predicate == "role"
