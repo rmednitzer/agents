@@ -19,6 +19,11 @@ from memory.acl import (
     RoleACL,
     wrap_acl,
 )
+from memory.bitemporal import (
+    BitemporalFact,
+    BitemporalMemoryStore,
+    InMemoryBitemporalStore,
+)
 from memory.compaction import (
     CompactionResult,
     MemoryCompactor,
@@ -83,6 +88,8 @@ __all__ = [
     "AttributeACL",
     "AttributeRule",
     "BatchMemoryStore",
+    "BitemporalFact",
+    "BitemporalMemoryStore",
     "BoundedDynamoDBStore",
     "BoundedRedisStore",
     "BoundedS3Store",
@@ -97,6 +104,7 @@ __all__ = [
     "FileKeyProvider",
     "HybridHit",
     "HybridSemanticStore",
+    "InMemoryBitemporalStore",
     "InMemorySemanticStore",
     "InMemoryStore",
     "KeyProvider",

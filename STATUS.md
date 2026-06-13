@@ -1,7 +1,7 @@
 # Status
 
 Maturity of the repository and its documents. Updated when a phase
-opens or closes. Last reviewed: 2026-06-13 (ADR 0031 approval-context payload on the interruption, `BL-251`; the same day as the ADR 0028 hybrid-retrieval, ADR 0029 graduated-authority, and ADR 0030 degraded-disposition waves).
+opens or closes. Last reviewed: 2026-06-13 (ADR 0032 bitemporal fact store, `BL-250`, and ADR 0033 two-step parameter restatement, `BL-252`; the same day as the ADR 0028 through 0031 waves).
 
 ## Maturity taxonomy
 
@@ -46,6 +46,8 @@ opens or closes. Last reviewed: 2026-06-13 (ADR 0031 approval-context payload on
 | Graduated authority tiers (`BL-242`) | The most on-thesis item from the Vertex MCP analysis: `harness/authority.py` (`AuthorityTier`, the `TierClassifier` Protocol, the `MappingTierClassifier` reference), `HarnessToolGuard(tier_classifier=, approval_tier=)` escalating a Tier-2-or-above action to REQUIRE_APPROVAL beyond the static `approval_required` list, `GuardResponse.tier`, and `run_under_contract` threading. Additive; no classifier preserves the flat L1 behaviour. The rollback-plan / evidence / tier-on-interruption refinements stay tracked (`BL-251`) | stable | ADR 0029 |
 | DEGRADED disposition + grounding postconditions (`BL-244`) | The output-trustworthiness item from the Vertex MCP analysis. `RunRecord.degraded` (record schema v1.1.0, the orthogonal quality axis: `outcome` stays `completed`, `degraded` flags a SOFT postcondition violated on the final delivered leg) set by `run_under_contract` (a per-leg `leg_soft_failed` flag, reset on retry so a clean retry clears it, substitute keeps it, escalate / hard stay their own terminals); `harness/grounding.py`, the deterministic anti-confabulation core (`ungrounded_citations` pure function + the SOFT `grounding_predicate(extract, pattern=)` factory) that relabels without rewriting model content. Additive; the field defaults False, the schema bump is forward-compatible, no grounding postcondition preserves L1. 20 new tests; `harness/grounding.py` at 100% coverage | stable | ADR 0030 |
 | Approval-context payload (`BL-251`) | The data-carrying half of the held-out `BL-242` follow-on: the blast-radius `AuthorityTier` (already on `GuardResponse`, BL-242) and a workload-supplied rollback plan now travel onto the human-facing `ApprovalInterruption`, symmetrically across the replay and deferred resume paths. New `RollbackPlanner` Protocol + `MappingRollbackPlanner` reference (the `TierClassifier` injection stance); `GuardResponse.rollback_plan`; `HarnessToolGuard(rollback_planner=)` consulted only on the approval branch; `run_under_contract(rollback_planner=)` (a planner alone does not build a guard). Additive; both interruption fields default None, no schema change. The behavioural half (evidence-capture hook, two-step parameter restatement) is split forward to `BL-252`. 15 new tests; `harness/authority.py` + `guard.py` + `interruption.py` at 100% coverage | stable | ADR 0031 |
+| Bitemporal fact store (`BL-250`) | The held-out half of `BL-247` (ADR 0028): `memory/bitemporal.py` with the `BitemporalMemoryStore` Protocol and `InMemoryBitemporalStore` reference. Facts addressed by `(subject, predicate)` with validity time (`valid_from`/`valid_to`) separate from transaction time (`recorded_at`/`superseded_at`/`superseded_by`), a per-fact confidence, and auto-supersession; `record` / `current` (believed-now valid-now) / `as_of` (the full bitemporal point query) / `history`. A standalone Protocol, not a `MemoryStore` extension (a different addressing model, the ADR 0024 driver/composition stance). Construction-time validation (timezone-aware, finite confidence in [0,1], positive validity interval). 16 new tests; `memory/bitemporal.py` at 100% coverage. Durable adapters and a fact-keyed audit are follow-ups | stable | ADR 0032 |
+| Two-step parameter restatement (`BL-252`) | The resume-verification half of the held-out `BL-251` follow-on: an irreversible (Tier 3) approval is honoured only when the human re-enters the arguments and they match the proposed call (`ApprovalInterruption.restated_arguments`, `ResumableState.approve(restated_arguments=)`, `_restate_satisfied` enforced in both the replay and deferred gates), composing with the BL-193 binding. A missing or mismatched restatement re-pauses. Additive (Tier 3 only; lower tiers single-step as before; nothing in tree currently resumes-and-executes a Tier 3 approval). The evidence-capture hook is split forward to `BL-253`. 10 new tests | stable | ADR 0033 |
 | L3 open | Live-model workload (now also the BL-132/BL-171 live cache-hit gate), true OTel spans, true preemption | planned | `docs/backlog.md` (`BL-120`, `BL-113`/`138`, `BL-155`) |
 
 ## Document maturity
@@ -53,7 +55,7 @@ opens or closes. Last reviewed: 2026-06-13 (ADR 0031 approval-context payload on
 | Document | Maturity |
 | --- | --- |
 | `CLAUDE.md`, `README.md`, component `README.md` | stable |
-| `docs/adr/0001`-`0031` | stable (Accepted) |
+| `docs/adr/0001`-`0033` | stable (Accepted) |
 | `docs/releasing.md` | stable |
 | `docs/backlog.md` | living tracker |
 | `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE` section (in `CONTRIBUTING.md`) | stable |

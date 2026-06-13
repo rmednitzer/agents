@@ -3,6 +3,65 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Bitemporal fact store (ADR 0032, BL-250, 2026-06-13)
+
+The held-out half of BL-247 (ADR 0028): a memory-layer model of validity
+time versus transaction time, so an agent can ask "what is true now?" and
+"what did we believe then about then?" without erasing prior beliefs.
+Additive to L1 (ADR 0007).
+
+### Added
+
+- `memory/bitemporal.py`: the `BitemporalMemoryStore` Protocol and
+  `InMemoryBitemporalStore` reference. Facts addressed by
+  `(subject, predicate)` carry a validity interval (`valid_from` /
+  `valid_to`), a transaction interval (`recorded_at` / `superseded_at` /
+  `superseded_by`), and a `confidence`. `record` auto-supersedes the
+  prior current belief; `current` is the believed-now valid-now point
+  query, `as_of` the full bitemporal point query, `history` the
+  append-only sequence.
+- Construction-time validation (load-time, ADR 0007): timezone-aware
+  datetimes, finite `confidence` in [0, 1], a positive validity interval,
+  and `validate_key` on subject / predicate.
+- 16 deterministic tests (`tests/memory/test_bl250_bitemporal.py`);
+  `memory/bitemporal.py` at 100% line coverage.
+
+### Notes
+
+- A standalone Protocol, not a `MemoryStore` extension: the `(subject,
+  predicate)` plus two-time-axes addressing is a different model from the
+  key-addressed extensions, so this is a sibling Protocol (the ADR 0024
+  driver/composition stance). Durable adapters and a fact-keyed audit
+  surface (with the BL-245 journal layer) are follow-ups.
+
+## [Unreleased] Two-step parameter restatement (ADR 0033, BL-252, 2026-06-13)
+
+The resume-verification half of BL-251's held-out behavioural follow-on:
+an irreversible (Tier 3) action runs only after a human re-enters its
+parameters and they match, so a Tier 3 approval cannot be rubber-stamped.
+Additive to L1 (ADR 0007).
+
+### Added
+
+- `ApprovalInterruption.restated_arguments` and
+  `ResumableState.approve(id, *, restated_arguments=...)`: the human's
+  re-entered arguments for a Tier 3 approval.
+- `_restate_satisfied` enforced in both the replay (`_gate`) and deferred
+  (`_deferred_gate`) paths: a Tier 3 approval whose restatement is
+  missing or does not match the proposed call re-pauses for a fresh
+  decision, composing with the BL-193 (tool, arguments) binding. Lower
+  tiers keep their single-step approval.
+- 10 deterministic tests (`tests/harness/test_bl252_restate.py`).
+
+### Notes
+
+- No behavioural change below Tier 3, and nothing in tree currently
+  resumes-and-executes a Tier 3 approval, so the gate is purely additive.
+- The evidence-capture hook (the other half of the original BL-252) is
+  split forward to `BL-253`: it wraps Tier 3 execution, which touches the
+  tool-execution path across the replay, deferred, and MCP wrappers, so
+  it gets its own increment.
+
 ## [Unreleased] Approval-context payload on the interruption (ADR 0031, BL-251, 2026-06-13)
 
 The data-carrying half of BL-251 (the held-out follow-on to the BL-242

@@ -314,6 +314,22 @@ def _resolved_decision(
     return None
 
 
+def _restate_satisfied(ai: ApprovalInterruption, arguments: dict[str, Any]) -> bool:
+    """Whether a resolved approval clears the two-step restate gate (BL-252).
+
+    An irreversible (Tier 3) approval is honoured only when the human
+    re-entered the arguments and they match the proposed call, the
+    two-step confirmation (ADR 0033). This composes with the BL-193
+    (tool, arguments) binding ``_resolved_decision`` already checked: the
+    restatement must equal the live call arguments, so a stale or
+    mis-typed restatement does not authorise execution. Lower tiers need
+    no restatement, so the gate is vacuously satisfied.
+    """
+    if ai.tier != AuthorityTier.IRREVERSIBLE:
+        return True
+    return ai.restated_arguments == arguments
+
+
 def _rejection(response: Any, name: str, state: _GuardState) -> str:
     """Translate a REJECT guard decision (shared by both gate modes).
 
@@ -362,7 +378,13 @@ async def _gate(
             return _rejection(response, name, state)
         if response.decision == GuardDecision.REQUIRE_APPROVAL:
             decided = _resolved_decision(resume, name, arguments, used_approvals)
-            if decided is None:
+            if decided is not None and decided.decision == "denied":
+                state.denied = ApprovalDeniedError(name, decided.decision_reason)
+                raise state.denied
+            # A missing decision, or an irreversible (Tier 3) approval
+            # whose restated arguments do not match, re-pauses for a
+            # (fresh) decision (BL-252, the two-step confirmation).
+            if decided is None or not _restate_satisfied(decided, arguments):
                 interruption = ApprovalInterruption(
                     id=response.interruption_id or uuid.uuid4().hex,
                     created_at=datetime.now(UTC),
@@ -373,9 +395,6 @@ async def _gate(
                 )
                 state.pause = interruption
                 raise _ApprovalPause(interruption)
-            if decided.decision == "denied":
-                state.denied = ApprovalDeniedError(name, decided.decision_reason)
-                raise state.denied
     if budget is not None:
         budget.consume_tool_call(tool=name)
     return None
@@ -427,7 +446,13 @@ async def _deferred_gate(
             if not bool(getattr(ctx, "tool_call_approved", False)):
                 raise ApprovalRequired
             decided = _resolved_decision(resume, name, arguments, used_approvals)
-            if decided is None or decided.decision != "approved":
+            # A Tier 3 approval without a matching restatement re-pauses,
+            # the same two-step gate as the replay path (BL-252).
+            if (
+                decided is None
+                or decided.decision != "approved"
+                or not _restate_satisfied(decided, arguments)
+            ):
                 raise ApprovalRequired
     if budget is not None:
         budget.consume_tool_call(tool=name)
