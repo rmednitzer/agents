@@ -37,7 +37,18 @@ surfacing, live cache-hit validation coupled to `BL-120`), and the
 deferred (non-replay) approval resume (ADR 0027, `BL-114`: opt-in
 `approval_mode="deferred"`, the paused leg's history travels in
 `ResumableState.runtime_state` and prior tool calls run exactly
-once) on `main` (see
+once), the Vertex MCP analysis capability wave (ADR 0028-0038,
+`BL-242`-`BL-253`: hybrid retrieval fusion + decay-ranked demotion,
+graduated authority tiers, DEGRADED disposition + grounding, the
+approval-context payload, the bitemporal fact store, two-step
+parameter restatement, the operational-memory journal, the
+graceful-degradation fallback chain, read-side freshness, session
+rehydration, and the evidence-capture hook), and the
+fifteenth-code-audit hardening (ADR 0039, `BL-254`-`BL-262`:
+`LocalSkillSource` hardlink refusal, two run-time non-finite
+guards, the `fuse_rrf` distinct-rank fix, the SQLite TTL-clock
+ordering fix, the S3 list-vs-HEAD read-path fix, and the
+`BoundedRedisStore.write` atomicity fix) on `main` (see
 [docs/backlog.md](./docs/backlog.md),
 [ADR 0007](./docs/adr/0007-l2-implementation-wave.md),
 [ADR 0010](./docs/adr/0010-l3-default-path-wiring-and-audit-wave.md),
@@ -57,7 +68,19 @@ once) on `main` (see
 [ADR 0024](./docs/adr/0024-compaction-summarisation-and-tiering.md),
 [ADR 0025](./docs/adr/0025-fourteenth-audit-full-pass.md),
 [ADR 0026](./docs/adr/0026-prompt-caching-on-the-runtime-adapter.md),
-[ADR 0027](./docs/adr/0027-deferred-approval-resume.md)).
+[ADR 0027](./docs/adr/0027-deferred-approval-resume.md),
+[ADR 0028](./docs/adr/0028-hybrid-retrieval-and-decay-ranked-demotion.md),
+[ADR 0029](./docs/adr/0029-graduated-authority-tiers.md),
+[ADR 0030](./docs/adr/0030-degraded-disposition-and-grounding.md),
+[ADR 0031](./docs/adr/0031-approval-context-payload.md),
+[ADR 0032](./docs/adr/0032-bitemporal-fact-store.md),
+[ADR 0033](./docs/adr/0033-two-step-restatement.md),
+[ADR 0034](./docs/adr/0034-operational-memory-journal.md),
+[ADR 0035](./docs/adr/0035-fallback-chain.md),
+[ADR 0036](./docs/adr/0036-read-side-freshness.md),
+[ADR 0037](./docs/adr/0037-session-rehydration.md),
+[ADR 0038](./docs/adr/0038-evidence-capture-hook.md),
+[ADR 0039](./docs/adr/0039-fifteenth-code-audit.md)).
 Every L2/L3 change is additive to the L1 Protocols: new optional
 parameters, new modules, and side-by-side Protocols; nothing in the L1
 surface was removed. The package imports and type-checks with no

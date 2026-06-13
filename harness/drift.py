@@ -77,7 +77,17 @@ class DriftMonitor:
         self._reference: dict[str, dict[str, float]] = {}
 
     def record(self, predicate: str, category: str, n: float = 1.0) -> None:
-        """Add ``n`` observations of ``category`` for ``predicate``."""
+        """Add ``n`` observations of ``category`` for ``predicate``.
+
+        ``n`` must be finite and non-negative: a ``NaN`` / ``+inf`` count
+        poisons the accumulated distribution (``math.fsum`` returns
+        ``NaN``, every ordered comparison against it is False), so
+        ``drift`` would return a garbage signal. Validated at the input
+        boundary, the BL-159 / BL-205 / BL-221 / BL-231 / BL-232
+        non-finite-numeric class (BL-256, fifteenth audit).
+        """
+        if not math.isfinite(n) or n < 0:
+            raise ValueError(f"n must be finite and non-negative, got {n!r}")
         self._counts[predicate][category] += n
 
     def distribution(self, predicate: str) -> dict[str, float]:

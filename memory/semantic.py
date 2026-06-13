@@ -242,6 +242,15 @@ class InMemorySemanticStore:
             raise ValueError(
                 f"reranker returned {len(scores)} scores for {len(candidates)} documents"
             )
+        # The reranker is an injected external callable; a non-finite score
+        # would give an undefined sort order (every ordered comparison with
+        # NaN is False) and propagate NaN into HybridHit.score. Validate at
+        # this trust boundary, the same guard tiering.demote_to_capacity
+        # applies to its rank_key scores (BL-258, fifteenth audit; the
+        # BL-159 / BL-221 non-finite-numeric class).
+        nonfinite = [i for i, s in enumerate(scores) if not math.isfinite(s)]
+        if nonfinite:
+            raise ValueError(f"reranker returned non-finite score(s) at positions {nonfinite}")
         reranked = sorted(
             zip(candidates, scores, strict=True), key=lambda pair: (-pair[1], pair[0])
         )

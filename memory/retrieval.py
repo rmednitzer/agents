@@ -85,11 +85,20 @@ def fuse_rrf(*rankings: Sequence[str], k: int = 60) -> list[tuple[str, float]]:
     scores: dict[str, float] = {}
     for ranking in rankings:
         seen: set[str] = set()
-        for rank, key in enumerate(ranking):
+        # ``effective_rank`` counts only DISTINCT ids: a duplicate skipped
+        # by ``seen`` must not advance the rank of the unique ids after it,
+        # or they would be scored at a penalised ``1 / (k + raw_index)``
+        # instead of their true ``1 / (k + distinct_rank)`` (BL-257,
+        # fifteenth audit). ``enumerate`` over the raw list conflated the
+        # two; in-tree callers feed duplicate-free rankings, but the public
+        # API must be correct for an external ranked list with repeats.
+        effective_rank = 0
+        for key in ranking:
             if key in seen:
                 continue
             seen.add(key)
-            scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
+            scores[key] = scores.get(key, 0.0) + 1.0 / (k + effective_rank)
+            effective_rank += 1
     return sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
 
 

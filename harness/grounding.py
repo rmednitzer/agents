@@ -46,6 +46,19 @@ def _ungrounded(claim: str, sources: str, compiled: re.Pattern[str]) -> list[str
     return missing
 
 
+def _any_ungrounded(claim: str, sources: str, compiled: re.Pattern[str]) -> bool:
+    """Whether any match of ``compiled`` in ``claim`` is absent from ``sources``.
+
+    The boolean dual of ``_ungrounded`` that short-circuits on the first
+    ungrounded token, so the SOFT postcondition over untrusted model
+    output does first-miss work instead of building the full missing list
+    (BL-255, fifteenth audit; the BL-159 / BL-173 / BL-182 / BL-191
+    bounded-work-on-adversarial-input class). ``_ungrounded`` stays the
+    diagnostic list builder for ``ungrounded_citations``.
+    """
+    return any(m.group(0) not in sources for m in compiled.finditer(claim))
+
+
 def ungrounded_citations(claim: str, sources: str, *, pattern: str) -> list[str]:
     """Return the citation tokens in ``claim`` not present in ``sources``.
 
@@ -84,6 +97,10 @@ def grounding_predicate[StateT](
 
     def _grounded(state: StateT) -> bool:
         claim, sources = extract(state)
-        return not _ungrounded(claim, sources, compiled)
+        # Short-circuit on the first ungrounded citation (BL-255): the
+        # predicate only needs existence, not the full list, so adversarial
+        # model output with many ungrounded tokens cannot force O(all-tokens)
+        # work here.
+        return not _any_ungrounded(claim, sources, compiled)
 
     return FunctionPredicate(name=name, severity=severity, fn=_grounded)

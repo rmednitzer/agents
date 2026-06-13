@@ -87,6 +87,15 @@ class EvidenceHook(Protocol):
     in ``after`` returns it, or state derived from it, as the token).
     Both are confined to evidence capture: they change neither the
     decision (approval already happened) nor the tool's result.
+
+    Failure contract (BL-261): ``after`` runs in a ``finally`` once
+    ``before`` has returned, so a tool body that raised is still
+    recorded. If ``before`` *itself* raises, the Tier 3 action is aborted
+    before it runs and ``after`` is not called (fail-safe: no irreversible
+    action proceeds without its pre-state capture, and there is no
+    completed action to record an after for). A ``before`` that writes
+    external state should therefore record atomically (snapshot, then
+    commit) so a partial pre-state capture is not orphaned.
     """
 
     async def before(self, context: EvidenceContext) -> Any: ...

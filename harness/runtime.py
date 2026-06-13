@@ -391,7 +391,11 @@ async def _with_evidence(
     runs first, then the body, then ``after`` in a ``finally`` with the
     body's exception (``None`` on success), so a Tier 3 action that
     raised is still recorded. The token ``before`` returns is handed to
-    ``after`` so concurrent Tier 3 bodies pair without shared state.
+    ``after`` so concurrent Tier 3 bodies pair without shared state. A
+    ``before`` that itself raises aborts the action before ``run`` is
+    called and ``after`` is not invoked (BL-261, fifteenth audit:
+    fail-safe, no completed action to record), so a hook's ``before``
+    should capture pre-state atomically.
 
     Tier 3 always routes through approval first (Tier 3 >= the STATEFUL
     default threshold), so this fires on the post-approval leg, never on

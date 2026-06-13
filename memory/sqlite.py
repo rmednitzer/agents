@@ -169,13 +169,18 @@ class SQLiteStore:
             # contention against concurrent writers).
             return
         ttl = self._effective_ttl(ttl_seconds)
-        expires_at = time.time() + ttl if ttl is not None else None
 
         def _bulk() -> None:
             # One BEGIN IMMEDIATE transaction so a multi-key set is
             # atomic (all rows or none), matching the BatchMemoryStore
             # all-or-nothing contract and the CAS path (BL-161).
             self._conn.execute("BEGIN IMMEDIATE")
+            # Sample the TTL clock AFTER BEGIN IMMEDIATE so a contended
+            # write lock (up to the sqlite3 busy timeout under
+            # cross-instance contention) cannot strand a stale timestamp
+            # that writes a short TTL already-expired (BL-259, parity with
+            # evict_to_capacity).
+            expires_at = time.time() + ttl if ttl is not None else None
             try:
                 self._conn.executemany(
                     f'INSERT OR REPLACE INTO "{self._table}" '
@@ -255,10 +260,13 @@ class SQLiteStore:
     ) -> bool:
         validate_key(key)
         ttl = self._effective_ttl(ttl_seconds)
-        expires_at = time.time() + ttl if ttl is not None else None
 
         def _cas() -> bool:
             self._conn.execute("BEGIN IMMEDIATE")
+            # TTL clock sampled after BEGIN IMMEDIATE (BL-259, parity with
+            # evict_to_capacity; a contended cross-instance write lock
+            # must not strand a stale timestamp).
+            expires_at = time.time() + ttl if ttl is not None else None
             try:
                 current = self._db_get(key)
                 if current != expected:
@@ -325,10 +333,11 @@ class SQLiteStore:
     ) -> str | None:
         validate_key(key)
         ttl = self._effective_ttl(ttl_seconds)
-        expires_at = time.time() + ttl if ttl is not None else None
 
         def _vset() -> bool:
             self._conn.execute("BEGIN IMMEDIATE")
+            # TTL clock sampled after BEGIN IMMEDIATE (BL-259).
+            expires_at = time.time() + ttl if ttl is not None else None
             try:
                 current = self._db_get(key)
                 live = None if current is None else self._token(current)
@@ -391,8 +400,11 @@ class SQLiteStore:
             return {}
 
         def _txn() -> dict[str, str] | None:
-            now = time.time()
             self._conn.execute("BEGIN IMMEDIATE")
+            # TTL clock sampled after BEGIN IMMEDIATE (BL-259): a contended
+            # cross-instance write lock must not strand a stale timestamp
+            # that writes a short-TTL row already-expired.
+            now = time.time()
             try:
                 for key, w in writes_d.items():
                     current = self._db_get(key)
