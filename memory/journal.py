@@ -189,6 +189,35 @@ def _non_empty(label: str, value: str) -> str:
     return value
 
 
+def _ready_from(tasks: list[Task]) -> list[Task]:
+    """PENDING tasks whose every dependency exists and is DONE.
+
+    A missing dependency is treated as unsatisfied (the fail-safe
+    reading). Pure over an already-listed task set so `ready_tasks` and
+    `context_pack` share one definition over a single listing.
+    """
+    by_id = {t.id: t for t in tasks}
+    ready: list[Task] = []
+    for task in tasks:
+        if task.status != TaskStatus.PENDING:
+            continue
+        deps = [by_id.get(dep) for dep in task.depends_on]
+        if all(dep is not None and dep.status == TaskStatus.DONE for dep in deps):
+            ready.append(task)
+    return ready
+
+
+def _stale_from(threads: list[Thread], instant: datetime) -> list[Thread]:
+    """Threads idle past their stale-after window at ``instant``.
+
+    Returned oldest-update-first so the most neglected surface first.
+    Pure over an already-listed thread set so `stale_threads` and
+    `context_pack` share one definition over a single listing.
+    """
+    stale = [t for t in threads if (instant - t.updated_at).total_seconds() > t.stale_after_seconds]
+    return sorted(stale, key=lambda t: (t.updated_at, t.id))
+
+
 class Journal:
     """Typed operational-memory records over a `MemoryStore` (BL-245).
 
@@ -297,16 +326,7 @@ class Journal:
         dependency is not ready (a missing dependency is treated as
         unsatisfied, the fail-safe reading).
         """
-        tasks = await self.list_tasks()
-        by_id = {t.id: t for t in tasks}
-        ready: list[Task] = []
-        for task in tasks:
-            if task.status != TaskStatus.PENDING:
-                continue
-            deps = [by_id.get(dep) for dep in task.depends_on]
-            if all(dep is not None and dep.status == TaskStatus.DONE for dep in deps):
-                ready.append(task)
-        return ready
+        return _ready_from(await self.list_tasks())
 
     # --- threads (the stale-after query) ------------------------------
 
@@ -356,13 +376,7 @@ class Journal:
         A thread is stale when ``now - updated_at > stale_after_seconds``.
         Returned oldest-update-first so the most neglected surface first.
         """
-        instant = _stamp(now)
-        stale = [
-            t
-            for t in await self.list_threads()
-            if (instant - t.updated_at).total_seconds() > t.stale_after_seconds
-        ]
-        return sorted(stale, key=lambda t: (t.updated_at, t.id))
+        return _stale_from(await self.list_threads(), _stamp(now))
 
     # --- decisions (the decision log) ---------------------------------
 
@@ -447,16 +461,23 @@ async def context_pack(
     the stale threads (idle past their window at ``now``) split from the
     still-fresh open threads, and the most recent ``recent_decisions``
     decisions. Read-only; the hardened single-shot / scheduled envelope a
-    workload runs this inside is a deployment pattern (ADR 0035), not a
+    workload runs this inside is a deployment pattern (ADR 0037), not a
     contract change. ``recent_decisions`` must be non-negative.
+
+    Tasks and threads are each listed once and the ready / in-progress
+    and stale / open splits derived in memory, since the listing is
+    per-key and a second pass would double the reads.
     """
     if recent_decisions < 0:
         raise ValueError(f"recent_decisions must be non-negative, got {recent_decisions}")
-    ready = await journal.ready_tasks()
-    in_progress = [t for t in await journal.list_tasks() if t.status is TaskStatus.IN_PROGRESS]
-    stale = await journal.stale_threads(now=now)
+    tasks = await journal.list_tasks()
+    ready = _ready_from(tasks)
+    in_progress = [t for t in tasks if t.status == TaskStatus.IN_PROGRESS]
+    instant = _stamp(now)
+    threads = await journal.list_threads()
+    stale = _stale_from(threads, instant)
     stale_ids = {t.id for t in stale}
-    open_threads = [t for t in await journal.list_threads() if t.id not in stale_ids]
+    open_threads = [t for t in threads if t.id not in stale_ids]
     decisions = await journal.decisions()
     tail = decisions[-recent_decisions:] if recent_decisions else []
     return ContextPack(
