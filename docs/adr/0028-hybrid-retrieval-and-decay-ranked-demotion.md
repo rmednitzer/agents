@@ -109,7 +109,7 @@ subvert the demotion order.
   `memory/tiering.py` (adds `decay_strength` and the `rank_key` hook),
   `memory/__init__.py` (exports). No adapter, harness, or schema change.
   Rollback: revert the commit; no state or schema migration.
-- Tests: 30 new cases (`tests/memory/test_bl243_hybrid_retrieval.py`,
+- Tests: 32 new cases (`tests/memory/test_bl243_hybrid_retrieval.py`,
   `tests/memory/test_bl247_demotion_ranking.py`); `memory/retrieval.py`
   at 100% line coverage.
 

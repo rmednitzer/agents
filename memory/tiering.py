@@ -367,5 +367,18 @@ class TieredMemoryStore:
         if rank_key is None:
             ranked = sorted(live, key=lambda key: (self._order.get(key, 0), key))
         else:
-            ranked = sorted(live, key=lambda key: (rank_key(key), key))
+            # Compute each key's strength once and reject a non-finite
+            # result: a NaN or +/-inf rank silently subverts the sort
+            # order (every ordered comparison with NaN is False), the
+            # BL-159 / BL-231 non-finite-control class applied to the
+            # caller's hook.
+            scores: dict[str, float] = {}
+            for key in live:
+                score = rank_key(key)
+                if not math.isfinite(score):
+                    raise ValueError(
+                        f"rank_key returned a non-finite value {score!r} for key {key!r}"
+                    )
+                scores[key] = score
+            ranked = sorted(live, key=lambda key: (scores[key], key))
         return await self.demote(ranked[:overflow], ttl_seconds=ttl_seconds)

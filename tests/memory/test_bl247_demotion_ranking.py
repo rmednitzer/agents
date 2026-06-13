@@ -134,3 +134,12 @@ async def test_rank_key_ties_broken_lexicographically() -> None:
     moved = await store.demote_to_capacity(1, rank_key=lambda key: 1.0)
     assert moved == 2
     assert await hot.list_keys() == ["z"]  # x, y demoted on the tie
+
+
+@pytest.mark.asyncio
+async def test_rank_key_non_finite_result_raises() -> None:
+    store, _, _ = _tiered()
+    for key in ("a", "b", "c"):
+        await store.write(key, b"v")
+    with pytest.raises(ValueError, match="non-finite"):
+        await store.demote_to_capacity(1, rank_key=lambda key: math.nan)

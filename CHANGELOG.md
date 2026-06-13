@@ -19,16 +19,18 @@ in-tree memory retrieval-quality gaps closed, both additive to L1
   Protocol, and the `HybridHit` result type (`BL-243`).
 - `InMemorySemanticStore.query_hybrid`: a vector pass fused with a
   lexical pass via RRF, then an optional rerank over a
-  recall-then-rerank window. The store now retains indexed source text
+  recall-then-rerank window (`rrf_k` is validated positive at the API
+  boundary). The store now retains indexed source text
   in lockstep with the vector index; vector-only `query_semantic` is
   unchanged.
 - `TieredMemoryStore.demote_to_capacity(rank_key=...)`: an optional
   strength-ranking hook; `rank_key=None` keeps the first-write FIFO
   order byte-for-byte. `memory.tiering.decay_strength` is the
   deterministic Ebbinghaus forgetting reference to pass as `rank_key`,
-  with finite / non-negative input validation (the BL-159 / BL-231
+  with finite / non-negative input validation, and a non-finite
+  `rank_key` result is rejected at demotion (the BL-159 / BL-231
   non-finite-control class) (`BL-247`).
-- 30 deterministic tests
+- 32 deterministic tests
   (`tests/memory/test_bl243_hybrid_retrieval.py`,
   `tests/memory/test_bl247_demotion_ranking.py`); `memory/retrieval.py`
   at 100% line coverage.

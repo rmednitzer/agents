@@ -191,6 +191,8 @@ class InMemorySemanticStore:
         pruned from both indexes and skipped, as in ``query_semantic``.
         ``rrf_k`` is the RRF rank-damping constant.
         """
+        if rrf_k <= 0:
+            raise ValueError("rrf_k must be positive")
         if k <= 0 or not self._vectors:
             return []
         query_vec = (await self._embedder.embed([text]))[0]

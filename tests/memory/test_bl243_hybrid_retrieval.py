@@ -182,6 +182,14 @@ async def test_query_hybrid_reranker_length_mismatch_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_query_hybrid_rejects_nonpositive_rrf_k() -> None:
+    s = _store()
+    await s.write_semantic("a", b"A", text="alpha")
+    with pytest.raises(ValueError, match="rrf_k must be positive"):
+        await s.query_hybrid("alpha", rrf_k=0)
+
+
+@pytest.mark.asyncio
 async def test_query_hybrid_excludes_and_prunes_expired() -> None:
     s = _store()
     await s.write_semantic("short", b"S", text="alpha ephemeral", ttl_seconds=0.01)
