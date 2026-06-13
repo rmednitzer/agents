@@ -18,6 +18,11 @@
       "title": "Contract Version",
       "type": "string"
     },
+    "degraded": {
+      "default": false,
+      "title": "Degraded",
+      "type": "boolean"
+    },
     "duration_ms": {
       "minimum": 0.0,
       "title": "Duration Ms",
@@ -43,7 +48,7 @@
       "type": "string"
     },
     "schema_version": {
-      "default": "1.0.0",
+      "default": "1.1.0",
       "title": "Schema Version",
       "type": "string"
     },

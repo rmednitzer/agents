@@ -3,6 +3,51 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] DEGRADED disposition and grounding postconditions (ADR 0030, BL-244, 2026-06-13)
+
+The output-trustworthiness item from the Vertex MCP analysis (#114): a
+"delivered but degraded" disposition that travels with the run record,
+and the deterministic grounding check that is the highest-value
+anti-confabulation postcondition for a retrieval agent. Additive to L1
+(ADR 0007); ADR 0030 is the cross-cutting why.
+
+### Added
+
+- `RunRecord.degraded` (record schema v1.1.0; `RUN_RECORD_SCHEMA_VERSION`
+  advances to `1.1.0` with `1.0.0` retained in
+  `SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS`). The orthogonal quality axis
+  beside `RunOutcome`: `outcome` stays `completed` (the run did not
+  halt), and `degraded` flags that a SOFT postcondition was violated on
+  the final delivered leg. The field defaults `False`, so a v1.0.0 and a
+  v1.1.0 record both validate against the current model and the offline
+  gate needs no per-version dispatch.
+- `harness/grounding.py`: `ungrounded_citations(claim, sources, *,
+  pattern)`, a pure function returning the citation tokens (regex
+  matches of `pattern`) in `claim` absent from `sources`, in
+  first-appearance order, deduplicated; and `grounding_predicate(extract,
+  *, pattern, name=, severity=SOFT)`, a `Predicate` factory whose
+  workload-supplied `extract(state) -> (claim, sources)` keeps the
+  framework free of any output-model shape (ADR 0001). The check
+  relabels without rewriting model content.
+- `run_under_contract` sets `degraded`: a per-leg `leg_soft_failed` flag,
+  reset at each leg's start (so a retry that recovers clears it) and
+  captured into the terminal `completed` record. A `substitute`
+  directive keeps the flag (the replacement is not re-validated);
+  `escalate` and a HARD violation stay their own non-`completed`
+  terminals at the `False` default.
+- 20 deterministic tests
+  (`tests/harness/test_bl244_degraded_and_grounding.py`);
+  `harness/grounding.py` at 100% line coverage.
+
+### Notes
+
+- `degraded` is a separate axis, not a new `RunOutcome` member, to
+  preserve the ADR 0012 lockstep between `RunOutcome` and
+  `evaluation.dataset.TrajectoryOutcome` and leave every existing
+  outcome-matching call site unchanged. The ok / degraded / error
+  *reporting* surface (output banner, scheduler exit codes) stays a
+  workload concern; the substrate records the disposition.
+
 ## [Unreleased] Graduated authority tiers on the guard (ADR 0029, BL-242, 2026-06-13)
 
 The most on-thesis item from the Vertex MCP analysis (#114): authority

@@ -207,7 +207,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
 
     digest = contract_digest(contract)
 
-    def _emit_record(outcome: RunOutcome) -> None:
+    def _emit_record(outcome: RunOutcome, *, degraded: bool = False) -> None:
         """Emit the run-provenance record at a terminal point (BL-185).
 
         No-op unless the caller opted in via ``record_sink``. The digest
@@ -228,6 +228,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
                 started_at=started_at.isoformat(),
                 completed_at=now.isoformat(),
                 duration_ms=(now - started_at).total_seconds() * 1000.0,
+                degraded=degraded,
             )
         )
 
@@ -420,6 +421,11 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         # resume=None the retry re-pauses (returns a ResumableState) if it
         # hits an approval-gated tool again, requiring a new decision.
         retried = False
+        # BL-244: True once a SOFT postcondition is violated on the final
+        # (non-retried) leg, so the terminal "completed" RunRecord can
+        # carry degraded=True. Set per leg below and captured at the
+        # no-retry break; a retried leg resets it.
+        degraded_run = False
         post_records: list[tuple[str, bool]] = []
 
         def _flush_post() -> None:
@@ -448,6 +454,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
 
             retry_requested = False
             post_records.clear()
+            leg_soft_failed = False
             for pred_post in contract.postconditions:
                 ok = pred_post(output)
                 post_records.append((pred_post.name, ok))
@@ -466,6 +473,11 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
                     _flush_post()
                     _emit_record("postcondition")
                     raise PostconditionViolation(pred_post.name)
+                # Soft postcondition violation: the run will still deliver
+                # its output (unless a recovery directive escalates or
+                # retries), so mark this leg degraded (BL-244). A retry
+                # resets the flag; the final leg's value is recorded.
+                leg_soft_failed = True
                 outcome = await _recover(pred_post.name, "postcondition", output)
                 if outcome is None or outcome.directive == "continue":
                     continue
@@ -490,6 +502,7 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
 
             if not retry_requested:
                 _flush_post()
+                degraded_run = leg_soft_failed
                 break
             retried = True
             result = await _invoke(resume_state=None)
@@ -506,5 +519,5 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         )
     )
 
-    _emit_record("completed")
+    _emit_record("completed", degraded=degraded_run)
     return output
