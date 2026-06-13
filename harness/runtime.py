@@ -405,8 +405,12 @@ async def _with_evidence(
     if hook is None or tier is not AuthorityTier.IRREVERSIBLE:
         return await run()
     context = EvidenceContext(
+        # Shallow-copy the arguments so the captured context is a stable
+        # snapshot: the live dict is also handed to the tool body (the MCP
+        # path passes it to call_tool), and a hook may keep the context as
+        # its token, so it must not observe a later mutation (BL-253).
         tool=tool,
-        arguments=arguments,
+        arguments=dict(arguments),
         tier=tier,
         tool_call_id=tool_call_id,
         rollback_plan=gate.rollback_plan,

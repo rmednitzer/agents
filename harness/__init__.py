@@ -63,7 +63,12 @@ from harness.events import (
     RecoveryApplied,
     SkillDispatched,
 )
-from harness.evidence import EvidenceContext, EvidenceHook, EvidenceRecord, RecordingEvidenceHook
+from harness.evidence import (
+    EvidenceContext,
+    EvidenceHook,
+    EvidenceRecord,
+    RecordingEvidenceHook,
+)
 from harness.fallback import FallbackChain, default_should_descend
 from harness.freshness import Refusal, is_stale, require_fresh
 from harness.grounding import grounding_predicate, ungrounded_citations

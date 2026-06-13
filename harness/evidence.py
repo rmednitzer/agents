@@ -35,6 +35,7 @@ snapshot, decoupled from the tool's output shape).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -52,17 +53,21 @@ __all__ = [
 class EvidenceContext:
     """The call context passed to an ``EvidenceHook.before`` (BL-253).
 
-    Immutable. ``tier`` is always ``IRREVERSIBLE`` (the hook fires only
-    for Tier 3); it is carried explicitly so a hook that also logs lower
-    tiers reads one shape. ``tool_call_id`` is the framework's stable
-    per-call id on the deferred and MCP paths and ``None`` on the
+    Frozen, and ``arguments`` is a shallow copy taken at capture
+    (``_with_evidence``) and typed ``Mapping`` read-only, so the recorded
+    call stays stable even if the live argument dict is later mutated (for
+    example the MCP path also hands that dict to ``call_tool``); nested
+    values are not deep-copied. ``tier`` is always ``IRREVERSIBLE`` (the
+    hook fires only for Tier 3), carried explicitly so a hook that also
+    logs lower tiers reads one shape. ``tool_call_id`` is the framework's
+    stable per-call id on the deferred and MCP paths and ``None`` on the
     replay-local path (which has no per-call id). ``rollback_plan`` is the
     plan a ``RollbackPlanner`` produced for this action (BL-251), or
     ``None`` when no planner is configured.
     """
 
     tool: str
-    arguments: dict[str, Any]
+    arguments: Mapping[str, Any]
     tier: AuthorityTier
     tool_call_id: str | None = None
     rollback_plan: str | None = None
