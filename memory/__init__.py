@@ -44,6 +44,7 @@ from memory.encryption import (
 from memory.errors import AccessDenied, MemoryError, NamespaceViolation
 from memory.inmemory import InMemoryStore
 from memory.journal import (
+    ContextPack,
     Decision,
     Event,
     InvalidTransition,
@@ -54,6 +55,7 @@ from memory.journal import (
     TaskNotFound,
     TaskStatus,
     Thread,
+    context_pack,
 )
 from memory.redis import BoundedRedisStore, RedisStore
 from memory.retrieval import (
@@ -109,6 +111,7 @@ __all__ = [
     "CASMemoryStore",
     "CompactionResult",
     "ContentAddressableStore",
+    "ContextPack",
     "Decision",
     "DynamoDBStore",
     "Embedder",
@@ -156,6 +159,7 @@ __all__ = [
     "TxnWrite",
     "VersionedKeyProvider",
     "VersionedMemoryStore",
+    "context_pack",
     "decay_strength",
     "fuse_rrf",
     "lexical_overlap_scores",

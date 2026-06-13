@@ -1,7 +1,7 @@
 # Status
 
 Maturity of the repository and its documents. Updated when a phase
-opens or closes. Last reviewed: 2026-06-13 (ADR 0034 structured operational-memory journal, `BL-245`; the same day as the ADR 0028 through 0033 waves).
+opens or closes. Last reviewed: 2026-06-13 (ADR 0035 fallback ladder `BL-248`, ADR 0036 read-side freshness `BL-246`, ADR 0037 session rehydration `BL-249`; the same day as the ADR 0028 through 0034 waves).
 
 ## Maturity taxonomy
 
@@ -49,6 +49,9 @@ opens or closes. Last reviewed: 2026-06-13 (ADR 0034 structured operational-memo
 | Bitemporal fact store (`BL-250`) | The held-out half of `BL-247` (ADR 0028): `memory/bitemporal.py` with the `BitemporalMemoryStore` Protocol and `InMemoryBitemporalStore` reference. Facts addressed by `(subject, predicate)` with validity time (`valid_from`/`valid_to`) separate from transaction time (`recorded_at`/`superseded_at`/`superseded_by`), a per-fact confidence, and auto-supersession; `record` / `current` (believed-now valid-now) / `as_of` (the full bitemporal point query) / `history`. A standalone Protocol, not a `MemoryStore` extension (a different addressing model, the ADR 0024 driver/composition stance). Construction-time validation (timezone-aware, finite confidence in [0,1], positive validity interval). 16 new tests; `memory/bitemporal.py` at 100% coverage. Durable adapters and a fact-keyed audit are follow-ups | stable | ADR 0032 |
 | Two-step parameter restatement (`BL-252`) | The resume-verification half of the held-out `BL-251` follow-on: an irreversible (Tier 3) approval is honoured only when the human re-enters the arguments and they match the proposed call (`ApprovalInterruption.restated_arguments`, `ResumableState.approve(restated_arguments=)`, `_restate_satisfied` enforced in both the replay and deferred gates), composing with the BL-193 binding. A missing or mismatched restatement re-pauses. Additive (Tier 3 only; lower tiers single-step as before; nothing in tree currently resumes-and-executes a Tier 3 approval). The evidence-capture hook is split forward to `BL-253`. 10 new tests | stable | ADR 0033 |
 | Operational-memory journal (`BL-245`) | The largest analysis item: `memory/journal.py`, typed records (`Task` / `Thread` / `Decision` / `Event`) plus a `Journal` driver over a `MemoryStore`, so records inherit namespace / TTL / audit / encryption. Leads with the two pieces the gateway leads with: a task FSM with an explicit transition table (`_TASK_TRANSITIONS`; an illegal move raises `InvalidTransition`, every transition appends to the log) plus a `ready_tasks` dependency query, and a thread stale-after window surfaced by `stale_threads` (with `touch_thread`); `Decision` is the decision log and `Event` the categorized `timeline`. A driver, not a store Protocol (the `MemoryCompactor` precedent). Version-gated mutation, dependency-cycle rejection, and the `BL-249` `context_pack` are follow-ups. 18 new tests; `memory/journal.py` at 100% coverage | stable | ADR 0034 |
+| Fallback ladder (`BL-248`) | `harness/fallback.py: FallbackChain`, a `Runtime` wrapping an ordered list of runtimes, trying each until one returns: the graceful-degradation ladder (premium then cheap then cached then stub) `RetryPolicy` is not. Composes with `RetryPolicy` (each member owns its retry); `default_should_descend` descends on a non-`HarnessError` `Exception` so a governance / budget / approval halt never reroutes to a backup, an approval pause is returned not fallen back, and `BaseException` propagates. `stream` delegates to the first member. Additive (a `Runtime` composition, no contract change). 13 new tests; 100% coverage | stable | ADR 0035 |
+| Read-side freshness + refusal-as-data (`BL-246`) | `harness/freshness.py`: `require_fresh(extract, max_age_seconds)`, a `Predicate` factory (the `grounding_predicate` shape) that gates a value by age with an injected clock (SOFT default marks the run degraded, ADR 0030; HARD makes it terminal), the pure `is_stale` helper underneath, and `Refusal`, a typed model-legible refusal record. Additive; a workload wraps `Refusal` in its output model (the degraded-reporting boundary). 14 new tests; 100% coverage | stable | ADR 0036 |
+| Session rehydration (`BL-249`) | `memory.journal.context_pack`, an async assembler that packs a `ContextPack` (ready / in-progress tasks, stale vs open threads, recent decisions) from a `Journal` for a session-start context refresh; built on BL-245 (ADR 0034), unblocked by it. The scheduled single-shot envelope is a documented deployment pattern (ADR 0037), not a contract change; a packaged reference workload bundle and a delta mode are follow-ups. 7 new tests | stable | ADR 0037 |
 | L3 open | Live-model workload (now also the BL-132/BL-171 live cache-hit gate), true OTel spans, true preemption | planned | `docs/backlog.md` (`BL-120`, `BL-113`/`138`, `BL-155`) |
 
 ## Document maturity
@@ -56,7 +59,7 @@ opens or closes. Last reviewed: 2026-06-13 (ADR 0034 structured operational-memo
 | Document | Maturity |
 | --- | --- |
 | `CLAUDE.md`, `README.md`, component `README.md` | stable |
-| `docs/adr/0001`-`0034` | stable (Accepted) |
+| `docs/adr/0001`-`0037` | stable (Accepted) |
 | `docs/releasing.md` | stable |
 | `docs/backlog.md` | living tracker |
 | `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE` section (in `CONTRIBUTING.md`) | stable |

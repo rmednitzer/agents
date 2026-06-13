@@ -3,6 +3,45 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Fallback ladder, read-side freshness, session rehydration (ADR 0035 / 0036 / 0037, BL-248 / BL-246 / BL-249, 2026-06-13)
+
+A batch clearing most of the remaining Vertex MCP analysis backlog, all
+additive to L1 (ADR 0007).
+
+### Added
+
+- `harness/fallback.py` (`BL-248`, ADR 0035): `FallbackChain`, a
+  `Runtime` wrapping an ordered list of runtimes, trying each until one
+  returns, the graceful-degradation ladder `RetryPolicy` is not.
+  `default_should_descend` descends on a non-`HarnessError` `Exception`,
+  so a governance / budget / approval halt never reroutes to a backup and
+  `BaseException` propagates; an approval pause is returned, not fallen
+  back; `stream` delegates to the first member. Composes with
+  `RetryPolicy` (each member owns its own retry).
+- `harness/freshness.py` (`BL-246`, ADR 0036): `require_fresh(extract,
+  max_age_seconds)`, a SOFT-by-default `Predicate` factory (the
+  `grounding_predicate` shape) gating a value by age against an injected
+  clock; the pure `is_stale` helper; and `Refusal`, a typed,
+  model-legible refusal record (refusal as data).
+- `memory.journal.context_pack` + `ContextPack` (`BL-249`, ADR 0037): an
+  async assembler that packs the actionable session-start context (ready
+  / in-progress tasks, stale vs open threads, recent decisions) from a
+  `Journal`, the session rehydration unblocked by the BL-245 journal.
+- 34 deterministic tests (`test_bl248_fallback.py`,
+  `test_bl246_freshness.py`, `test_bl249_context_pack.py`);
+  `harness/fallback.py` and `harness/freshness.py` at 100% line coverage.
+
+### Notes
+
+- All three are additive compositions / helpers, no contract change:
+  `FallbackChain` is a `Runtime`, `require_fresh` is an ordinary
+  predicate, `context_pack` reads the journal. No schema change.
+- The full `{ok, value, refusal}` envelope (BL-246), a packaged reference
+  workload bundle and a delta mode (BL-249), and the evidence-capture
+  hook around Tier 3 execution (`BL-253`, the held-out half of BL-252)
+  remain tracked; `BL-253` is kept separate so the audited
+  tool-execution-path change is not buried in this batch.
+
 ## [Unreleased] Structured operational-memory journal (ADR 0034, BL-245, 2026-06-13)
 
 The largest item from the Vertex MCP analysis: a cognitive schema over
