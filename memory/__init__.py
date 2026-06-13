@@ -43,6 +43,18 @@ from memory.encryption import (
 )
 from memory.errors import AccessDenied, MemoryError, NamespaceViolation
 from memory.inmemory import InMemoryStore
+from memory.journal import (
+    Decision,
+    Event,
+    InvalidTransition,
+    Journal,
+    JournalEntry,
+    JournalError,
+    Task,
+    TaskNotFound,
+    TaskStatus,
+    Thread,
+)
 from memory.redis import BoundedRedisStore, RedisStore
 from memory.retrieval import (
     HybridHit,
@@ -97,16 +109,22 @@ __all__ = [
     "CASMemoryStore",
     "CompactionResult",
     "ContentAddressableStore",
+    "Decision",
     "DynamoDBStore",
     "Embedder",
     "EncryptedStore",
     "EnvKeyProvider",
+    "Event",
     "FileKeyProvider",
     "HybridHit",
     "HybridSemanticStore",
     "InMemoryBitemporalStore",
     "InMemorySemanticStore",
     "InMemoryStore",
+    "InvalidTransition",
+    "Journal",
+    "JournalEntry",
+    "JournalError",
     "KeyProvider",
     "MemoryCompactor",
     "MemoryError",
@@ -127,6 +145,10 @@ __all__ = [
     "Summarizer",
     "SweepableStore",
     "TTLSweeper",
+    "Task",
+    "TaskNotFound",
+    "TaskStatus",
+    "Thread",
     "TieredMemoryStore",
     "TransactionalMemoryStore",
     "TruncatingSummarizer",
