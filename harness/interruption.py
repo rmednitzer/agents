@@ -57,8 +57,16 @@ class ApprovalInterruption(Interruption):
     undone (BL-251, ADR 0031), produced by a workload-supplied
     RollbackPlanner the guard consults on the approval branch. ``None``
     when no planner is configured or the planner returns no plan. Pure
-    annotation: capturing evidence or executing the rollback is a
-    separate concern (BL-252)."""
+    annotation: capturing evidence around execution is a separate concern
+    (BL-253)."""
+    restated_arguments: dict[str, Any] | None = None
+    """The arguments a human re-entered when approving an irreversible
+    (Tier 3) action (BL-252, ADR 0033): the two-step confirmation. The
+    resume honours a Tier-IRREVERSIBLE approval only when these equal the
+    proposed ``arguments`` (verified at execution, composing with the
+    BL-193 (tool, arguments) binding); a missing or mismatched
+    restatement re-pauses for a fresh decision. ``None`` for lower tiers,
+    where a single-step approval suffices."""
 
 
 class ActionRecord(BaseModel):
@@ -112,10 +120,24 @@ class ResumableState(BaseModel):
     # the runtime that produced it interprets it.
     runtime_state: dict[str, Any] | None = None
 
-    def approve(self, interruption_id: str) -> ResumableState:
-        """Return a new state with the given interruption marked approved."""
+    def approve(
+        self,
+        interruption_id: str,
+        *,
+        restated_arguments: dict[str, Any] | None = None,
+    ) -> ResumableState:
+        """Return a new state with the given interruption marked approved.
+
+        For an irreversible (Tier 3) action, pass ``restated_arguments``:
+        the resume honours the approval only if they match the proposed
+        arguments (BL-252, ADR 0033, the two-step confirmation). A missing
+        or mismatched restatement re-pauses for a fresh decision. Ignored
+        for lower tiers, where a single-step approval suffices.
+        """
         new_pending = [
-            ai.model_copy(update={"decision": "approved"}) if ai.id == interruption_id else ai
+            ai.model_copy(update={"decision": "approved", "restated_arguments": restated_arguments})
+            if ai.id == interruption_id
+            else ai
             for ai in self.pending_approvals
         ]
         return self.model_copy(update={"pending_approvals": new_pending})
