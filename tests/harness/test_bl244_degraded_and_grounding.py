@@ -21,7 +21,7 @@ from harness.contract import Contract, Severity, predicate
 from harness.enforcement import run_under_contract
 from harness.errors import PostconditionViolation
 from harness.grounding import grounding_predicate, ungrounded_citations
-from harness.provenance import RunRecord
+from harness.provenance import RunRecord, record_invariant_violations
 from harness.recovery import RecoveryOutcome
 
 CVE = r"CVE-\d{4}-\d{4,}"
@@ -322,3 +322,40 @@ async def test_degraded_path_completes_without_a_record_sink() -> None:
         _Doc,
     )
     assert out == _UNGROUNDED
+
+
+# --- record_invariant_violations: degraded-implies-completed ----------
+# The structural half of the field's invariant is contract-independent,
+# so the shared gate (verify_run_record + scripts/check_run_records.py)
+# rejects a malformed producer that stamps degraded on a non-completed
+# terminal (PR #117 review).
+
+
+def _base_record(**kw: object) -> RunRecord:
+    base: dict[str, object] = {
+        "run_id": "trace-xyz",
+        "workload": "retr",
+        "contract_name": "retr",
+        "contract_version": "1.0.0",
+        "contract_digest": "0" * 64,
+        "outcome": "completed",
+        "started_at": "2026-06-13T00:00:00+00:00",
+        "completed_at": "2026-06-13T00:00:01+00:00",
+        "duration_ms": 1000.0,
+    }
+    base.update(kw)
+    return RunRecord(**base)  # type: ignore[arg-type]
+
+
+def test_degraded_on_completed_outcome_is_sound() -> None:
+    assert record_invariant_violations(_base_record(degraded=True)) == []
+
+
+def test_degraded_on_non_completed_outcome_is_flagged() -> None:
+    errs = record_invariant_violations(_base_record(outcome="budget", degraded=True))
+    assert any("degraded" in e and "budget" in e for e in errs)
+
+
+def test_non_degraded_non_completed_outcome_is_sound() -> None:
+    # The flag at its default never trips the invariant, on any outcome.
+    assert record_invariant_violations(_base_record(outcome="budget", degraded=False)) == []

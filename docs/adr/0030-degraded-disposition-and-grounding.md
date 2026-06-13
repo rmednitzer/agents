@@ -66,6 +66,15 @@ terminal (`postcondition`, `paused`, `budget`, `governance`,
 `degraded` at its `False` default, so the flag is only ever non-default
 on a `completed` run.
 
+That structural half of the guarantee (`degraded` False on any
+non-`completed` outcome) is contract-independent, so
+`record_invariant_violations` (shared by `verify_run_record` and the
+offline `scripts/check_run_records.py` gate) enforces it: a malformed or
+buggy producer that stamps `degraded=True` on, say, a `budget` terminal
+is rejected by both paths. The other half (no SOFT postcondition failed)
+needs the contract and the output, so it stays a producer guarantee
+rather than a gate check.
+
 ### `harness/grounding.py`
 
 A new module with the deterministic anti-confabulation core:

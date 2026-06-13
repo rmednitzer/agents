@@ -187,12 +187,23 @@ def record_invariant_violations(record: RunRecord) -> list[str]:
     ``completed_at`` are UTC instants (``RunRecord`` documents them as
     UTC, and a zero ``utcoffset`` is the only UTC reading: ``None`` for
     a naive timestamp, a non-zero ``timedelta`` for any other offset);
-    and a monotonic window (only compared once both are confirmed UTC,
-    which also avoids the naive-vs-aware comparison ``TypeError``).
+    a monotonic window (only compared once both are confirmed UTC,
+    which also avoids the naive-vs-aware comparison ``TypeError``); and
+    that ``degraded`` is False on any non-``completed`` outcome (ADR 0030,
+    the structural half of the field's documented invariant: the quality
+    axis is only meaningful on a delivered run, and this half is
+    contract-independent so the gate enforces it, while the "no SOFT
+    postcondition failed" half needs the contract and output and stays a
+    producer guarantee).
     """
     errors: list[str] = []
     if not record.run_id:
         errors.append("run_id is empty")
+    if record.degraded and record.outcome != "completed":
+        errors.append(
+            f"degraded is True but outcome is {record.outcome!r} "
+            f"(degraded is only valid on a completed run, ADR 0030)"
+        )
     try:
         start = datetime.fromisoformat(record.started_at)
         end = datetime.fromisoformat(record.completed_at)
@@ -229,8 +240,9 @@ def verify_run_record(record: RunRecord, contract: Contract[Any, Any]) -> list[s
     - identity fields agree with ``contract``;
     - the contract-independent record invariants
       (``record_invariant_violations``: non-empty run id, UTC
-      timestamps, monotonic window) so a caller using this directly
-      accepts exactly what the offline gate accepts.
+      timestamps, monotonic window, degraded-implies-completed) so a
+      caller using this directly accepts exactly what the offline gate
+      accepts.
     """
     errors: list[str] = list(record_invariant_violations(record))
     if record.schema_version not in SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS:
