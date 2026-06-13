@@ -11,6 +11,7 @@ from harness.anthropic_api import (
     BatchStatus,
     cache_control_system,
 )
+from harness.authority import AuthorityTier, MappingTierClassifier, TierClassifier
 from harness.budgets import ActionBudget, BudgetKind, BudgetTracker
 from harness.composition import compose_contracts
 from harness.contract import (
@@ -108,6 +109,7 @@ __all__ = [
     "ApprovalGranted",
     "ApprovalInterruption",
     "ApprovalRequested",
+    "AuthorityTier",
     "BatchRequest",
     "BatchResult",
     "BatchStatus",
@@ -138,6 +140,7 @@ __all__ = [
     "MCPLifecycle",
     "MCPServerSpec",
     "MCPTransport",
+    "MappingTierClassifier",
     "MemoryDelete",
     "MemoryRead",
     "MemorySink",
@@ -169,6 +172,7 @@ __all__ = [
     "Runtime",
     "Severity",
     "SkillDispatched",
+    "TierClassifier",
     "ToolCatalog",
     "ToolGuard",
     "ToolSpec",

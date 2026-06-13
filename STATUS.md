@@ -43,6 +43,7 @@ opens or closes. Last reviewed: 2026-06-12 (ADR 0027 deferred approval resume, `
 | Prompt caching on the runtime adapter (`BL-132` / `BL-171`) | Unblocked by pydantic-ai 1.106 (verified in-session). `PydanticAIRuntime(model_settings=...)` pass-through (the opt-in surface for Anthropic cache breakpoints on the stable tools/system prefix; opaque to the harness, ADR 0001) plus cache hit/creation token surfacing via `BudgetTracker.consume_cache_tokens` (`cache_read_tokens` / `cache_write_tokens`; not charged to `max_tokens`, no new ceiling, pairs with `consume_cost`, BL-123; outside `snapshot()`). Deterministic coverage (16 tests); live cache-hit validation coupled to `BL-120` (`LIMITATIONS.md` L9 residual) | stable | ADR 0026 |
 | Deferred approval resume (`BL-114`) | Unblocked by pydantic-ai 1.106 (verified in-session). Opt-in `PydanticAIRuntime(approval_mode="deferred")`: the pause rides `DeferredToolRequests`, the message history travels in the new optional `ResumableState.runtime_state`, and the resumed leg continues instead of replaying (prior tool calls run exactly once; the BL-193 (tool, arguments) binding re-verified at execution; denial model-visible via `ToolDenied`; paused-leg usage charged; `stream()` stays replay-gated). Replay remains the byte-identical default. 12 new tests; `LIMITATIONS.md` L10 rewritten | stable | ADR 0027 |
 | Hybrid retrieval + decay-ranked demotion (`BL-243` / `BL-247`) | The first implementation wave from the Vertex MCP analysis (#114): `memory/retrieval.py` (`fuse_rrf` Reciprocal Rank Fusion, `lexical_overlap_scores`, the `Reranker` Protocol, `HybridSemanticStore` + `HybridHit`), `InMemorySemanticStore.query_hybrid`, and `TieredMemoryStore.demote_to_capacity(rank_key=...)` + `decay_strength`. Additive; vector-only `query_semantic` and FIFO demotion stay the defaults. The `BitemporalMemoryStore` Protocol (`BL-250`) and a durable hybrid adapter stay tracked | stable | ADR 0028 |
+| Graduated authority tiers (`BL-242`) | The most on-thesis item from the Vertex MCP analysis: `harness/authority.py` (`AuthorityTier`, the `TierClassifier` Protocol, the `MappingTierClassifier` reference), `HarnessToolGuard(tier_classifier=, approval_tier=)` escalating a Tier-2-or-above action to REQUIRE_APPROVAL beyond the static `approval_required` list, `GuardResponse.tier`, and `run_under_contract` threading. Additive; no classifier preserves the flat L1 behaviour. The rollback-plan / evidence / tier-on-interruption refinements stay tracked (`BL-251`) | stable | ADR 0029 |
 | L3 open | Live-model workload (now also the BL-132/BL-171 live cache-hit gate), true OTel spans, true preemption | planned | `docs/backlog.md` (`BL-120`, `BL-113`/`138`, `BL-155`) |
 
 ## Document maturity
@@ -50,7 +51,7 @@ opens or closes. Last reviewed: 2026-06-12 (ADR 0027 deferred approval resume, `
 | Document | Maturity |
 | --- | --- |
 | `CLAUDE.md`, `README.md`, component `README.md` | stable |
-| `docs/adr/0001`-`0028` | stable (Accepted) |
+| `docs/adr/0001`-`0029` | stable (Accepted) |
 | `docs/releasing.md` | stable |
 | `docs/backlog.md` | living tracker |
 | `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE` section (in `CONTRIBUTING.md`) | stable |

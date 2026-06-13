@@ -33,6 +33,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from harness.authority import AuthorityTier, TierClassifier
 from harness.budgets import ActionBudget, BudgetTracker
 from harness.composition import compose_contracts
 from harness.contract import Contract, Severity
@@ -85,6 +86,8 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
     lifecycles: Sequence[AbstractAsyncContextManager[Any]] | None = None,
     parent_span_id: str | None = None,
     record_sink: Callable[[RunRecord], None] | None = None,
+    tier_classifier: TierClassifier | None = None,
+    approval_tier: AuthorityTier = AuthorityTier.STATEFUL,
 ) -> OutputT | ResumableState:
     """Execute a workload under contract.
 
@@ -107,8 +110,17 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         mcp_servers: MCP server specs to pass to the runtime. The
             adapter handles lifecycle.
         guard: Tool guard. If None and the contract has governance
-            predicates or approval_required entries, a HarnessToolGuard
-            is constructed from the (composed) contract.
+            predicates or approval_required entries, or a tier_classifier
+            is supplied, a HarnessToolGuard is constructed from the
+            (composed) contract.
+        tier_classifier: Optional blast-radius TierClassifier (BL-242).
+            When supplied (and no explicit ``guard`` is given), the
+            default HarnessToolGuard escalates an action classified at
+            ``approval_tier`` or above to REQUIRE_APPROVAL, beyond the
+            static approval_required list. None preserves L1.
+        approval_tier: The AuthorityTier at or above which an action
+            requires approval when a ``tier_classifier`` is active
+            (default STATEFUL). Ignored without a classifier.
         recovery: Optional map of predicate name -> RecoveryHandler
             (BL-061). On a SOFT pre/invariant/post violation whose
             predicate name is in the map, the handler runs and a
@@ -336,8 +348,16 @@ async def run_under_contract[InputT: BaseModel, OutputT: BaseModel](
         tracker = BudgetTracker(budget, sink=active_sink, base_event_fields=base, **seed)
 
     active_guard: ToolGuard | None = guard
-    if active_guard is None and (contract.governance or contract.approval_required):
-        active_guard = HarnessToolGuard(contract, sink=active_sink, base_event_fields=base)
+    if active_guard is None and (
+        contract.governance or contract.approval_required or tier_classifier is not None
+    ):
+        active_guard = HarnessToolGuard(
+            contract,
+            sink=active_sink,
+            base_event_fields=base,
+            tier_classifier=tier_classifier,
+            approval_tier=approval_tier,
+        )
 
     def _finalize_resumable(state: ResumableState) -> ResumableState:
         # The harness owns the contract boundary, so it (not the runtime
