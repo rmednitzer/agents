@@ -112,6 +112,20 @@ See [CLAUDE.md](./CLAUDE.md) for repository structure and conventions.
   distributional drift, and opt-in self-attesting run-provenance
   records (`record_sink`, `contract_digest`, `verify_run_record`, the
   `scripts/check_run_records.py` offline gate).
+- **Authority, approval, and output quality (ADR 0028-0038).**
+  Graduated `AuthorityTier` classification (`TierClassifier` /
+  `MappingTierClassifier`) escalating a tiered action to
+  require-approval beyond the static list (`GuardResponse.tier`); an
+  approval-context payload on the human-facing pause
+  (`ApprovalInterruption.tier` / `rollback_plan`, `RollbackPlanner` /
+  `MappingRollbackPlanner`); two-step parameter restatement for an
+  irreversible (Tier 3) resume (`restated_arguments`); a
+  `RunRecord.degraded` quality axis with deterministic anti-confabulation
+  grounding (`ungrounded_citations`, `grounding_predicate`); read-side
+  freshness gating via the `require_fresh` predicate factory, with the
+  separate typed, model-legible `Refusal` return type for refusal-as-data;
+  and an opt-in evidence-capture hook bracketing an approved Tier 3
+  action (`EvidenceHook` / `EvidenceContext` / `RecordingEvidenceHook`).
 - **Provider batch capabilities (optional extras).**
   `AnthropicBatchProcessor` (Message Batches) and
   `cache_control_system` (prefix-stable prompt caching) under the
@@ -130,7 +144,11 @@ See [CLAUDE.md](./CLAUDE.md) for repository structure and conventions.
   pass-through with prompt-cache token surfacing (`BL-132`/`BL-171`:
   Anthropic cache breakpoints ride `AnthropicModelSettings`; cache
   hit/creation counts land on the `BudgetTracker`, not charged to
-  `max_tokens`). Provider selection and credentials:
+  `max_tokens`), an opt-in `evidence_hook` bracketing an approved
+  irreversible action's execution, and composition via `FallbackChain`
+  (an ordered runtime degradation ladder tried until one returns,
+  distinct from `RetryPolicy`; a governance / budget / approval halt
+  never reroutes). Provider selection and credentials:
   [docs/runtime-providers.md](./docs/runtime-providers.md).
 - **Memory.** Namespace-bound `MemoryStore` with `InMemoryStore`
   reference plus `SQLiteStore`, `RedisStore`, `S3Store`, `DynamoDBStore`
@@ -141,8 +159,15 @@ See [CLAUDE.md](./CLAUDE.md) for repository structure and conventions.
   (`SemanticMemoryStore` + `InMemorySemanticStore`); `TTLSweeper`;
   `MemoryCompactor` with the `Summarizer` Protocol and
   `TruncatingSummarizer` reference (version-gated compaction) and
-  `TieredMemoryStore` (hot/cold tiering, CAS-guarded promotion);
-  transparent `EncryptedStore` (AES-256-GCM) with static / env / file
+  `TieredMemoryStore` (hot/cold tiering, CAS-guarded promotion); hybrid
+  retrieval (`InMemorySemanticStore.query_hybrid`, `fuse_rrf` Reciprocal
+  Rank Fusion, the `Reranker` Protocol, `decay_strength`-ranked
+  `demote_to_capacity`); a bitemporal fact store (`BitemporalMemoryStore`
+  + `InMemoryBitemporalStore`, validity time separate from transaction
+  time); a structured operational-memory `Journal` (`Task` / `Thread` /
+  `Decision` / `Event` over any `MemoryStore`) with `context_pack`
+  session rehydration; transparent `EncryptedStore` (AES-256-GCM) with
+  static / env / file
   / rotating (`VersionedKeyProvider`) key providers, and `ACLStore`
   with role and attribute-based (`AttributeACL`) policies and an
   audited `AccessDenied` event, both with `wrap_encrypted` / `wrap_acl`
