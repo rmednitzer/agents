@@ -57,6 +57,7 @@ from harness.events import (
     RecoveryApplied,
     SkillDispatched,
 )
+from harness.grounding import grounding_predicate, ungrounded_citations
 from harness.guard import (
     GuardDecision,
     GuardResponse,
@@ -179,9 +180,11 @@ __all__ = [
     "cache_control_system",
     "compose_contracts",
     "contract_digest",
+    "grounding_predicate",
     "jensen_shannon_divergence",
     "predicate",
     "record_invariant_violations",
     "run_under_contract",
+    "ungrounded_citations",
     "verify_run_record",
 ]

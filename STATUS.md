@@ -1,7 +1,7 @@
 # Status
 
 Maturity of the repository and its documents. Updated when a phase
-opens or closes. Last reviewed: 2026-06-12 (ADR 0027 deferred approval resume, `BL-114`; the same day as the ADR 0025 fourteenth audit and the ADR 0026 prompt-caching wave).
+opens or closes. Last reviewed: 2026-06-13 (ADR 0030 DEGRADED disposition + grounding postconditions, `BL-244`; the same day as the ADR 0028 hybrid-retrieval and ADR 0029 graduated-authority waves).
 
 ## Maturity taxonomy
 
@@ -44,6 +44,7 @@ opens or closes. Last reviewed: 2026-06-12 (ADR 0027 deferred approval resume, `
 | Deferred approval resume (`BL-114`) | Unblocked by pydantic-ai 1.106 (verified in-session). Opt-in `PydanticAIRuntime(approval_mode="deferred")`: the pause rides `DeferredToolRequests`, the message history travels in the new optional `ResumableState.runtime_state`, and the resumed leg continues instead of replaying (prior tool calls run exactly once; the BL-193 (tool, arguments) binding re-verified at execution; denial model-visible via `ToolDenied`; paused-leg usage charged; `stream()` stays replay-gated). Replay remains the byte-identical default. 12 new tests; `LIMITATIONS.md` L10 rewritten | stable | ADR 0027 |
 | Hybrid retrieval + decay-ranked demotion (`BL-243` / `BL-247`) | The first implementation wave from the Vertex MCP analysis (#114): `memory/retrieval.py` (`fuse_rrf` Reciprocal Rank Fusion, `lexical_overlap_scores`, the `Reranker` Protocol, `HybridSemanticStore` + `HybridHit`), `InMemorySemanticStore.query_hybrid`, and `TieredMemoryStore.demote_to_capacity(rank_key=...)` + `decay_strength`. Additive; vector-only `query_semantic` and FIFO demotion stay the defaults. The `BitemporalMemoryStore` Protocol (`BL-250`) and a durable hybrid adapter stay tracked | stable | ADR 0028 |
 | Graduated authority tiers (`BL-242`) | The most on-thesis item from the Vertex MCP analysis: `harness/authority.py` (`AuthorityTier`, the `TierClassifier` Protocol, the `MappingTierClassifier` reference), `HarnessToolGuard(tier_classifier=, approval_tier=)` escalating a Tier-2-or-above action to REQUIRE_APPROVAL beyond the static `approval_required` list, `GuardResponse.tier`, and `run_under_contract` threading. Additive; no classifier preserves the flat L1 behaviour. The rollback-plan / evidence / tier-on-interruption refinements stay tracked (`BL-251`) | stable | ADR 0029 |
+| DEGRADED disposition + grounding postconditions (`BL-244`) | The output-trustworthiness item from the Vertex MCP analysis. `RunRecord.degraded` (record schema v1.1.0, the orthogonal quality axis: `outcome` stays `completed`, `degraded` flags a SOFT postcondition violated on the final delivered leg) set by `run_under_contract` (a per-leg `leg_soft_failed` flag, reset on retry so a clean retry clears it, substitute keeps it, escalate / hard stay their own terminals); `harness/grounding.py`, the deterministic anti-confabulation core (`ungrounded_citations` pure function + the SOFT `grounding_predicate(extract, pattern=)` factory) that relabels without rewriting model content. Additive; the field defaults False, the schema bump is forward-compatible, no grounding postcondition preserves L1. 20 new tests; `harness/grounding.py` at 100% coverage | stable | ADR 0030 |
 | L3 open | Live-model workload (now also the BL-132/BL-171 live cache-hit gate), true OTel spans, true preemption | planned | `docs/backlog.md` (`BL-120`, `BL-113`/`138`, `BL-155`) |
 
 ## Document maturity
@@ -51,7 +52,7 @@ opens or closes. Last reviewed: 2026-06-12 (ADR 0027 deferred approval resume, `
 | Document | Maturity |
 | --- | --- |
 | `CLAUDE.md`, `README.md`, component `README.md` | stable |
-| `docs/adr/0001`-`0029` | stable (Accepted) |
+| `docs/adr/0001`-`0030` | stable (Accepted) |
 | `docs/releasing.md` | stable |
 | `docs/backlog.md` | living tracker |
 | `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE` section (in `CONTRIBUTING.md`) | stable |

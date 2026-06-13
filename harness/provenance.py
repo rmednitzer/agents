@@ -49,20 +49,23 @@ __all__ = [
     "verify_run_record",
 ]
 
-RUN_RECORD_SCHEMA_VERSION = "1.0.0"
+RUN_RECORD_SCHEMA_VERSION = "1.1.0"
 """Schema version stamped on freshly produced records.
 
-There is one shape today, so the offline gate validates every
-supported record against the current ``RunRecord`` model. This set is
-the *extension point*, not yet a dispatcher: when the shape changes,
-bump this constant, keep the prior value in
-``SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS``, and have the gate select a
+v1.1.0 adds the optional ``degraded`` field (BL-244). Because it has a
+default, a v1.0.0 record (written without it) and a v1.1.0 record both
+validate against the current ``RunRecord`` model, so the offline gate
+still validates every supported record against the one current model
+and no per-version dispatch is needed yet. When a future shape change
+is NOT additive-with-default, bump this constant, keep the prior value
+in ``SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS``, and have the gate select a
 per-version validator (the structure ``sentinel``'s
-``validate_artifacts.py`` reaches once it has more than one schema).
-Until a v2 exists, building that dispatch would be speculative.
+``validate_artifacts.py`` reaches once it has more than one
+incompatible schema). Until then, building that dispatch would be
+speculative.
 """
 
-SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS: frozenset[str] = frozenset({"1.0.0"})
+SUPPORTED_RUN_RECORD_SCHEMA_VERSIONS: frozenset[str] = frozenset({"1.0.0", "1.1.0"})
 """Every schema version a record may legitimately declare.
 
 ``schema_version`` has a default so producers (the enforcement loop)
@@ -164,6 +167,14 @@ class RunRecord(BaseModel):
     completed_at: str
     """ISO 8601 UTC; the terminal instant of the run."""
     duration_ms: float = Field(ge=0.0)
+    degraded: bool = False
+    """True when the run delivered its output but a SOFT postcondition
+    was violated on the final leg (BL-244): the artifact shipped, yet a
+    quality obligation was not met, so a downstream consumer should treat
+    it as partial. ``outcome`` stays ``completed`` (the run did not
+    halt); ``degraded`` is the orthogonal quality axis. Always False on a
+    non-``completed`` outcome and whenever no SOFT postcondition failed.
+    Added in record schema v1.1.0."""
 
 
 def record_invariant_violations(record: RunRecord) -> list[str]:
