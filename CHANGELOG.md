@@ -3,6 +3,46 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Hybrid retrieval and decay-ranked demotion (ADR 0028, BL-243 / BL-247, 2026-06-13)
+
+The first implementation wave from the Vertex MCP analysis (#114): two
+in-tree memory retrieval-quality gaps closed, both additive to L1
+(ADR 0007). ADR 0028 is the cross-cutting why.
+
+### Added
+
+- `memory/retrieval.py`: `fuse_rrf` (deterministic Reciprocal Rank
+  Fusion over ranked id lists, the conventional `k=60` damping),
+  `lexical_overlap_scores` (a dependency-free token-overlap keyword
+  baseline), the `Reranker` Protocol (the cross-encoder analogue of
+  `Embedder`, model injected), the `HybridSemanticStore` extension
+  Protocol, and the `HybridHit` result type (`BL-243`).
+- `InMemorySemanticStore.query_hybrid`: a vector pass fused with a
+  lexical pass via RRF, then an optional rerank over a
+  recall-then-rerank window (`rrf_k` is validated positive at the API
+  boundary). The store now retains indexed source text
+  in lockstep with the vector index; vector-only `query_semantic` is
+  unchanged.
+- `TieredMemoryStore.demote_to_capacity(rank_key=...)`: an optional
+  strength-ranking hook; `rank_key=None` keeps the first-write FIFO
+  order byte-for-byte. `memory.tiering.decay_strength` is the
+  deterministic Ebbinghaus forgetting reference to pass as `rank_key`,
+  with finite / non-negative input validation, and a non-finite
+  `rank_key` result is rejected at demotion (the BL-159 / BL-231
+  non-finite-control class) (`BL-247`).
+- 32 deterministic tests
+  (`tests/memory/test_bl243_hybrid_retrieval.py`,
+  `tests/memory/test_bl247_demotion_ranking.py`); `memory/retrieval.py`
+  at 100% line coverage.
+
+### Changed
+
+- `LIMITATIONS.md` L5 narrows: the hybrid fusion and the pluggable
+  demotion ranking are now in tree; only the embedder, the optional
+  reranker, and a durable vector / keyword backend stay the workload's
+  integration. The `BitemporalMemoryStore` half of BL-247 is forwarded
+  to `BL-250`.
+
 ## [Unreleased] Vertex MCP cross-pollination analysis (2026-06-13)
 
 A deep audit of what the substrate can learn from a long-running,

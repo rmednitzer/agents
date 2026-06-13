@@ -39,6 +39,13 @@ from memory.encryption import (
 from memory.errors import AccessDenied, MemoryError, NamespaceViolation
 from memory.inmemory import InMemoryStore
 from memory.redis import BoundedRedisStore, RedisStore
+from memory.retrieval import (
+    HybridHit,
+    HybridSemanticStore,
+    Reranker,
+    fuse_rrf,
+    lexical_overlap_scores,
+)
 from memory.s3 import BoundedS3Store, S3Store
 from memory.semantic import Embedder, InMemorySemanticStore
 from memory.sqlite import SQLiteStore
@@ -58,7 +65,7 @@ from memory.store import (
     VersionedMemoryStore,
 )
 from memory.sweep import TTLSweeper
-from memory.tiering import TieredMemoryStore
+from memory.tiering import TieredMemoryStore, decay_strength
 from memory.types import Namespace
 from memory.validators import (
     KEY_MAX_LENGTH,
@@ -88,6 +95,8 @@ __all__ = [
     "EncryptedStore",
     "EnvKeyProvider",
     "FileKeyProvider",
+    "HybridHit",
+    "HybridSemanticStore",
     "InMemorySemanticStore",
     "InMemoryStore",
     "KeyProvider",
@@ -98,6 +107,7 @@ __all__ = [
     "NamespaceViolation",
     "Operation",
     "RedisStore",
+    "Reranker",
     "RoleACL",
     "RotatingKeyProvider",
     "S3Store",
@@ -116,6 +126,9 @@ __all__ = [
     "TxnWrite",
     "VersionedKeyProvider",
     "VersionedMemoryStore",
+    "decay_strength",
+    "fuse_rrf",
+    "lexical_overlap_scores",
     "validate_key",
     "validate_namespace_name",
     "wrap_acl",

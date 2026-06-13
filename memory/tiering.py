@@ -56,14 +56,67 @@ given.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import math
+from collections.abc import Callable, Sequence
 from typing import cast
 
 from memory.store import CASMemoryStore, MemoryStore, VersionedMemoryStore
 from memory.types import Namespace
 from memory.validators import validate_key
 
-__all__ = ["TieredMemoryStore"]
+__all__ = ["TieredMemoryStore", "decay_strength"]
+
+
+def decay_strength(
+    importance: float,
+    age_seconds: float,
+    access_count: int = 0,
+    *,
+    half_life_seconds: float = 604_800.0,
+    reinforcement: float = 0.2,
+) -> float:
+    """Ebbinghaus-style memory strength for demotion ranking (BL-247).
+
+    ``strength = importance * 2 ** (-age_seconds / half_life_seconds)
+    * (1 + access_count * reinforcement)``
+
+    A deterministic forgetting score (the operator-gateway reference):
+    importance halves every ``half_life_seconds`` (default 7 days) and is
+    reinforced by repeated access. Higher means keep hot. Pass it as
+    ``TieredMemoryStore.demote_to_capacity``'s ``rank_key`` (the wrapper
+    demotes in ascending order, so the weakest keys leave hot first).
+    Pure and vendor-free; the inputs (importance, age, access count) are
+    the workload's to track, since read-counting is deliberately not in
+    the store contract (LIMITATIONS L5).
+
+    All numeric inputs must be finite and non-negative, and
+    ``half_life_seconds`` strictly positive, validated here so a NaN or
+    negative input cannot subvert the demotion order (the BL-159 /
+    BL-231 non-finite-control class).
+    """
+    for label, val in (
+        ("importance", importance),
+        ("age_seconds", age_seconds),
+        ("half_life_seconds", half_life_seconds),
+        ("reinforcement", reinforcement),
+    ):
+        if not math.isfinite(val):
+            raise ValueError(f"{label} must be finite, got {val!r}")
+    if importance < 0.0:
+        raise ValueError(f"importance must be non-negative, got {importance!r}")
+    if age_seconds < 0.0:
+        raise ValueError(f"age_seconds must be non-negative, got {age_seconds!r}")
+    if half_life_seconds <= 0.0:
+        raise ValueError(f"half_life_seconds must be positive, got {half_life_seconds!r}")
+    if reinforcement < 0.0:
+        raise ValueError(f"reinforcement must be non-negative, got {reinforcement!r}")
+    if access_count < 0:
+        raise ValueError(f"access_count must be non-negative, got {access_count!r}")
+    return float(
+        importance
+        * (2.0 ** (-age_seconds / half_life_seconds))
+        * (1.0 + access_count * reinforcement)
+    )
 
 
 class TieredMemoryStore:
@@ -273,6 +326,7 @@ class TieredMemoryStore:
         max_hot_keys: int,
         *,
         ttl_seconds: float | None = None,
+        rank_key: Callable[[str], float] | None = None,
     ) -> int:
         """Demote the oldest hot keys until at most ``max_hot_keys`` remain.
 
@@ -280,7 +334,11 @@ class TieredMemoryStore:
         of loss: overflow moves to cold rather than being dropped.
         Ranking is the wrapper write sequence with unknown keys first
         (sentinel 0, ties lexicographic; the BL-224/BL-225 legacy
-        contract). Returns the number of keys moved; a no-op (0) when
+        contract), unless ``rank_key`` is supplied: then keys are demoted
+        in ascending ``rank_key`` order (ties lexicographic), the BL-247
+        hook that lets a caller plug in a strength score (e.g.
+        ``decay_strength``) instead of FIFO, since read-tracking is not
+        in the store contract (LIMITATIONS L5). Returns the number of keys moved; a no-op (0) when
         the live hot keyspace is at or under the cap. Under contention
         a version-gated demotion can move fewer keys than the overflow
         (a rewritten key stays hot, see ``demote``), so the hot tier
@@ -306,5 +364,21 @@ class TieredMemoryStore:
         overflow = len(live) - max_hot_keys
         if overflow <= 0:
             return 0
-        ranked = sorted(live, key=lambda k: (self._order.get(k, 0), k))
+        if rank_key is None:
+            ranked = sorted(live, key=lambda key: (self._order.get(key, 0), key))
+        else:
+            # Compute each key's strength once and reject a non-finite
+            # result: a NaN or +/-inf rank silently subverts the sort
+            # order (every ordered comparison with NaN is False), the
+            # BL-159 / BL-231 non-finite-control class applied to the
+            # caller's hook.
+            scores: dict[str, float] = {}
+            for key in live:
+                score = rank_key(key)
+                if not math.isfinite(score):
+                    raise ValueError(
+                        f"rank_key returned a non-finite value {score!r} for key {key!r}"
+                    )
+                scores[key] = score
+            ranked = sorted(live, key=lambda key: (scores[key], key))
         return await self.demote(ranked[:overflow], ttl_seconds=ttl_seconds)
