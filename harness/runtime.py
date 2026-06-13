@@ -48,7 +48,7 @@ import math
 import time
 import uuid
 import warnings
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
@@ -58,6 +58,7 @@ from harness.budgets import BudgetTracker
 from harness.contract import Severity
 from harness.errors import ApprovalDenied as ApprovalDeniedError
 from harness.errors import BudgetExceeded, GovernanceViolation, HarnessError
+from harness.evidence import EvidenceContext, EvidenceHook
 from harness.guard import GuardDecision, ToolGuard
 from harness.interruption import ApprovalInterruption, ResumableState
 from harness.mcp import MCPServerSpec, MCPTransport
@@ -354,6 +355,77 @@ def _rejection(response: Any, name: str, state: _GuardState) -> str:
     return f"[blocked: {reason}]"
 
 
+@dataclass(frozen=True)
+class _GateResult:
+    """Outcome of one gate check (shared by both gate modes).
+
+    ``soft`` is a soft-reject message to surface to the model (the L1
+    ``[blocked: ...]`` string or a workload variant); ``soft is None``
+    means proceed. On the proceed path the action's ``tier`` and
+    ``rollback_plan`` (read off the GuardResponse) ride along so the tool
+    wrapper can drive the BL-253 evidence hook without re-querying the
+    guard. Both are None when no guard, or no classifier / planner, is
+    configured.
+    """
+
+    soft: str | None = None
+    tier: AuthorityTier | None = None
+    rollback_plan: str | None = None
+
+
+async def _with_evidence(
+    hook: EvidenceHook | None,
+    gate: _GateResult,
+    *,
+    tool: str,
+    arguments: dict[str, Any],
+    tool_call_id: str | None,
+    run: Callable[[], Awaitable[Any]],
+) -> Any:
+    """Bracket an approved tool body in the evidence hook (BL-253).
+
+    ``run`` is the path's own already-shaped body coroutine factory (the
+    sync / async / await semantics live there). For anything but an
+    ``IRREVERSIBLE`` (Tier 3) action with a hook configured this is just
+    ``await run()``, the prior path byte-for-byte. Otherwise ``before``
+    runs first, then the body, then ``after`` in a ``finally`` with the
+    body's exception (``None`` on success), so a Tier 3 action that
+    raised is still recorded. The token ``before`` returns is handed to
+    ``after`` so concurrent Tier 3 bodies pair without shared state.
+
+    Tier 3 always routes through approval first (Tier 3 >= the STATEFUL
+    default threshold), so this fires on the post-approval leg, never on
+    a first-pass APPROVE; in deferred mode the resumed leg runs the body
+    once, so it fires once. The bracket sits inside the wrapper's
+    per-tool wall-clock window, so a hook's own duration counts toward
+    ``max_wall_clock_seconds_per_tool`` (keep a hook light, or raise that
+    cap); the run-level wall-clock watchdog bounds it regardless.
+    """
+    tier = gate.tier
+    if hook is None or tier is not AuthorityTier.IRREVERSIBLE:
+        return await run()
+    context = EvidenceContext(
+        # Shallow-copy the arguments so the captured context is a stable
+        # snapshot: the live dict is also handed to the tool body (the MCP
+        # path passes it to call_tool), and a hook may keep the context as
+        # its token, so it must not observe a later mutation (BL-253).
+        tool=tool,
+        arguments=dict(arguments),
+        tier=tier,
+        tool_call_id=tool_call_id,
+        rollback_plan=gate.rollback_plan,
+    )
+    token = await hook.before(context)
+    error: BaseException | None = None
+    try:
+        return await run()
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        await hook.after(token, error=error)
+
+
 async def _gate(
     name: str,
     arguments: dict[str, Any],
@@ -363,19 +435,23 @@ async def _gate(
     resume: ResumableState | None,
     state: _GuardState,
     used_approvals: set[str],
-) -> str | None:
+) -> _GateResult:
     """Guard + budget gate for one proposed tool call.
 
-    Returns a soft-reject message to surface to the model, or None to
-    proceed. Raises GovernanceViolation (hard reject), _ApprovalPause
+    Returns a `_GateResult`: ``soft`` set is a soft-reject message to
+    surface to the model; ``soft is None`` is clearance to proceed,
+    carrying the action's tier / rollback plan for the BL-253 evidence
+    hook. Raises GovernanceViolation (hard reject), _ApprovalPause
     (approval needed, no decision yet), or ApprovalDenied. Used for both
     locally-defined tools and MCP-exposed tools so neither bypasses
     governance / budget (BL-001/073).
     """
+    tier: AuthorityTier | None = None
+    rollback_plan: str | None = None
     if guard is not None:
         response = await guard.check(name, arguments)
         if response.decision == GuardDecision.REJECT:
-            return _rejection(response, name, state)
+            return _GateResult(soft=_rejection(response, name, state))
         if response.decision == GuardDecision.REQUIRE_APPROVAL:
             decided = _resolved_decision(resume, name, arguments, used_approvals)
             if decided is not None and decided.decision == "denied":
@@ -395,9 +471,13 @@ async def _gate(
                 )
                 state.pause = interruption
                 raise _ApprovalPause(interruption)
+        # Proceed: carry the tier / rollback plan (set on APPROVE and on
+        # the approved REQUIRE_APPROVAL response) to the evidence hook.
+        tier = response.tier
+        rollback_plan = response.rollback_plan
     if budget is not None:
         budget.consume_tool_call(tool=name)
-    return None
+    return _GateResult(tier=tier, rollback_plan=rollback_plan)
 
 
 async def _deferred_gate(
@@ -410,7 +490,7 @@ async def _deferred_gate(
     resume: ResumableState | None,
     state: _GuardState,
     used_approvals: set[str],
-) -> str | None:
+) -> _GateResult:
     """Deferred-mode guard + budget gate for one proposed tool call (BL-114).
 
     The deferred twin of ``_gate``: the REJECT branches are identical
@@ -429,10 +509,12 @@ async def _deferred_gate(
     framework and the run continues (the deliberate semantic
     divergence from replay mode's terminal ApprovalDenied; ADR 0027).
     """
+    tier: AuthorityTier | None = None
+    rollback_plan: str | None = None
     if guard is not None:
         response = await guard.check(name, arguments)
         if response.decision == GuardDecision.REJECT:
-            return _rejection(response, name, state)
+            return _GateResult(soft=_rejection(response, name, state))
         if response.decision == GuardDecision.REQUIRE_APPROVAL:
             from pydantic_ai.exceptions import ApprovalRequired
 
@@ -454,9 +536,13 @@ async def _deferred_gate(
                 or not _restate_satisfied(decided, arguments)
             ):
                 raise ApprovalRequired
+        # Proceed: carry the tier / rollback plan to the evidence hook,
+        # the deferred twin of the replay gate's proceed path (BL-253).
+        tier = response.tier
+        rollback_plan = response.rollback_plan
     if budget is not None:
         budget.consume_tool_call(tool=name)
-    return None
+    return _GateResult(tier=tier, rollback_plan=rollback_plan)
 
 
 def _wrap_tool(
@@ -467,17 +553,20 @@ def _wrap_tool(
     resume: ResumableState | None,
     state: _GuardState,
     used_approvals: set[str],
+    evidence_hook: EvidenceHook | None = None,
 ) -> Any:
     """Wrap a tool so the guard and budget run before its body.
 
     The wrapper preserves the original signature and annotations so
-    PydanticAI still infers the correct tool JSON schema.
+    PydanticAI still infers the correct tool JSON schema. A configured
+    ``evidence_hook`` brackets the body for an irreversible (Tier 3)
+    action (BL-253); every other call is unchanged.
     """
     func = getattr(tool, "function", tool)
     name = _tool_name(tool)
     is_async = inspect.iscoroutinefunction(func)
 
-    async def _local_gate(arguments: dict[str, Any]) -> str | None:
+    async def _local_gate(arguments: dict[str, Any]) -> _GateResult:
         return await _gate(
             name,
             arguments,
@@ -505,24 +594,36 @@ def _wrap_tool(
 
     @functools.wraps(func)
     async def _async_wrapper(*args: Any, **kwargs: Any) -> Any:
-        soft = await _local_gate(kwargs)
-        if soft is not None:
-            return soft
+        gate = await _local_gate(kwargs)
+        if gate.soft is not None:
+            return gate.soft
         started = time.perf_counter()
-        try:
+
+        async def _run() -> Any:
             result = func(*args, **kwargs)
             return await result if inspect.isawaitable(result) else result
+
+        try:
+            return await _with_evidence(
+                evidence_hook, gate, tool=name, arguments=kwargs, tool_call_id=None, run=_run
+            )
         finally:
             _charge_wall_clock(started)
 
     @functools.wraps(func)
     async def _sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-        soft = await _local_gate(kwargs)
-        if soft is not None:
-            return soft
+        gate = await _local_gate(kwargs)
+        if gate.soft is not None:
+            return gate.soft
         started = time.perf_counter()
-        try:
+
+        async def _run() -> Any:
             return func(*args, **kwargs)
+
+        try:
+            return await _with_evidence(
+                evidence_hook, gate, tool=name, arguments=kwargs, tool_call_id=None, run=_run
+            )
         finally:
             _charge_wall_clock(started)
 
@@ -541,6 +642,7 @@ def _wrap_tool_deferred(
     resume: ResumableState | None,
     state: _GuardState,
     used_approvals: set[str],
+    evidence_hook: EvidenceHook | None = None,
 ) -> Any:
     """Deferred-mode tool wrapper (BL-114): ``_wrap_tool`` with a context.
 
@@ -559,7 +661,7 @@ def _wrap_tool_deferred(
     orig_takes_ctx = bool(orig_params) and "RunContext" in str(orig_params[0].annotation)
 
     async def _wrapper(ctx: Any, **kwargs: Any) -> Any:
-        soft = await _deferred_gate(
+        gate = await _deferred_gate(
             name,
             kwargs,
             ctx,
@@ -569,12 +671,23 @@ def _wrap_tool_deferred(
             state=state,
             used_approvals=used_approvals,
         )
-        if soft is not None:
-            return soft
+        if gate.soft is not None:
+            return gate.soft
         started = time.perf_counter()
-        try:
+
+        async def _run() -> Any:
             result = func(ctx, **kwargs) if orig_takes_ctx else func(**kwargs)
             return await result if inspect.isawaitable(result) else result
+
+        try:
+            return await _with_evidence(
+                evidence_hook,
+                gate,
+                tool=name,
+                arguments=kwargs,
+                tool_call_id=getattr(ctx, "tool_call_id", None),
+                run=_run,
+            )
         finally:
             # Per-tool wall-clock parity with _wrap_tool; the gate
             # already counted the call (n=0 adds no count).
@@ -732,6 +845,19 @@ class PydanticAIRuntime:
       ``stream()`` always gates in replay mode (a generator cannot
       surface a ResumableState); approval-gated tools still need
       ``run()``.
+
+    ``evidence_hook`` (BL-253, ADR 0038) is an optional ``EvidenceHook``
+    the tool wrappers invoke around an approved irreversible (Tier 3)
+    action's body: ``before`` immediately before it runs and ``after``
+    immediately after (in a ``finally``, with the body's exception or
+    ``None``), so the audit trail records the pre/post state of a
+    high-blast change. It fires only for an ``IRREVERSIBLE`` action
+    (which always routes through approval first) and only when
+    configured; ``None`` (the default) preserves L1 exactly. It
+    captures, it does not gate (the Tier 3 approval and the BL-252
+    restatement already did) nor roll back (that is the
+    ``RollbackPlanner``'s descriptive plan). Applied identically across
+    the replay, deferred, and MCP tool paths.
     """
 
     name: str = "pydantic-ai"
@@ -746,6 +872,7 @@ class PydanticAIRuntime:
         soft_reject_as_error: bool = False,
         model_settings: Any | None = None,
         approval_mode: str = "replay",
+        evidence_hook: EvidenceHook | None = None,
     ) -> None:
         if approval_mode not in ("replay", "deferred"):
             # Load-time validation (ADR 0007): a typo'd mode must not
@@ -760,6 +887,10 @@ class PydanticAIRuntime:
         self._soft_reject_as_error = soft_reject_as_error
         self._model_settings = model_settings
         self._approval_mode = approval_mode
+        # BL-253: an optional workload-supplied evidence hook. When set,
+        # the tool wrappers bracket an approved irreversible (Tier 3)
+        # action's body in before()/after(); None preserves L1 exactly.
+        self._evidence_hook = evidence_hook
         self._consecutive_failures = 0
 
     def _build_agent(
@@ -785,6 +916,7 @@ class PydanticAIRuntime:
                 resume=resume,
                 state=state,
                 used_approvals=used_approvals,
+                evidence_hook=self._evidence_hook,
             )
             for t in (tools or [])
         ]
@@ -798,7 +930,7 @@ class PydanticAIRuntime:
             # toolset call path, the same collection mechanism as local
             # tools (BL-114).
             if deferred:
-                soft = await _deferred_gate(
+                gate = await _deferred_gate(
                     name,
                     tool_args,
                     ctx,
@@ -809,7 +941,7 @@ class PydanticAIRuntime:
                     used_approvals=used_approvals,
                 )
             else:
-                soft = await _gate(
+                gate = await _gate(
                     name,
                     tool_args,
                     guard=guard,
@@ -818,11 +950,22 @@ class PydanticAIRuntime:
                     state=state,
                     used_approvals=used_approvals,
                 )
-            if soft is not None:
-                return soft
+            if gate.soft is not None:
+                return gate.soft
             started = time.perf_counter()
-            try:
+
+            async def _run() -> Any:
                 return await call_tool(name, tool_args)
+
+            try:
+                return await _with_evidence(
+                    self._evidence_hook,
+                    gate,
+                    tool=name,
+                    arguments=tool_args,
+                    tool_call_id=getattr(ctx, "tool_call_id", None),
+                    run=_run,
+                )
             finally:
                 # Per-tool wall-clock parity with local tools (BL-123);
                 # the gate already counted the call. n=0 adds no count.

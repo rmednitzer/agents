@@ -58,7 +58,7 @@ class ApprovalInterruption(Interruption):
     RollbackPlanner the guard consults on the approval branch. ``None``
     when no planner is configured or the planner returns no plan. Pure
     annotation: capturing evidence around execution is a separate concern
-    (BL-253)."""
+    (BL-253, ADR 0038)."""
     restated_arguments: dict[str, Any] | None = None
     """The arguments a human re-entered when approving an irreversible
     (Tier 3) action (BL-252, ADR 0033): the two-step confirmation. The

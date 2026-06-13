@@ -3,6 +3,52 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Evidence-capture hook around irreversible execution (ADR 0038, BL-253, 2026-06-13)
+
+The last Vertex MCP analysis item, closing the wave (`BL-242`-`BL-253`
+all resolved). Additive to L1 (ADR 0007).
+
+### Added
+
+- `harness/evidence.py` (`BL-253`, ADR 0038): the `EvidenceContext`
+  frozen call-context, the `@runtime_checkable` `EvidenceHook` Protocol
+  (`before(context) -> token`, `after(token, *, error=None)`), and the
+  `RecordingEvidenceHook` + `EvidenceRecord` deterministic in-tree
+  reference. A workload-supplied hook captures the pre/post state of an
+  approved irreversible (Tier 3) action for the audit trail.
+- `PydanticAIRuntime(evidence_hook=...)`: the opt-in surface. The tool
+  wrappers bracket an approved Tier 3 body with `before`, then the body,
+  then `after` (in a `finally`, with the body's exception or `None`), so
+  a failed irreversible action is still recorded. Fires only for an
+  `IRREVERSIBLE` action with a hook configured; identical across the
+  replay, deferred, and MCP tool paths (the shared `_with_evidence`).
+- 13 deterministic tests (`test_bl253_evidence.py`); `harness/evidence.py`
+  and `harness/authority.py` at 100% line coverage, aggregate 95.77%.
+
+### Changed
+
+- `_gate` / `_deferred_gate` now return a frozen `_GateResult(soft, tier,
+  rollback_plan)` instead of `str | None`, the gate-to-wrapper tier
+  signal that lets the wrapper drive the hook without re-querying the
+  guard. Internal; `test_runtime_adapter.py`'s `_run_gate` helper unwraps
+  `.soft`. No behavioural change.
+- `harness/authority.py` docstrings: the evidence hook is now BL-253 /
+  ADR 0038 (was "tracked as BL-252"; restatement itself shipped in
+  BL-252).
+
+### Notes
+
+- No L1, Runtime-Protocol, or schema change (the hook is adapter config,
+  the `model_settings` stance); a runtime without a hook, or any action
+  below Tier 3, is the prior path byte-for-byte.
+- Design decisions the held-out scope named: concurrency via the opaque
+  token (not `tool_call_id`); the bracket sits inside the per-tool
+  wall-clock window (a heavy hook counts against
+  `max_wall_clock_seconds_per_tool`, the documented decision); deferred
+  runs the body once.
+- Durable / fact-keyed evidence storage and evidence below Tier 3 remain
+  tracked follow-ups.
+
 ## [Unreleased] Fallback ladder, read-side freshness, session rehydration (ADR 0035 / 0036 / 0037, BL-248 / BL-246 / BL-249, 2026-06-13)
 
 A batch clearing most of the remaining Vertex MCP analysis backlog, all

@@ -19,9 +19,9 @@ reference, and the ``RollbackPlanner`` Protocol with its
 consumes a classifier to escalate a Tier 2-or-above action to
 REQUIRE_APPROVAL beyond the static ``approval_required`` list (ADR 0029),
 and an optional planner to attach a proposed undo path to the resulting
-``ApprovalInterruption`` (ADR 0031). The evidence-capture hook and the
-two-step parameter-restatement confirmation on the Tier 3 approval
-context are tracked forward (``BL-252``).
+``ApprovalInterruption`` (ADR 0031). The two-step parameter-restatement
+confirmation on a Tier 3 approval is delivered in BL-252 (ADR 0033) and
+the evidence-capture hook around its execution in BL-253 (ADR 0038).
 """
 
 from __future__ import annotations
@@ -124,7 +124,7 @@ class RollbackPlanner(Protocol):
     change) satisfies the same Protocol; ``MappingRollbackPlanner`` is
     the deterministic name-based reference. Must be pure and
     side-effect-free: capturing evidence or executing the rollback is a
-    separate concern (tracked as BL-252).
+    separate concern (the evidence hook is BL-253, ADR 0038).
     """
 
     def plan(self, tool: str, arguments: dict[str, Any]) -> str | None: ...
