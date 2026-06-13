@@ -57,7 +57,10 @@ class EvidenceContext:
     (``_with_evidence``) and typed ``Mapping`` read-only, so the recorded
     call stays stable even if the live argument dict is later mutated (for
     example the MCP path also hands that dict to ``call_tool``); nested
-    values are not deep-copied. ``tier`` is always ``IRREVERSIBLE`` (the
+    values are not deep-copied. The framework wraps that copy in a
+    ``MappingProxyType`` so a hook cannot mutate the snapshot it is
+    handed either, making the read-only typing true at runtime (BL-263).
+    ``tier`` is always ``IRREVERSIBLE`` (the
     hook fires only for Tier 3), carried explicitly so a hook that also
     logs lower tiers reads one shape. ``tool_call_id`` is the framework's
     stable per-call id on the deferred and MCP paths and ``None`` on the
@@ -87,6 +90,15 @@ class EvidenceHook(Protocol):
     in ``after`` returns it, or state derived from it, as the token).
     Both are confined to evidence capture: they change neither the
     decision (approval already happened) nor the tool's result.
+
+    Failure contract (BL-261): ``after`` runs in a ``finally`` once
+    ``before`` has returned, so a tool body that raised is still
+    recorded. If ``before`` *itself* raises, the Tier 3 action is aborted
+    before it runs and ``after`` is not called (fail-safe: no irreversible
+    action proceeds without its pre-state capture, and there is no
+    completed action to record an after for). A ``before`` that writes
+    external state should therefore record atomically (snapshot, then
+    commit) so a partial pre-state capture is not orphaned.
     """
 
     async def before(self, context: EvidenceContext) -> Any: ...

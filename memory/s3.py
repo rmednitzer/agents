@@ -190,6 +190,26 @@ class S3Store:
         metadata: dict[str, str] = head.get("Metadata", {})
         return metadata
 
+    def _head_live(self, s3_key: str) -> bool:
+        """Liveness of an object by HEAD (no body), for the listing path.
+
+        ``list_keys`` / ``scan`` need only the key and its liveness, so a
+        metadata-only HEAD avoids the full-body ``GetObject`` that
+        ``_get_live`` issues per listed object just to read the
+        ``expires-at`` metadata and discard the body (BL-260, fifteenth
+        audit). A concurrently-deleted object (HEAD 404 -> ``None``) is
+        treated as gone, the same not-found stance as ``_get_live``.
+        Expiry uses the same ``_safe_float(_EXPIRES_META)`` / ``is_expired``
+        path; an expired object is excluded from the listing but NOT
+        lazily deleted here, so the listing stays a pure read and avoids a
+        per-item DELETE inside the scan loop (the BL-233 containment
+        concern); the read and sweep paths own reclamation.
+        """
+        md = self._head_metadata(s3_key)
+        if md is None:
+            return False
+        return not is_expired(time.time(), _safe_float(md.get(_EXPIRES_META)))
+
     # boto3 is synchronous; every blocking call is offloaded to a worker
     # thread so an asyncio workload's event loop is never stalled by S3
     # network I/O. Audit emission stays on the loop (fast, in-memory).
@@ -239,7 +259,7 @@ class S3Store:
             resp = self._s3.list_objects_v2(**kw)
             for item in resp.get("Contents", []):
                 short = item["Key"][len(self._prefix) :]
-                if self._get_live(short) is not None:
+                if self._head_live(item["Key"]):
                     keys.append(short)
             if not resp.get("IsTruncated"):
                 break
@@ -285,9 +305,9 @@ class S3Store:
                 kw["ContinuationToken"] = token
             resp = self._s3.list_objects_v2(**kw)
             keys.extend(
-                short
+                item["Key"][len(self._prefix) :]
                 for item in resp.get("Contents", [])
-                if self._get_live(short := item["Key"][len(self._prefix) :]) is not None
+                if self._head_live(item["Key"])
             )
             if resp.get("IsTruncated"):
                 token = resp.get("NextContinuationToken", "")

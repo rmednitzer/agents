@@ -51,6 +51,7 @@ import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
 from harness.authority import AuthorityTier
@@ -391,7 +392,11 @@ async def _with_evidence(
     runs first, then the body, then ``after`` in a ``finally`` with the
     body's exception (``None`` on success), so a Tier 3 action that
     raised is still recorded. The token ``before`` returns is handed to
-    ``after`` so concurrent Tier 3 bodies pair without shared state.
+    ``after`` so concurrent Tier 3 bodies pair without shared state. A
+    ``before`` that itself raises aborts the action before ``run`` is
+    called and ``after`` is not invoked (BL-261, fifteenth audit:
+    fail-safe, no completed action to record), so a hook's ``before``
+    should capture pre-state atomically.
 
     Tier 3 always routes through approval first (Tier 3 >= the STATEFUL
     default threshold), so this fires on the post-approval leg, never on
@@ -408,9 +413,12 @@ async def _with_evidence(
         # Shallow-copy the arguments so the captured context is a stable
         # snapshot: the live dict is also handed to the tool body (the MCP
         # path passes it to call_tool), and a hook may keep the context as
-        # its token, so it must not observe a later mutation (BL-253).
+        # its token, so it must not observe a later mutation (BL-253). Wrap
+        # the copy read-only (MappingProxyType) so a hook cannot mutate the
+        # snapshot either, making the documented Mapping-read-only contract
+        # true at runtime (BL-263, ADR 0039).
         tool=tool,
-        arguments=dict(arguments),
+        arguments=MappingProxyType(dict(arguments)),
         tier=tier,
         tool_call_id=tool_call_id,
         rollback_plan=gate.rollback_plan,

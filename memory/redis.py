@@ -483,9 +483,28 @@ class BoundedRedisStore(RedisStore):
     # --- mutating methods: maintain the index alongside the parent op -
 
     async def write(self, key: str, value: bytes, *, ttl_seconds: float | None = None) -> None:
-        await super().write(key, value, ttl_seconds=ttl_seconds)
+        # Atomic data + index write (BL-262, fifteenth audit). The prior
+        # shape (super().write SET, then a separate ZADD) left a window
+        # where a crash between the two stranded a data key with no index
+        # entry: an orphan invisible to evict_to_capacity's ordering, so
+        # the namespace could silently exceed max_keys for that key.
+        # Allocate the monotonic score first (a burned counter value on a
+        # mid-write failure is harmless: scores need only be monotonic),
+        # then SET and ZADD in one MULTI/EXEC so the data and its index
+        # entry commit together or not at all. Mirrors RedisStore.write's
+        # validate / TTL / audit around the transactional core.
+        validate_key(key)
+        ttl = self._ttl(ttl_seconds)
         score = await self._next_score()
-        await self._r.zadd(self._idx, {key: score})
+        rk = self._k(key)
+        async with self._r.pipeline(transaction=True) as pipe:
+            if ttl is not None:
+                pipe.set(rk, value, px=max(1, int(ttl * 1000)))
+            else:
+                pipe.set(rk, value)
+            pipe.zadd(self._idx, {key: score})
+            await pipe.execute()
+        self._audit.write(key, value_bytes=len(value), ttl_seconds=ttl)
 
     async def mset(self, items: dict[str, bytes], *, ttl_seconds: float | None = None) -> None:
         await super().mset(items, ttl_seconds=ttl_seconds)

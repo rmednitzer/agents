@@ -3,6 +3,56 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Fifteenth code audit (ADR 0039, BL-254 .. BL-263, 2026-06-13)
+
+A comprehensive adversarial audit of the code that landed after the
+fourteenth audit (the ADR 0026-0038 wave), with five parallel reviewers,
+independent gate runs, and trusted-source validation of the highest-risk
+external contracts. Every finding was re-verified against source; two
+High-severity reviewer claims did not survive verification (recorded as
+non-findings in ADR 0039). No Critical / confirmed-exploitable High. All
+fixes additive to L1; 22 new regression tests; baseline green throughout.
+`BL-263` was added after the PR opened, from the automated reviewer on
+PR #123 (a valid `EvidenceContext` runtime-immutability gap).
+
+### Security
+
+- `LocalSkillSource.fetch` now refuses a hardlink in the skill source
+  tree (`st_nlink > 1`), closing the hardlink sibling of the symlink
+  content-exfiltration it already defends against (`BL-254`).
+
+### Fixed
+
+- `grounding_predicate` short-circuits on the first ungrounded citation
+  instead of building the full list, bounding work over adversarial model
+  output (`BL-255`).
+- `DriftMonitor.record` rejects a non-finite / negative count (`BL-256`).
+- `fuse_rrf` ranks by distinct position, so a duplicate id no longer
+  penalises the RRF score of the unique ids after it (`BL-257`).
+- `InMemorySemanticStore.query_hybrid` rejects a non-finite reranker score
+  before sorting (`BL-258`).
+- SQLite `transact` / `compare_and_set` / `write_versioned` / `mset`
+  sample the TTL clock after `BEGIN IMMEDIATE`, so a contended
+  cross-instance write lock cannot write a short-TTL row already-expired
+  (`BL-259`).
+- `BoundedRedisStore.write` sets the data key and its eviction-index entry
+  in one MULTI/EXEC, so a crash between cannot orphan a data key (`BL-262`).
+
+### Changed
+
+- S3 `list_keys` / `scan` filter by `HeadObject` metadata instead of a
+  full-body `GetObject` per listed object (`BL-260`).
+- `EvidenceContext.arguments` is handed to a hook as a read-only
+  `MappingProxyType`, enforcing the documented read-only typing at runtime
+  so a hook cannot mutate the captured snapshot; the shallow-snapshot
+  semantics are unchanged (`BL-263`).
+
+### Documentation
+
+- The evidence-hook `before()`-failure contract is stated precisely: a
+  failing `before()` aborts the Tier 3 action (fail-safe) and `after()` is
+  not called, so a hook's `before()` should capture atomically (`BL-261`).
+
 ## [Unreleased] Evidence-capture hook around irreversible execution (ADR 0038, BL-253, 2026-06-13)
 
 The last Vertex MCP analysis item, closing the wave (`BL-242`-`BL-253`

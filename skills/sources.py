@@ -280,6 +280,18 @@ class LocalSkillSource:
                 continue
             if not path.is_file():
                 raise SkillLoadError(str(path), "non-regular file in skill source (refused)")
+            # A hardlink is a regular file (is_file True, is_symlink False)
+            # but a second directory entry for an inode that may live
+            # OUTSIDE the source tree, so it slips the symlink refusal above
+            # and would copy the linked file's CONTENTS into the bundle, the
+            # same exfiltration the symlink check defends against (BL-254,
+            # fifteenth audit; the BL-169 / BL-172 / BL-190 link-on-install
+            # class). st_nlink > 1 means another entry shares the inode;
+            # refuse it, the conservative stance matching the symlink
+            # refusal (a legitimately multiply-linked source file is
+            # vanishingly rare and equally refusable).
+            if path.stat().st_nlink > 1:
+                raise SkillLoadError(str(path), "hardlink in skill source (refused)")
             rel = path.resolve().relative_to(src_root)
             out = target / rel
             out.parent.mkdir(parents=True, exist_ok=True)
