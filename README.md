@@ -122,7 +122,8 @@ See [CLAUDE.md](./CLAUDE.md) for repository structure and conventions.
   irreversible (Tier 3) resume (`restated_arguments`); a
   `RunRecord.degraded` quality axis with deterministic anti-confabulation
   grounding (`ungrounded_citations`, `grounding_predicate`); read-side
-  freshness gating with a typed, model-legible `Refusal` (`require_fresh`);
+  freshness gating via the `require_fresh` predicate factory, with the
+  separate typed, model-legible `Refusal` return type for refusal-as-data;
   and an opt-in evidence-capture hook bracketing an approved Tier 3
   action (`EvidenceHook` / `EvidenceContext` / `RecordingEvidenceHook`).
 - **Provider batch capabilities (optional extras).**
