@@ -66,9 +66,11 @@ class GuardResponse:
             in the ResumableState.
         tier: The AuthorityTier an optional TierClassifier assigned to
             this action (BL-242), or None when no classifier is
-            configured. Annotates APPROVE (so a Tier 1 action can be
-            logged or notified) and REQUIRE_APPROVAL (so an approver
-            sees the blast radius); never set on REJECT.
+            configured. Carried on the APPROVE and REQUIRE_APPROVAL
+            responses for the runtime and observability layers (a Tier 1
+            action can be logged or notified); never set on REJECT.
+            Surfacing the tier onto the human-facing ApprovalInterruption
+            is tracked as BL-251.
     """
 
     decision: GuardDecision

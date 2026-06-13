@@ -48,10 +48,12 @@ New module `harness/authority.py`:
 `approval_tier` threshold (default `STATEFUL`). When a classifier is
 supplied, the guard classifies each action and escalates a Tier
 `approval_tier`-or-above action to REQUIRE_APPROVAL, beyond the static
-`approval_required` list. `GuardResponse` gains a `tier` field that
-annotates APPROVE (so a Tier 1 action can be logged or notified) and
-REQUIRE_APPROVAL (so an approver sees the blast radius); it is never set
-on REJECT, where classification does not run. `run_under_contract` gains
+`approval_required` list. `GuardResponse` gains a `tier` field that the
+APPROVE and REQUIRE_APPROVAL responses carry for the runtime and
+observability layers (a Tier 1 action can be logged or notified); it is
+never set on REJECT, where classification does not run. Surfacing the
+tier onto the human-facing `ApprovalInterruption` is held out to BL-251
+(below). `run_under_contract` gains
 `tier_classifier` / `approval_tier` keywords that build and configure the
 default guard (a classifier alone now triggers guard construction).
 
