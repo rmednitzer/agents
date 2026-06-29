@@ -1,4 +1,4 @@
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
-  extends: ["github>rmednitzer/renovate-config"],
+  extends: ["github>rmednitzer/infra:renovate-preset"],
 }
