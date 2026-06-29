@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "pydantic-ai>=1.104.0",
+    "pydantic-ai>=2,<3",
     "pydantic>=2.13.4",
     "pyyaml>=6.0.3",
 ]
