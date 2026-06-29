@@ -47,7 +47,6 @@ import inspect
 import math
 import time
 import uuid
-import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -766,36 +765,45 @@ def _to_pydantic_mcp(spec: MCPServerSpec, process_tool_call: Any = None) -> Any:
     harness guard + budget gate so MCP tools cannot bypass governance
     or budgets (BL-001/073).
     """
-    from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio, MCPServerStreamableHTTP
+    from fastmcp.client.transports import (
+        SSETransport,
+        StdioTransport,
+        StreamableHttpTransport,
+    )
+    from pydantic_ai.mcp import MCPToolset
 
-    server: Any
-    # 1.97 deprecates these explicit classes in favour of MCPToolset(...)
-    # but keeps them functional through the pinned range; the Protocol
-    # boundary (ADR 0007) absorbs this churn, so silence the local
-    # DeprecationWarning rather than chase a pre-v2 API rename.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        if spec.transport == MCPTransport.STDIO:
-            server = MCPServerStdio(
-                command=spec.command or "",
-                args=list(spec.args),
-                timeout=spec.timeout_seconds,
-                process_tool_call=process_tool_call,
-            )
-        elif spec.transport == MCPTransport.SSE:
-            server = MCPServerSSE(
-                url=spec.url or "",
-                headers=dict(spec.headers),
-                timeout=spec.timeout_seconds,
-                process_tool_call=process_tool_call,
-            )
-        else:
-            server = MCPServerStreamableHTTP(
-                url=spec.url or "",
-                headers=dict(spec.headers),
-                timeout=spec.timeout_seconds,
-                process_tool_call=process_tool_call,
-            )
+    # pydantic-ai 2.x replaces the explicit MCPServer* classes with a
+    # transport + MCPToolset pair (the Protocol boundary, ADR 0007,
+    # absorbs the rename). The spec's declared transport selects the
+    # concrete FastMCP transport explicitly rather than relying on
+    # MCPToolset's URL-based inference, so an SSE spec stays SSE.
+    # ``headers`` (HTTP/SSE auth) ride the transport; on MCPToolset the
+    # ``headers=`` kwarg only applies to a URL it builds itself.
+    transport: Any
+    if spec.transport == MCPTransport.STDIO:
+        transport = StdioTransport(
+            command=spec.command or "",
+            args=list(spec.args),
+        )
+    elif spec.transport == MCPTransport.SSE:
+        transport = SSETransport(
+            url=spec.url or "",
+            headers=dict(spec.headers),
+        )
+    else:
+        transport = StreamableHttpTransport(
+            url=spec.url or "",
+            headers=dict(spec.headers),
+        )
+
+    # ``init_timeout`` is the 2.x successor to the 1.x ``timeout``: the
+    # connect + ``initialize`` handshake bound. ``process_tool_call``
+    # routes every MCP tool call through the harness guard + budget gate.
+    server: Any = MCPToolset(
+        transport,
+        process_tool_call=process_tool_call,
+        init_timeout=spec.timeout_seconds,
+    )
 
     if spec.allowed_tools is not None:
         allowed = set(spec.allowed_tools)
