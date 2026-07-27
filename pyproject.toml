@@ -66,8 +66,8 @@ dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "ruff>=0.15.15",
-    "mypy>=2.1.0",
+    "ruff>=0.15.15,<0.17",
+    "mypy>=2.1.0,<3",
     "types-PyYAML>=6.0.12.20260518",
     # Backends + test doubles so CI exercises every adapter.
     "redis>=8.0.0",
