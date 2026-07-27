@@ -67,7 +67,7 @@ requires-dist = [
     { name = "cryptography", marker = "extra == 'dev'", specifier = ">=48.0.0" },
     { name = "fakeredis", marker = "extra == 'dev'", specifier = ">=2.36.0" },
     { name = "moto", extras = ["s3", "dynamodb"], marker = "extra == 'dev'", specifier = ">=5.2.1" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.1.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.1.0,<3" },
     { name = "openai", marker = "extra == 'dev'", specifier = ">=2.39.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.39.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'dev'", specifier = ">=1.30.0" },
@@ -82,7 +82,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "redis", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "redis", marker = "extra == 'redis'", specifier = ">=8.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.15" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.15,<0.17" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12.20260518" },
 ]
 provides-extras = ["redis", "aws", "otel", "crypto", "anthropic", "openai", "dev"]
@@ -2269,8 +2269,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
-    { name = "jeepney" },
+    { name = "cryptography", marker = "python_full_version >= '3.15' or sys_platform != 'win32'" },
+    { name = "jeepney", marker = "python_full_version >= '3.15' or sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
