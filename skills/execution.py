@@ -375,7 +375,7 @@ class _SubprocessEvaluator:
         return bool(resp["ok"])
 
     def _read_with_timeout(self, stream: Any) -> bytes | None:
-        result: list[bytes | None | BaseException] = []
+        result: list[bytes | BaseException | None] = []
 
         def _worker() -> None:
             try:
