@@ -112,6 +112,7 @@ def _delete_all() -> None:
     for k in to_evict:
         self._s3.delete_object(Bucket=self._bucket, Key=self._okey(k))
 
+
 await asyncio.to_thread(_delete_all)
 for k in to_evict:
     self._audit.delete(k, existed=True)
@@ -146,6 +147,7 @@ def _delete_all() -> list[str]:
         except Exception:
             continue
     return deleted
+
 
 actually_deleted = await asyncio.to_thread(_delete_all)
 for k in actually_deleted:
