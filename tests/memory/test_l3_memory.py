@@ -222,16 +222,30 @@ def ddb_client() -> Iterator[object]:
 
 
 @pytest.mark.asyncio
-async def test_dynamodb_subsecond_ttl_holds(ddb_client: object) -> None:
+async def test_dynamodb_subsecond_ttl_holds(
+    ddb_client: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import types
+
+    from memory import dynamodb as _dynamodb
     from memory.dynamodb import DynamoDBStore
 
+    # Controlled clock rather than wall time. The previous form wrote with
+    # a 0.4 s TTL and asserted liveness immediately; that fails whenever the
+    # runner stalls longer than the TTL between write and read, which is what
+    # broke CI on 2026-08-10 (assert None == b"v" on the FIRST read, not the
+    # expiry one). Widening the TTL is not an option: 0.4 s is load-bearing
+    # because it is sub-integer, so an integer-truncated exp flips one of the
+    # two assertions. Freeze the clock instead and the boundary stays exact.
+    # Start on a fractional second so truncation is still caught: exp becomes
+    # .65, an int-truncated exp becomes .00 and reads as already expired.
+    clock = {"t": 1_700_000_000.25}
+    monkeypatch.setattr(_dynamodb, "time", types.SimpleNamespace(time=lambda: clock["t"]))
+
     store = DynamoDBStore(_ns(), "kv", client=ddb_client)
-    # 0.4 s TTL: an integer-truncated exp would round to "now" and the
-    # row would read as immediately expired or live for a full second.
-    # Float exp keeps the sub-second boundary honest.
     await store.write("k", b"v", ttl_seconds=0.4)
     assert await store.read("k") == b"v"
-    time.sleep(0.5)
+    clock["t"] += 0.5
     assert await store.read("k") is None
 
 
