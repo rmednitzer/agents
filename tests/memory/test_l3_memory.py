@@ -240,9 +240,7 @@ async def test_dynamodb_subsecond_ttl_holds(
     # Start on a fractional second so truncation is still caught: exp becomes
     # .65, an int-truncated exp becomes .00 and reads as already expired.
     clock = {"t": 1_700_000_000.25}
-    monkeypatch.setattr(
-        _dynamodb, "time", types.SimpleNamespace(time=lambda: clock["t"])
-    )
+    monkeypatch.setattr(_dynamodb, "time", types.SimpleNamespace(time=lambda: clock["t"]))
 
     store = DynamoDBStore(_ns(), "kv", client=ddb_client)
     await store.write("k", b"v", ttl_seconds=0.4)
