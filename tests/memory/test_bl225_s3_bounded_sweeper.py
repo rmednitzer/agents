@@ -38,7 +38,7 @@ Tests focus on:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import pytest
 
@@ -71,6 +71,15 @@ def _store(client: object, name: str = "cap", **kw: object) -> BoundedS3Store:
         client=client,  # type: ignore[arg-type]
         **kw,  # type: ignore[arg-type]
     )
+
+
+async def _wait_until(
+    predicate: Callable[[], bool], *, attempts: int = 20, delay: float = 0.01
+) -> None:
+    for _ in range(attempts):
+        await asyncio.sleep(delay)
+        if predicate():
+            break
 
 
 # ---- Protocol satisfaction -------------------------------------------------
@@ -220,7 +229,7 @@ async def test_ttl_sweeper_drives_capacity_pass(s3_client: object) -> None:
     for i in range(4):
         await s.write(f"k{i}", b"v")
     async with TTLSweeper(s, interval_seconds=0.01, max_keys=2) as sweeper:
-        await asyncio.sleep(0.1)
+        await _wait_until(lambda: sweeper.evicted_total >= 2)
     assert sweeper.evicted_total >= 2
     assert sorted(await s.list_keys()) == ["k2", "k3"]
 
@@ -238,7 +247,7 @@ async def test_ttl_sweeper_both_passes(s3_client: object) -> None:
     await s.write("c", b"v")
     await asyncio.sleep(0.05)
     async with TTLSweeper(s, interval_seconds=0.01, max_keys=2) as sweeper:
-        await asyncio.sleep(0.1)
+        await _wait_until(lambda: sweeper.swept_total >= 1 and sweeper.evicted_total >= 1)
     assert sweeper.swept_total >= 1
     assert sweeper.evicted_total >= 1
     assert len(await s.list_keys()) == 2
