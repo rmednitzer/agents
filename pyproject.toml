@@ -53,7 +53,7 @@ crypto = [
 # friendly declaration, not a claim that the SDK is otherwise absent
 # (ADR 0007 / ADR 0012).
 anthropic = [
-    "anthropic>=0.105.2,<1",
+    "anthropic>=1.4,<2",
 ]
 # OpenAI Batch API capability (BL-187). harness.openai_api lazily
 # imports the SDK in from_env and is decoupled from it via a Protocol,
@@ -77,7 +77,7 @@ dev = [
     "opentelemetry-sdk>=1.30.0,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.30.0,<2",
     "cryptography>=48.0.0,<51",
-    "anthropic>=0.105.2,<1",
+    "anthropic>=1.4,<2",
     "openai>=2.39.0,<3",
 ]
 
