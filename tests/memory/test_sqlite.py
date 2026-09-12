@@ -38,6 +38,7 @@ async def test_satisfies_all_protocols() -> None:
     assert isinstance(s, ContentAddressableStore)
     assert isinstance(s, CASMemoryStore)
     assert isinstance(s, SweepableStore)
+    s.close()
 
 
 @pytest.mark.asyncio
@@ -48,6 +49,7 @@ async def test_write_read_delete_roundtrip() -> None:
     await s.delete("k")
     assert await s.read("k") is None
     await s.delete("k")  # idempotent
+    s.close()
 
 
 @pytest.mark.asyncio
@@ -57,6 +59,7 @@ async def test_ttl_expires_lazily() -> None:
     assert await s.read("k") == b"v"
     await asyncio.sleep(0.1)
     assert await s.read("k") is None
+    s.close()
 
 
 @pytest.mark.asyncio
@@ -68,6 +71,7 @@ async def test_namespace_default_ttl_and_list_prefix() -> None:
     assert await s.list_keys("a-") == ["a-1", "a-2"]
     await asyncio.sleep(0.1)
     assert await s.list_keys() == []
+    s.close()
 
 
 @pytest.mark.asyncio
@@ -77,6 +81,7 @@ async def test_invalid_keys_rejected() -> None:
         await s.write("with::sep", b"v")
     with pytest.raises(NamespaceViolation):
         await s.read("../escape")
+    s.close()
 
 
 @pytest.mark.asyncio
@@ -97,6 +102,7 @@ async def test_batch_scan_content_cas_sweep() -> None:
     await s.write("t", b"v", ttl_seconds=0.02)
     await asyncio.sleep(0.05)
     assert await s.sweep_expired() >= 1
+    s.close()
 
 
 @pytest.mark.asyncio
@@ -111,6 +117,7 @@ async def test_scan_paging() -> None:
         if not cursor:
             break
     assert seen == sorted(f"k{i:02d}" for i in range(7))
+    s.close()
 
 
 @pytest.mark.asyncio
@@ -168,3 +175,4 @@ async def test_audit_events_emitted() -> None:
     await s.delete("k")
     kinds = [e.kind for e in sink.events]
     assert kinds == ["memory_write", "memory_read", "memory_delete"]
+    s.close()
