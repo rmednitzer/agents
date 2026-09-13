@@ -77,7 +77,8 @@ conventional environment. A search across `agents`, `harness`, `memory`,
 handling is delegated, by design.
 
 Each provider prefix reads its own variables (verified against
-`pydantic_ai` 1.97.0):
+`pydantic_ai` 2.31.1, the version currently locked in `uv.lock`;
+`pyproject.toml` pins `pydantic-ai>=2,<3`):
 
 - Anthropic (`anthropic:`): key `ANTHROPIC_API_KEY`, endpoint override
   `ANTHROPIC_BASE_URL`.
