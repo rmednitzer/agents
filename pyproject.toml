@@ -62,6 +62,17 @@ anthropic = [
 openai = [
     "openai>=2.39.0,<3",
 ]
+# MCP toolset support (harness.runtime._to_pydantic_mcp). fastmcp
+# (imported as `fastmcp.client.transports`) is not otherwise declared
+# here even though it is guaranteed present: `pydantic-ai` (a base
+# dependency) unconditionally requires pydantic-ai-slim's "mcp" extra,
+# which requires `fastmcp-slim[client]` (the distribution that installs
+# the importable `fastmcp` package). This extra is the explicit,
+# slim-base friendly declaration, the same posture as `anthropic` /
+# `openai` above, not a claim that the package is otherwise absent.
+mcp = [
+    "fastmcp-slim[client]>=4.0.3,<5",
+]
 dev = [
     "pytest>=9.0.3,<10",
     "pytest-asyncio>=1.4.0,<2",
@@ -79,6 +90,7 @@ dev = [
     "cryptography>=48.0.0,<51",
     "anthropic>=1.4,<2",
     "openai>=2.39.0,<3",
+    "fastmcp-slim[client]>=4.0.3,<5",
 ]
 
 [project.urls]
