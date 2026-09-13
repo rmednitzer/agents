@@ -32,6 +32,7 @@ dev = [
     { name = "boto3" },
     { name = "cryptography" },
     { name = "fakeredis" },
+    { name = "fastmcp-slim", extra = ["client"] },
     { name = "moto", extra = ["dynamodb", "s3"] },
     { name = "mypy" },
     { name = "openai" },
@@ -43,6 +44,9 @@ dev = [
     { name = "redis" },
     { name = "ruff" },
     { name = "types-pyyaml" },
+]
+mcp = [
+    { name = "fastmcp-slim", extra = ["client"] },
 ]
 openai = [
     { name = "openai" },
@@ -64,6 +68,8 @@ requires-dist = [
     { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=48.0.0,<51" },
     { name = "cryptography", marker = "extra == 'dev'", specifier = ">=48.0.0,<51" },
     { name = "fakeredis", marker = "extra == 'dev'", specifier = ">=2.36.0,<3" },
+    { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'dev'", specifier = ">=4.0.3,<5" },
+    { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=4.0.3,<5" },
     { name = "moto", extras = ["s3", "dynamodb"], marker = "extra == 'dev'", specifier = ">=5.2.1,<6" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.1.0,<3" },
     { name = "openai", marker = "extra == 'dev'", specifier = ">=2.39.0,<3" },
@@ -83,7 +89,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.16.2,<0.17" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12.20260518,<7" },
 ]
-provides-extras = ["redis", "aws", "otel", "crypto", "anthropic", "openai", "dev"]
+provides-extras = ["redis", "aws", "otel", "crypto", "anthropic", "openai", "mcp", "dev"]
 
 [[package]]
 name = "aiofile"

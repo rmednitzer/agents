@@ -3,6 +3,18 @@
 Material changes by phase. Format follows Keep a Changelog; dates are
 ISO 8601. Pre-1.0, so this is phase-based, not semver-tagged.
 
+## [Unreleased] Dependency-declaration follow-up (BL-264, 2026-09-13)
+
+### Fixed
+
+- `pyproject.toml` now declares an `mcp` extra (`fastmcp-slim[client]>=4.0.3,<5`,
+  also added to `dev`) for the `fastmcp.client.transports` import
+  `harness.runtime._to_pydantic_mcp` already relied on. The package was
+  guaranteed present transitively (`pydantic-ai` unconditionally requires
+  `pydantic-ai-slim`'s `"mcp"` extra, which requires `fastmcp-slim[client]`),
+  the same shape the `anthropic` / `openai` extras already close; now it
+  is explicit too. `uv.lock` re-resolved with no version changes (`BL-264`).
+
 ## [Unreleased] Fifteenth code audit (ADR 0039, BL-254 .. BL-263, 2026-06-13)
 
 A comprehensive adversarial audit of the code that landed after the
