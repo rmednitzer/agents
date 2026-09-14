@@ -60,7 +60,7 @@ anthropic = [
 # so the module imports and type-checks regardless of the SDK
 # (ADR 0007 / ADR 0012).
 openai = [
-    "openai>=2.39.0,<3",
+    "openai>=3.13,<4",
 ]
 # MCP toolset support (harness.runtime._to_pydantic_mcp). fastmcp
 # (imported as `fastmcp.client.transports`) is not otherwise declared
@@ -89,7 +89,7 @@ dev = [
     "opentelemetry-exporter-otlp-proto-http>=1.30.0,<2",
     "cryptography>=48.0.0,<51",
     "anthropic>=1.4,<2",
-    "openai>=2.39.0,<3",
+    "openai>=3.13,<4",
     "fastmcp-slim[client]>=4.0.3,<5",
 ]
 
