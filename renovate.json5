@@ -1,4 +1,16 @@
 {
-  $schema: "https://docs.renovatebot.com/renovate-schema.json",
-  extends: ["github>rmednitzer/infra:renovate-preset"],
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>rmednitzer/infra:renovate-preset"
+  ],
+  "packageRules": [
+    {
+      "description": "Update the exact Ruff dependency, CI command, and pre-commit hook together to prevent formatter version drift.",
+      "matchPackageNames": [
+        "ruff",
+        "astral-sh/ruff-pre-commit"
+      ],
+      "groupName": "ruff toolchain"
+    }
+  ]
 }

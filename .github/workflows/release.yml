@@ -30,7 +30,7 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
       - run: uv python install 3.12
@@ -38,11 +38,11 @@ jobs:
       # Quality gate before anything is published: a release must be
       # green (the same gate as CI), so a bad commit cannot be tagged
       # into a release.
-      - run: uv sync --all-extras
-      - run: uv run ruff check .
-      - run: uv run mypy agents harness memory workloads skills evaluation
-      - run: uv run pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov=evaluation --cov-fail-under=94
-      - run: uv run python scripts/eval.py --min-p-at-1 1.0 --min-mrr 1.0
+      - run: uv sync --locked --all-extras
+      - run: uv run --locked ruff check .
+      - run: uv run --locked mypy agents harness memory workloads skills evaluation
+      - run: uv run --locked pytest --cov=agents --cov=harness --cov=memory --cov=skills --cov=workloads --cov=evaluation --cov-fail-under=94
+      - run: uv run --locked python scripts/eval.py --min-p-at-1 1.0 --min-mrr 1.0
       - run: uvx reuse lint
 
       - name: Build sdist and wheel
